@@ -6,9 +6,9 @@ import android.content.res.Resources
 import dev.joker.R
 
 object MeowResourceFilter {
-    private val weKitPackageId = R.string.res_inject_success ushr 24
+    private val jokerPackageId = R.string.res_inject_success ushr 24
 
-    fun isJokerResource(id: Int): Boolean = id ushr 24 == weKitPackageId
+    fun isJokerResource(id: Int): Boolean = id ushr 24 == jokerPackageId
 }
 
 @Suppress("DEPRECATION")

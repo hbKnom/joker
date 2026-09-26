@@ -82,7 +82,7 @@ import dev.joker.ui.agent.settings.AgentConfirmDialog
 import dev.joker.ui.agent.settings.AgentListActionButton
 import dev.joker.ui.agent.settings.AgentSettingsScaffold
 import dev.joker.ui.agent.settings.rememberCreationBackGuard
-import dev.joker.ui.animation.predictiveback.weKitNavTransition
+import dev.joker.ui.animation.predictiveback.jokerNavTransition
 import dev.joker.ui.content.m3.ExpressiveBackButton
 import dev.joker.ui.content.m3.BaseWidget
 import dev.joker.ui.content.m3.SegmentedColumn
@@ -142,7 +142,7 @@ private fun PythonSettingsRoot(activity: ComponentActivity, onFinish: () -> Unit
         NavDisplay(
             backStack = backStack,
             onBack = { if (navigator.backStackSize() <= 1) onFinish() else navigator.pop() },
-            transition = weKitNavTransition(ThemeSettings.pageTransitionAnimation),
+            transition = jokerNavTransition(ThemeSettings.pageTransitionAnimation),
             effects = rememberM3NavEffects(),
         ) {
             entry<PythonSettingsRoute.Home> {

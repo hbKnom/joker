@@ -28,7 +28,7 @@ import dev.joker.ui.agent.settings.WeAgentHomeScreen
 import dev.joker.ui.navigation.LocalNavigator
 import dev.joker.ui.navigation.Navigator
 import dev.joker.ui.navigation.rememberM3NavEffects
-import dev.joker.ui.animation.predictiveback.weKitNavTransition
+import dev.joker.ui.animation.predictiveback.jokerNavTransition
 import dev.joker.ui.utils.theme.ModuleTheme
 import dev.joker.ui.utils.theme.ThemeSettings
 import kotlinx.serialization.Serializable
@@ -107,7 +107,7 @@ private fun WeAgentSettingsRoot(onFinish: () -> Unit) {
             onBack = {
                 if (navigator.backStackSize() <= 1) onFinish() else navigator.pop()
             },
-            transition = weKitNavTransition(ThemeSettings.pageTransitionAnimation),
+            transition = jokerNavTransition(ThemeSettings.pageTransitionAnimation),
             effects = rememberM3NavEffects(),
         ) {
             entry<AgentSettingsRoute.Home> {

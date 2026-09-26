@@ -95,7 +95,7 @@ import dev.joker.ui.navigation.rememberM3NavEffects
 import dev.joker.ui.utils.theme.ModuleTheme
 import dev.joker.ui.utils.theme.SettingsUiEngine
 import dev.joker.ui.utils.theme.ThemeSettings
-import dev.joker.ui.animation.predictiveback.weKitNavTransition
+import dev.joker.ui.animation.predictiveback.jokerNavTransition
 import dev.joker.utils.WeLogger
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -218,7 +218,7 @@ private fun SettingsRoot(onFinish: () -> Unit) {
             onBack = {
                 if (navigator.backStackSize() <= 1) onFinish() else navigator.pop()
             },
-            transition = weKitNavTransition(ThemeSettings.pageTransitionAnimation),
+            transition = jokerNavTransition(ThemeSettings.pageTransitionAnimation),
             effects = rememberM3NavEffects(),
         ) {
             entry<SettingsRoute.Main> {

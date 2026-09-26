@@ -13,7 +13,7 @@ import dev.joker.features.core.FeatureCategoryIds
 import dev.joker.ui.utils.theme.ThemeSettings
 import dev.joker.utils.WeLogger
 
-// https://github.com/Joker/PandorasBox
+// 预见性返回动画（本地实现）
 object PredictiveBackGestures : ApiFeature() {
 
     override val technicalId = "预见性返回动画"
