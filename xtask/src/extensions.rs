@@ -33,12 +33,12 @@ const PACK_LLAMA: &str = "llama-native";
 const PACK_QWEN_MODEL: &str = "qwen3.8-4b-distill";
 const DIST_DIR: &str = "dist/extensions";
 const INDEX_FILE: &str = "manifest.json";
-const CLOUDFLARED_LIB: &str = "libwekit_cloudflared.so";
-const LLAMA_LIB: &str = "libwekit_llama.so";
-const LLAMA_LIB_OPENCL: &str = "libwekit_llama_opencl.so";
+const CLOUDFLARED_LIB: &str = "libjoker_cloudflared.so";
+const LLAMA_LIB: &str = "libjoker_llama.so";
+const LLAMA_LIB_OPENCL: &str = "libjoker_llama_opencl.so";
 const LLAMA_ABI: &str = "arm64-v8a";
 const LLAMA_TARGET: &str = "aarch64-linux-android";
-const LLAMA_CRATE: &str = "app/src/main/rust/wekit-llama";
+const LLAMA_CRATE: &str = "app/src/main/rust/joker-llama";
 
 #[derive(Args)]
 pub struct ExtensionsArgs {
@@ -71,7 +71,7 @@ pub struct PackIndexEntry {
     pub asset: String,
     pub sha256: String,
     /// Download URL for packs fetched from a third-party host instead of the
-    /// WeKit release; `asset` is then a placeholder (e.g. `external`).
+    /// Joker release; `asset` is then a placeholder (e.g. `external`).
     #[serde(rename = "externalUrl", skip_serializing_if = "Option::is_none")]
     pub external_url: Option<String>,
     /// Exact download size in bytes for externally hosted packs.
@@ -316,8 +316,8 @@ fn arch_proot_input_paths(root: &Path) -> (PathBuf, PathBuf) {
 
 fn build_archlinux_zip(root: &Path, dist: &Path) -> Result<PackIndexEntry> {
     let source = read_arch_sources(root)?;
-    let rootfs = std::env::var_os("WEKIT_ARCH_ROOTFS").map(PathBuf::from)
-        .context("WEKIT_ARCH_ROOTFS must point to the separately downloaded and signature/checksum-verified rootfs")?;
+    let rootfs = std::env::var_os("JOKER_ARCH_ROOTFS").map(PathBuf::from)
+        .context("JOKER_ARCH_ROOTFS must point to the separately downloaded and signature/checksum-verified rootfs")?;
     let (proot, proot_loader) = arch_proot_input_paths(root);
     let bridge = root.join("app/src/main/jniLibs/arm64-v8a/libinvoke_tool.so");
     anyhow::ensure!(
@@ -467,7 +467,7 @@ fn build_monet_generator_zip(root: &Path, dist: &Path) -> Result<PackIndexEntry>
         .collect::<Result<BTreeMap<_, _>>>()?;
     let extension_json = serde_json::to_vec_pretty(&serde_json::json!({
         "apiVersion": 1,
-        "entrypoint": "dev.ujhhgtg.wekit.extensions.monet.MonetGeneratorEntrypoint",
+        "entrypoint": "dev.joker.extensions.monet.MonetGeneratorEntrypoint",
         "files": hashes,
     }))?;
 
@@ -551,12 +551,12 @@ fn build_cloudflared_zip(root: &Path, dist: &Path) -> Result<PackIndexEntry> {
 
 /// Build both android variants of the llama native server and zip them.
 ///
-/// Variant 1 (`libwekit_llama.so`) is the crate's default feature set
-/// (CPU + Vulkan); variant 2 (`libwekit_llama_opencl.so`) adds `opencl` on top.
+/// Variant 1 (`libjoker_llama.so`) is the crate's default feature set
+/// (CPU + Vulkan); variant 2 (`libjoker_llama_opencl.so`) adds `opencl` on top.
 /// Cross-compiling the GPU backends needs Khronos headers the NDK sysroot
 /// cannot provide, so the vendored submodules under `third_party/` are staged
 /// first (see `ensure_vulkan_include` / `stage_spirv_headers`). Both cargo runs
-/// must execute with cwd inside the wekit-llama crate for its generated
+/// must execute with cwd inside the joker-llama crate for its generated
 /// `.cargo/config.toml` (NDK linker + CC) to apply.
 fn build_llama_zip(root: &Path, dist: &Path) -> Result<PackIndexEntry> {
     crate::task_configure()?;
@@ -595,7 +595,7 @@ fn build_llama_zip(root: &Path, dist: &Path) -> Result<PackIndexEntry> {
             "--target",
             LLAMA_TARGET,
             "-p",
-            "wekit-llama",
+            "joker-llama",
             "--lib",
         ],
         &llama_dir,
@@ -630,7 +630,7 @@ fn build_llama_zip(root: &Path, dist: &Path) -> Result<PackIndexEntry> {
             "--target",
             LLAMA_TARGET,
             "-p",
-            "wekit-llama",
+            "joker-llama",
             "--lib",
             "--features",
             "opencl",
@@ -801,7 +801,7 @@ fn make_opencl_stub(root: &Path, stub: &Path) -> Result<()> {
 }
 
 /// cargo runner for the llama pack: prefers the `cargo` that invoked xtask and
-/// must run with cwd inside the wekit-llama crate — cargo only reads
+/// must run with cwd inside the joker-llama crate — cargo only reads
 /// `.cargo/config.toml` from cwd upward, so a workspace-root invocation would
 /// silently lose the NDK linker/CC configuration.
 fn run_cargo(args: &[&str], cwd: &Path, envs: &[(&str, String)]) -> Result<()> {
@@ -1031,7 +1031,7 @@ mod tests {
     #[test]
     fn arch_rootfs_verification_rejects_sha256_mismatch() {
         let path =
-            std::env::temp_dir().join(format!("wekit-rootfs-checksum-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("joker-rootfs-checksum-test-{}", std::process::id()));
         fs::write(&path, b"rootfs").unwrap();
         let source = ArchRootfsSource {
             release: "2026.08".into(),
@@ -1064,7 +1064,7 @@ mod tests {
     #[test]
     fn arch_pack_contains_rootfs_launcher_loader_bridge_and_manifest() {
         let base =
-            std::env::temp_dir().join(format!("wekit-arch-pack-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("joker-arch-pack-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&base);
         fs::create_dir_all(&base).unwrap();
         let names = [

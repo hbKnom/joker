@@ -4134,7 +4134,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
-name = "wekit-llama"
+name = "joker-llama"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.9",
@@ -4151,7 +4151,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wekit-native"
+name = "joker-native"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4174,7 +4174,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wekit-read-receipts-server"
+name = "joker-read-receipts-server"
 version = "0.1.0"
 dependencies = [
  "axum 0.8.9",
@@ -4198,7 +4198,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wekit-zygisk"
+name = "joker-zygisk"
 version = "0.1.0"
 dependencies = [
  "anyhow",

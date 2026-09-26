@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """PC-side probe for the FunBox private binary API.
 
-This intentionally mirrors the recovered Java transport instead of importing WeKit code,
+This intentionally mirrors the recovered Java transport instead of importing Joker code,
 so it can expose behavioral differences in the Kotlin implementation. It only sends fields
 required by operations 100 (server probe) and 10 (sticker catalog).
 
 References:
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_payload/AiJ.java
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_payload/BW8.java (Ae9)
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_payload/F70.java
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_payload/Byc.java (AaE)
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_payload/GHd.java
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_payload/F4O.java
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_payload/F5i.java
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_payload/F5n.java
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_payload/EPJ.java
+  /home/joker/coding/funbox_deobf_main/funbox_payload/AiJ.java
+  /home/joker/coding/funbox_deobf_main/funbox_payload/BW8.java (Ae9)
+  /home/joker/coding/funbox_deobf_main/funbox_payload/F70.java
+  /home/joker/coding/funbox_deobf_main/funbox_payload/Byc.java (AaE)
+  /home/joker/coding/funbox_deobf_main/funbox_payload/GHd.java
+  /home/joker/coding/funbox_deobf_main/funbox_payload/F4O.java
+  /home/joker/coding/funbox_deobf_main/funbox_payload/F5i.java
+  /home/joker/coding/funbox_deobf_main/funbox_payload/F5n.java
+  /home/joker/coding/funbox_deobf_main/funbox_payload/EPJ.java
 """
 
 from __future__ import annotations
@@ -560,7 +560,7 @@ def run_variant(
     decoder: Callable[[bytes], object],
     send_content_type: bool,
 ) -> bool:
-    label = "WeKit Content-Type" if send_content_type else "FunBox no Content-Type"
+    label = "Joker Content-Type" if send_content_type else "FunBox no Content-Type"
     try:
         result = call(
             session,
@@ -601,7 +601,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--http-mode",
-        choices=("both", "funbox", "wekit"),
+        choices=("both", "funbox", "joker"),
         default="both",
         help="compare absent vs application/octet-stream Content-Type",
     )
@@ -615,7 +615,7 @@ def main() -> int:
     modes = {
         "both": (False, True),
         "funbox": (False,),
-        "wekit": (True,),
+        "joker": (True,),
     }[args.http_mode]
 
     print("Resolver API hosts:", api_hosts)

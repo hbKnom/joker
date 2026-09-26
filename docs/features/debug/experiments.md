@@ -1,6 +1,6 @@
 # 测试
 
-入口：WeKit 设置 → 功能 → 调试 → 测试。
+入口：Joker 设置 → 功能 → 调试 → 测试。
 
 点击功能进入协议调试界面，选择联系人后，可依次执行 beforetransfer 与 transferplaceorder 两阶段请求，并查看原始返回结果。
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""PC-side behavior probe for WeKit's fixed public voice providers.
+"""PC-side behavior probe for Joker's fixed public voice providers.
 
 References:
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_payload/CJq.java
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_payload/ELl.java
-  /home/ujhhgtg/coding/funbox_deobf/output/decrypted_strings.json
+  /home/joker/coding/funbox_deobf_main/funbox_payload/CJq.java
+  /home/joker/coding/funbox_deobf_main/funbox_payload/ELl.java
+  /home/joker/coding/funbox_deobf/output/decrypted_strings.json
 
 The probe deliberately runs independently of Android. It verifies that RingDuoDuo's
 encrypted category/search payloads still produce playable object URLs and that Uoice

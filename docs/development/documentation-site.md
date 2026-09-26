@@ -1,6 +1,6 @@
 # 文档站维护
 
-文档位于代码仓库的 `docs/`，使用 VitePress 2 alpha 和 Bun。生产站点为 [docs.wekit.ujhhgtg.dev](https://docs.wekit.ujhhgtg.dev)，跟随 `Ujhhgtg/WeKit` 的 `master`，内容对应开发版。
+文档位于代码仓库的 `docs/`，使用 VitePress 2 alpha 和 Bun。本仓库为私有仓库，文档未发布到公网站点；内容跟随 `main` 分支，对应开发版。
 
 ## 本地命令
 
@@ -44,8 +44,8 @@ git diff --check
 
 | Workers Builds 设置 | 值 |
 | --- | --- |
-| Repository | `Ujhhgtg/WeKit` |
-| Production branch | `master` |
+| Repository | `hbKnom/joker` |
+| Production branch | `main` |
 | Root directory | `docs` |
 | Build command | `bun install --frozen-lockfile && bun run build` |
 | Deploy command | `bun run deploy` |

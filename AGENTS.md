@@ -2,9 +2,9 @@
 
 ## Superpowers
 
-- All Superpowers workflow artifacts for WeKit (plans, specs/designs, SDD ledgers and
+- All Superpowers workflow artifacts for Joker (plans, specs/designs, SDD ledgers and
   reports, brainstorm sessions) are written, edited, and committed **only** in
-  `~/coding/wekit_dev/superpowers` (its own git repo; read its `AGENTS.md` for layout and
+  `~/coding/joker_dev/superpowers` (its own git repo; read its `AGENTS.md` for layout and
   rules). Never create, edit, or commit `.superpowers/` or `docs/superpowers/` inside this
   repo — those paths are gitignored here by design.
 
@@ -28,11 +28,11 @@
   never modify or repack the signed output. There is no separate `zygisk build` command.
 - JDK 21
 - **Gradle does NOT build the Rust native lib.** `./gradlew assemble*` only packages whatever
-  prebuilt `libwekit_native.so` already sits in `app/src/main/jniLibs/<abi>/`. Compiling
-  `app/src/main/rust/wekit-native` and refreshing those `.so` files is xtask's job
+  prebuilt `libjoker_native.so` already sits in `app/src/main/jniLibs/<abi>/`. Compiling
+  `app/src/main/rust/joker-native` and refreshing those `.so` files is xtask's job
   (`task_build_native`), so **always go through `./x`** — running Gradle directly will silently ship
   a stale native lib. Requires a Rust toolchain + the Android NDK and its Rust targets;
-  `./x configure` regenerates `wekit-native/.cargo/config.toml` from the local NDK and is invoked
+  `./x configure` regenerates `joker-native/.cargo/config.toml` from the local NDK and is invoked
   automatically by the build tasks.
 - `./x build --native-only` prepares both the application and Zygisk native libs in `jniLibs/`
 - AGP 9, Gradle version catalog in `gradle/libs.versions.toml`
@@ -43,8 +43,8 @@
 - `libs/common/annotation-scanner/` — KSP processors: source-subtype discovery for
   `BaseFeature`/`ExtensionPack` objects plus the `@AgentTool` scanner
 - `libs/common/libxposed-api/` — compileOnly LibXposed API interface stubs (compileOnly since they are provided by user's Xposed framework)
-- `libs/common/bsh/` — submodule: forked BeanShell interpreter with snapshot serialization (`BshSnapshot`, `BshSnapshotHelper`); snapshots are encrypted AST byte representations used by the WAuxiliary Xposed module; `app/src/main/java/dev/ujhhgtg/wekit/utils/BshSnapshotDecompiler.kt` — decompiles encrypted BeanShell snapshot files back into Java-like source code; the AES key was recovered from WAuxiliary's decompiled source
-- `libs/common/reflekt/` — submodule: reflection utility library (`dev.ujhhgtg.reflekt`)
+- `libs/common/bsh/` — submodule: forked BeanShell interpreter with snapshot serialization (`BshSnapshot`, `BshSnapshotHelper`); snapshots are encrypted AST byte representations used by the WAuxiliary Xposed module; `app/src/main/java/dev/joker/utils/BshSnapshotDecompiler.kt` — decompiles encrypted BeanShell snapshot files back into Java-like source code; the AES key was recovered from WAuxiliary's decompiled source
+- `libs/common/reflekt/` — submodule: reflection utility library (`dev.joker.reflekt`)
 - `libs/common/stubs/` — compileOnly stubs for WeChat and Android hidden classes
 - `buildSrc/` — custom Gradle tasks: `GenerateMethodHashesTask` (`IResolveDex` `resolveDex` method MD5 cache), `GenerateNewFeaturesTask` (Kotlin source files added within 30 days of the HEAD commit → `NewFeatures.ADDED_AT_BY_SOURCE_KEY`; KSP joins source keys to discovered features for the 新功能 pseudo-category)
 - `xtask/` — build orchestration behind `./x`: native-lib compilation + NDK linker config, APK
@@ -52,7 +52,7 @@
 
 ## Entry Points & Architecture
 
-- Xposed entry: `dev.ujhhgtg.wekit.loader.entry.lxp.LxpHookEntry` (libxposed 101 ~ 102) and legacy Xposed API (51+) entry: `dev.ujhhgtg.wekit.loader.entry.xp51.Xp51HookEntry`
+- Xposed entry: `dev.joker.loader.entry.lxp.LxpHookEntry` (libxposed 101 ~ 102) and legacy Xposed API (51+) entry: `dev.joker.loader.entry.xp51.Xp51HookEntry`
 - Unified flow: `UnifiedEntryPoint.entry()` → `StartupAgent.startup()` → `WeLauncher.init()`
 - Feature objects inherit `BaseFeature`, declare `technicalId`/resource/category metadata as
   override properties, and are auto-discovered by KSP from their source subtype at compile time
@@ -156,7 +156,7 @@
   database integration when they fall outside the qualifying conditions below; use the required
   build, static checks, and manual host validation instead.
 
-- TDD and new automated tests are allowed only when all core logic under test lives in WeKit,
+- TDD and new automated tests are allowed only when all core logic under test lives in Joker,
   has low coupling to WeChat, and does not depend on WeChat host classes, runtime state, UI, or
   behavior.
 - Do not add tests for simple logic that is easy to verify by static review, such as constants,
@@ -178,7 +178,7 @@
 
 ## Key Conventions
 
-- Package namespace: `dev.ujhhgtg.wekit`
+- Package namespace: `dev.joker`
 - `app` is an application module, not a library and cannot be consumed by other projects. Do not
   use the `internal` visibility modifier in Kotlin production sources under `app/src/main`; use
   Kotlin's default implicit `public` visibility instead, because `internal` provides no meaningful
@@ -204,8 +204,8 @@
   default, e.g. `thisObject.reflekt().firstField { ... }` or `.getField(name, true)` — not
   hand-rolled `getDeclaredField`/`getMethod` traversal.
 - **NEVER use `Path.of` or `Files.writeString`.** These are frequent mistakes and
-  are unavailable on older Android API levels supported by WeKit. Convert strings through
-  `dev.ujhhgtg.wekit.utils.fs.asPath` from `utils/fs/PathUtils.kt` (for example,
+  are unavailable on older Android API levels supported by Joker. Convert strings through
+  `dev.joker.utils.fs.asPath` from `utils/fs/PathUtils.kt` (for example,
   `pathString.asPath` or `base.asPath.resolve(child)`) and write text through
   `kotlin.io.path.writeText`.
 - No excessive defensiveness. When e.g. the hooked method and its argument types are
@@ -214,17 +214,17 @@
   Code that is correct does not need the defense; code that is wrong must throw loudly and get caught by either `HookUtils`' or code's own exception catcher, and these
   guards only swallow the exception and hide the real error. Defenses and guards that are reasonable should still exist.
 - The libraries `DexKit` and `reflekt` are NOT something you are familiar with. Do NOT hallucinate their API surfaces. Read their code before using them.
-- In Compose, `LocalContext` always means the platform context and is never localized by WeKit.
-  Use standard Compose resource APIs for composable text and `LocalWeKitLocalizedContext` only
-  for imperative WeKit resource reads. Mixed platform/resource operations must read both locals.
+- In Compose, `LocalContext` always means the platform context and is never localized by Joker.
+  Use standard Compose resource APIs for composable text and `LocalJokerLocalizedContext` only
+  for imperative Joker resource reads. Mixed platform/resource operations must read both locals.
   Use `LocalActivity.current` for Activity-only APIs, and never add AndroidX owner forwarding to
-  `WeKitLocaleProvider`.
+  `JokerLocaleProvider`.
 
 ## Material 3 UI Standards
 
 Design reference: `~/coding/InstallerX-Revived` — when unsure how a settings page should
 look or behave, read its `app/src/main/java/com/rosan/installer/ui/page/main/widget/setting/`.
-WeKit's ported widget family lives in `app/src/main/java/dev/ujhhgtg/wekit/ui/content/m3/`.
+Joker's ported widget family lives in `app/src/main/java/dev/joker/ui/content/m3/`.
 
 ### Layout
 
@@ -271,8 +271,8 @@ Prefer these over raw Compose controls:
 
 ## Naming Conventions
 
-- 群聊: WeChat: chatroom; WeKit: group/群组
-- 朋友圈: WeChat: sns; WeKit: moment
+- 群聊: WeChat: chatroom; Joker: group/群组
+- 朋友圈: WeChat: sns; Joker: moment
 
 ## Context you need
 

@@ -1,6 +1,6 @@
 # 开发指南
 
-本页介绍 WeKit 的开发环境、构建命令和产物。专题说明请参阅：
+本页介绍 Joker 的开发环境、构建命令和产物。专题说明请参阅：
 
 - [DexKit 解析器测试](linux-dex-test.md)
 - [国际化开发指南](i18n.md)
@@ -10,8 +10,8 @@
 ## 克隆仓库
 
 ```bash
-git clone https://github.com/Ujhhgtg/WeKit.git --recursive
-cd WeKit
+git clone https://github.com/hbKnom/joker.git --recursive
+cd Joker
 ```
 
 ## 环境要求
@@ -97,7 +97,7 @@ exec cargo xtask "$@"
 该命令使用版本目录配置的 NDK，为 ARM64 生成 linker 配置，包括：
 
 ```text
-app/src/main/rust/wekit-native/.cargo/config.toml
+app/src/main/rust/joker-native/.cargo/config.toml
 ```
 
 完整 APK 模式的 `./x build` 和 `./x run` 会自动执行该步骤。直接运行
@@ -180,7 +180,7 @@ ANDROID_SERIAL=SERIAL ./x run
 可选：应用基准配置（Baseline Profile）：
 
 ```bash
-adb shell cmd package compile -m speed-profile dev.ujhhgtg.wekit
+adb shell cmd package compile -m speed-profile dev.joker
 ```
 
 ### 检查 Rust native 库
@@ -229,7 +229,7 @@ Magisk、KernelSU 或 APatch 的模块安装入口刷入。首次刷入后在 We
 ```
 
 APK 仍输出到 `app/build/outputs/apk/<standard|legacy>/<debug|release>/`。
-符号归档输出到 `target/zygisk-symbols/WeKit-<commit>-arm64-v8a-symbols.zip`。
+符号归档输出到 `target/zygisk-symbols/Joker-<commit>-arm64-v8a-symbols.zip`。
 注入器始终使用 release profile；`--release` 控制 Android 代码优化。
 
 模块安装器直接保存原始 APK 为 `$MODPATH/module.apk`，注入器从这份 APK 读取 DEX。
@@ -241,6 +241,6 @@ APK 仍输出到 `app/build/outputs/apk/<standard|legacy>/<debug|release>/`。
 `--root` 和 `--reboot` 仅用于 `--zygisk`。
 不再提供独立 `zygisk` 构建/刷入命令或按修改时间选择旧 ZIP 的选项。
 
-原生调试可在 `wekit-zygisk/native` 中直接运行 `cargo build --target aarch64-linux-android`；
+原生调试可在 `joker-zygisk/native` 中直接运行 `cargo build --target aarch64-linux-android`；
 先用 `./x configure` 准备 NDK 链接配置。正常出包始终使用 `./x build`，确保两个 Rust 库
 都已更新；Gradle 只负责消费这些 native 输入并打包签名。

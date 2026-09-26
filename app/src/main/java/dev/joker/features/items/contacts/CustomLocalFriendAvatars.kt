@@ -1,0 +1,859 @@
+package dev.joker.features.items.contacts
+
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
+import android.graphics.RectF
+import android.net.Uri
+import android.view.View
+import android.widget.BaseAdapter
+import android.widget.ImageView
+import android.widget.SpinnerAdapter
+import androidx.activity.ComponentActivity
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalContext
+import dev.joker.R
+import dev.joker.ui.content.m3.SwitchWidget
+import dev.joker.ui.content.m3.SegmentedColumn
+import dev.joker.ui.content.m3.BaseWidget
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.drawable.toDrawable
+import androidx.core.net.toUri
+import coil3.load
+import coil3.request.allowHardware
+import coil3.request.crossfade
+import dev.joker.reflekt.fields
+import dev.joker.reflekt.firstField
+import dev.joker.reflekt.firstMethod
+import dev.joker.reflekt.utils.Modifiers
+import dev.joker.reflekt.utils.isSubclassOf
+import dev.joker.reflekt.utils.makeAccessible
+import dev.joker.reflekt.utils.toClass
+import dev.joker.activity.TransparentActivity
+import dev.joker.constants.PackageNames
+import dev.joker.dexkit.abc.IResolveDex
+import dev.joker.dexkit.dsl.data
+import dev.joker.dexkit.dsl.dexClass
+import dev.joker.dexkit.dsl.dexMethod
+import dev.joker.features.api.core.WeDatabaseApi
+import dev.joker.features.api.core.models.IWeContact
+import dev.joker.features.api.ui.WeContactPrefsScreenApi
+import dev.joker.features.api.ui.WeContactPrefsScreenApi.IContactInfoProvider
+import dev.joker.features.api.ui.WeContactPrefsScreenApi.PreferenceItem
+import dev.joker.features.core.ClickableFeature
+import dev.joker.features.core.FeatureCategoryIds
+import dev.joker.i18n.LocalJokerLocalizedContext
+import dev.joker.preferences.WePrefs.Companion.prefOption
+import dev.joker.ui.content.AlertDialogContent
+import dev.joker.ui.content.BaseContactSelector
+import dev.joker.ui.content.Button
+import dev.joker.ui.content.DefaultColumn
+import dev.joker.ui.content.TextButton
+import dev.joker.ui.utils.showComposeDialog
+import dev.joker.utils.HostInfo
+import dev.joker.utils.WeLogger
+import dev.joker.utils.android.currentWxId
+import dev.joker.utils.android.showToast
+import dev.joker.utils.fs.KnownPaths
+import dev.joker.utils.reflection.BString
+import dev.joker.utils.reflection.bool
+import kotlinx.serialization.json.Json
+import org.luckypray.dexkit.DexKitBridge
+import java.lang.reflect.Field
+import java.lang.reflect.Method
+import java.text.Collator
+import java.util.Collections
+import java.util.Locale
+import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.io.path.div
+import kotlin.io.path.exists
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.math.min
+
+object CustomLocalFriendAvatars : ClickableFeature(), IContactInfoProvider, IResolveDex {
+
+    override val technicalId = "自定义好友本地头像"
+    override val nameRes = R.string.feature_custom_local_friend_avatars_name
+    override val categoryIds = listOf(FeatureCategoryIds.CONTACTS_GROUPS, FeatureCategoryIds.CONTACT_DETAILS)
+    override val descriptionRes = R.string.feature_custom_local_friend_avatars_description
+
+    private const val PREF_KEY = "custom_avatar"
+    private const val SEP = ";"
+    private const val VIEW_TAG_CUSTOM_AVATAR = 0x57434156
+
+    private const val TAG = "CustomLocalFriendAvatars"
+    private val avatarMapFile by lazy { KnownPaths.moduleData / "custom_avatars_map.json" }
+
+    // ji1.s.og, most of com.tencent.mm.feature.avatar.w calls this,
+    // e.g. Cg, ig, cg, og, rg
+    private val methodMvvmLoadAvatar1 by dexMethod(allowFailure = true) {
+        matcher {
+            paramTypes(
+                "android.widget.ImageView",
+                "java.lang.String",
+                "java.lang.String",
+                "float"
+            )
+            returnType(Void.TYPE)
+            usingEqStrings("MicroMsg.AvatarGetContactServiceHelper", "put stack into pool: ")
+        }
+    }
+
+    // ji1.s.pg: another exception
+    private val methodMvvmLoadAvatar2 by dexMethod(allowFailure = true) {
+        matcher {
+            declaredClass {
+                usingEqStrings("MicroMsg.AvatarGetContactServiceHelper", "put stack into pool: ")
+            }
+
+            usingEqStrings("imageView")
+            paramTypes(
+                "android.widget.ImageView",
+                "java.lang.String",
+            )
+            returnType(Void.TYPE)
+            usingNumbers(30000)
+        }
+    }
+
+    private val classAvatarDrawable by dexClass {
+        searchPackages("com.tencent.mm.feature.avatar")
+        matcher {
+            usingEqStrings("MicroMsg.AvatarDrawable", "imageView is null", "?access_token=")
+        }
+    }
+
+    // com.tencent.mm.feature.avatar.w.pg; an exception: this doesn't call methodMvvmLoadAvatar
+    private val methodFeatureAvatarSimple1 by dexMethod()
+
+    override fun resolveDex(dexKit: DexKitBridge) {
+        methodFeatureAvatarSimple1.setDescriptor(
+            dexKit.findMethod {
+                matcher {
+                    declaredClass(classAvatarDrawable.data.name)
+                    paramTypes(
+                        "android.widget.ImageView",
+                        "java.lang.String"
+                    )
+                    returnType(Void.TYPE)
+
+                    usingNumbers(0.5f)
+                }
+            }.singleOrNull() ?: dexKit.findMethod {
+                matcher {
+                    declaredClass(classAvatarDrawable.data.name)
+                    paramTypes(
+                        "android.widget.ImageView",
+                        "java.lang.String"
+                    )
+                    returnType(Void.TYPE)
+
+                    addInvoke {
+                        declaredClass = "android.view.View"
+                        name = "invalidate"
+                    }
+                }
+            }.single()
+        )
+    }
+
+    private val methodPluginsdkLoadAvatar by dexMethod(allowFailure = true) {
+        searchPackages("com.tencent.mm.pluginsdk.ui")
+        matcher {
+            paramTypes(
+                "android.widget.ImageView",
+                "java.lang.String"
+            )
+            returnType(Void.TYPE)
+            usingEqStrings("MicroMsg.AvatarDrawable")
+        }
+    }
+
+    private val methodHdGallerySetUsername by dexMethod(allowFailure = true) {
+        matcher {
+            declaredClass = "com.tencent.mm.plugin.setting.ui.setting.view.GetHdHeadImageGalleryView"
+            name = "setUsername"
+            paramTypes("java.lang.String")
+            returnType(Void.TYPE)
+        }
+    }
+
+    private val methodRoundBitmap by dexMethod(allowFailure = true) {
+        searchPackages("com.tencent.mm.sdk.platformtools")
+        matcher {
+            paramTypes("android.graphics.Bitmap", "boolean", "float")
+            returnType = "android.graphics.Bitmap"
+
+            addInvoke {
+                usingEqStrings("MicroMsg.BitmapUtil", "getRoundedCornerBitmap in bitmap is null")
+            }
+        }
+    }
+
+    // com.tencent.mm.pluginsdk.ui.u.b
+    val methodConversationAvatar by dexMethod {
+        searchPackages("com.tencent.mm.pluginsdk.ui")
+        matcher {
+            usingEqStrings("MicroMsg.AvatarDrawable", "imageView is null")
+            paramTypes(
+                "android.widget.ImageView",
+                "java.lang.String",
+                "float",
+                "boolean"
+            )
+            returnType = "void"
+
+            addInvoke {
+                declaredClass = "android.view.View"
+                name = "invalidate"
+            }
+        }
+    }
+
+    @Volatile
+    private var avatarMapCache: Map<String, String>? = null
+
+    @Volatile
+    var fallbackUsernameProvider: ((String) -> String?)? = null
+
+    private val roundedBitmapCache = ConcurrentHashMap<String, Bitmap>()
+    private val originalBitmapCache = ConcurrentHashMap<String, Bitmap>()
+    private val boundAvatarViews = Collections.synchronizedMap(WeakHashMap<ImageView, BoundAvatar>())
+
+    private lateinit var hdGalleryUsernameField: Field
+    private lateinit var hdGalleryThumbBitmapField: Field
+    private lateinit var hdGalleryHdBitmapField: Field
+    private lateinit var hdGalleryLoadedField: Field
+    private lateinit var hdGalleryAdapterField: Field
+    private lateinit var hdGallerySetAdapterMethod: Method
+
+    var avatarMap: Map<String, String>
+        get() = avatarMapCache ?: loadAvatarMap().also { avatarMapCache = it }
+        set(value) {
+            val normalized = value
+                .mapKeys { it.key.trim() }
+                .mapValues { it.value.trim() }
+                .filterKeys { it.isNotEmpty() }
+                .filterValues { it.isNotEmpty() }
+            avatarMapCache = normalized
+            saveAvatarMap(normalized)
+        }
+
+    override fun onEnable() {
+        WeContactPrefsScreenApi.addProvider(this)
+
+        listOf(
+            methodConversationAvatar,
+            methodMvvmLoadAvatar1,
+            methodMvvmLoadAvatar2,
+            methodFeatureAvatarSimple1,
+            methodPluginsdkLoadAvatar
+        ).forEach { handle ->
+            handle.method.hookBefore {
+                val conversationSurface = handle === methodConversationAvatar ||
+                    handle === methodMvvmLoadAvatar1 ||
+                    handle === methodMvvmLoadAvatar2
+                val allowed = if (conversationSurface) {
+                    isScopeEnabled(AvatarScope.CONVERSATION) || isScopeEnabled(AvatarScope.CHAT)
+                } else {
+                    anyLoaderScopeEnabled()
+                }
+                if (!allowed) return@hookBefore
+                val imageView = args.getOrNull(0) as? ImageView ?: return@hookBefore
+//            var wxId = args.getOrNull(1) as? String ?: return@hookBefore
+                val wxId = args.getOrNull(1) as? String ?: return@hookBefore
+
+                val redirectedId = fallbackUsernameProvider?.invoke(wxId)
+                if (redirectedId != null) {
+//                wxId = redirectedId
+                    args[1] = redirectedId
+                    return@hookBefore
+                }
+
+                if (applyCustomAvatar(imageView, wxId, roundAvatarRadiusFactor)) {
+                    result = null
+                }
+            }
+        }
+
+        methodHdGallerySetUsername.hookBefore {
+            if (!isScopeEnabled(AvatarScope.PROFILE)) return@hookBefore
+            val username = args.getOrNull(0) as? String ?: return@hookBefore
+            val gallery = thisObject
+            if (applyCustomHdAvatar(gallery, username)) {
+                result = null
+                (gallery as? View)?.let { view ->
+                    view.post { applyCustomHdAvatar(gallery, username) }
+                    view.postDelayed({ applyCustomHdAvatar(gallery, username) }, 300L)
+                }
+            }
+        }
+    }
+
+    override fun onDisable() {
+        WeContactPrefsScreenApi.removeProvider(this)
+        avatarMapCache = null
+    }
+
+    override fun getContactInfoItem(activity: Activity): List<PreferenceItem> {
+        val wxId = activity.currentWxId ?: return emptyList()
+        val hasCustomAvatar = avatarMap.containsKey(wxId)
+        return listOf(
+            PreferenceItem(
+                key = PREF_KEY,
+                title = activity.localizedContactsString(
+                    if (hasCustomAvatar) R.string.contacts_custom_avatar_change
+                    else R.string.contacts_custom_avatar_add,
+                ),
+                position = 1
+            )
+        )
+    }
+
+    override fun onItemClick(activity: Activity, key: String): Boolean {
+        if (key != PREF_KEY) return false
+        val wxId = activity.currentWxId ?: return true
+
+        if (avatarMap.containsKey(wxId)) {
+            showContactAvatarDialog(activity, wxId)
+        } else {
+            selectAvatarImage(activity, wxId)
+        }
+
+        return true
+    }
+
+    override fun onClick(context: ComponentActivity) {
+        showAvatarEntryDialog(context)
+    }
+
+    private fun showAvatarEntryDialog(context: ComponentActivity) {
+        showComposeDialog(context) {
+            SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
+                item {
+                    BaseWidget(
+                        iconPlaceholder = false,
+                        title = stringResource(R.string.contacts_custom_avatar_manage),
+                        onClick = {
+                            onDismiss()
+                            showAvatarManager(context)
+                        },
+                    )
+                }
+                item {
+                    BaseWidget(
+                        iconPlaceholder = false,
+                        title = stringResource(R.string.contacts_custom_avatar_scopes),
+                        onClick = {
+                            onDismiss()
+                            showAvatarScopes(context)
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    private fun showAvatarManager(context: ComponentActivity) {
+        showComposeDialog(context) {
+            val clearedMessage = stringResource(R.string.contacts_custom_avatar_cleared)
+            CustomAvatarManagerDialog(
+                contacts = remember { loadContacts() },
+                entries = avatarMap,
+                onDismiss = onDismiss,
+                onSelectImage = { wxId ->
+                    onDismiss()
+                    selectAvatarImage(context, wxId)
+                },
+                onRemove = { wxId ->
+                    removeAvatar(wxId)
+                    showToast(clearedMessage)
+                    onDismiss()
+                }
+            )
+        }
+    }
+
+    private fun showAvatarScopes(context: ComponentActivity) {
+        showComposeDialog(context) {
+            var scopes by remember { mutableStateOf(avatarScopes) }
+            AlertDialogContent(
+                title = { Text(stringResource(R.string.contacts_custom_avatar_scopes)) },
+                text = {
+                    SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
+                        AvatarScope.entries.forEach { scope ->
+                            item(key = scope.key) {
+                                SwitchWidget(
+                                    iconPlaceholder = false,
+                                    title = stringResource(scope.labelRes()),
+                                    checked = scope.key in scopes,
+                                    onCheckedChange = { on ->
+                                        scopes = if (on) scopes + scope.key else scopes - scope.key
+                                        avatarScopes = scopes
+                                    },
+                                )
+                            }
+                        }
+                        item(key = "shortcut_hint") {
+                            Text(
+                                text = stringResource(R.string.contacts_custom_avatar_shortcut_hint),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                },
+                dismissButton = {
+                    TextButton(onDismiss) { Text(stringResource(R.string.dialog_close)) }
+                },
+            )
+        }
+    }
+
+    private fun AvatarScope.labelRes(): Int = when (this) {
+        AvatarScope.CHAT -> R.string.contacts_custom_avatar_scope_chat
+        AvatarScope.CONTACTS -> R.string.contacts_custom_avatar_scope_contacts
+        AvatarScope.CONVERSATION -> R.string.contacts_custom_avatar_scope_conversation
+        AvatarScope.MOMENTS -> R.string.contacts_custom_avatar_scope_moments
+        AvatarScope.NOTIFICATIONS -> R.string.contacts_custom_avatar_scope_notifications
+        AvatarScope.OTHER -> R.string.contacts_custom_avatar_scope_other
+        AvatarScope.PROFILE -> R.string.contacts_custom_avatar_scope_profile
+        AvatarScope.SHORTCUTS -> R.string.contacts_custom_avatar_scope_shortcuts
+    }
+
+    private var roundAvatarRadiusFactor by prefOption("custom_avatar_round_radius", 0.5f)
+
+    // ----------------------------------------------------------------------------------------------
+    // Effective scopes (生效范围) — upstream 09-12 lets the custom avatar be limited to specific
+    // WeChat surfaces instead of replacing every avatar everywhere.
+    // ----------------------------------------------------------------------------------------------
+    enum class AvatarScope(val key: String) {
+        CHAT("chat"),
+        CONTACTS("contacts"),
+        CONVERSATION("conversation"),
+        MOMENTS("moments"),
+        NOTIFICATIONS("notifications"),
+        OTHER("other"),
+        PROFILE("profile"),
+        SHORTCUTS("shortcuts"),
+    }
+
+    private var avatarScopes by prefOption(
+        "custom_avatar_scopes",
+        AvatarScope.entries.mapTo(mutableSetOf()) { it.key },
+    )
+
+    private fun isScopeEnabled(scope: AvatarScope): Boolean = scope.key in avatarScopes
+
+    /** The generic avatar loaders are shared by several surfaces, so any of these enables them. */
+    private fun anyLoaderScopeEnabled(): Boolean = listOf(
+        AvatarScope.CHAT,
+        AvatarScope.CONTACTS,
+        AvatarScope.MOMENTS,
+        AvatarScope.OTHER,
+        AvatarScope.PROFILE,
+    ).any(::isScopeEnabled)
+
+    /** Bumped whenever the avatar set changes so surfaces that cache by username refresh. */
+    private var avatarRevision by prefOption("custom_avatar_revision", 0)
+
+    private fun effectiveRadiusFactor(loaderRadiusFactor: Float): Float {
+        return if (RoundAvatars.isEnabled) roundAvatarRadiusFactor else loaderRadiusFactor
+    }
+
+    private fun applyCustomAvatar(imageView: ImageView, username: String, radiusFactor: Float): Boolean {
+        val uri = avatarMap[username]?.takeIf { it.isNotBlank() } ?: return false
+        val effectiveRadiusFactor = effectiveRadiusFactor(radiusFactor)
+        val tag = "$username$SEP$uri$SEP$effectiveRadiusFactor"
+        imageView.setTag(VIEW_TAG_CUSTOM_AVATAR, tag)
+        boundAvatarViews[imageView] = BoundAvatar(username, uri, radiusFactor)
+        loadAvatarInto(imageView, uri, effectiveRadiusFactor)
+        imageView.post {
+            if (imageView.getTag(VIEW_TAG_CUSTOM_AVATAR) == tag) {
+                loadAvatarInto(imageView, uri, effectiveRadiusFactor)
+            }
+        }
+        return true
+    }
+
+    private fun loadAvatarInto(imageView: ImageView, uri: String, radiusFactor: Float) {
+        val targetSize = imageView.width
+            .takeIf { it > 0 }
+            ?: imageView.layoutParams?.width?.takeIf { it > 0 }
+            ?: 156
+
+        val shouldRound = RoundAvatars.isEnabled
+        val bitmap = decodeAvatarBitmap(
+            uri = uri,
+            targetSize = targetSize,
+            round = shouldRound,
+            radiusFactor = if (shouldRound) radiusFactor else 0f
+        ) ?: run {
+            imageView.load(uri) {
+                allowHardware(false)
+                crossfade(false)
+            }
+            return
+        }
+
+        imageView.scaleType = ImageView.ScaleType.FIT_XY
+        imageView.setImageDrawable(bitmap.toDrawable(imageView.resources))
+        imageView.invalidate()
+    }
+
+    private fun applyCustomHdAvatar(gallery: Any?, username: String): Boolean {
+        val uri = avatarMap[username]?.takeIf { it.isNotBlank() } ?: return false
+        val view = gallery as? View ?: return false
+        val width = view.resources.displayMetrics.widthPixels.coerceAtLeast(720)
+        val bitmap = decodeAvatarBitmap(uri, width, round = false, radiusFactor = 0f) ?: return false
+
+        runCatching {
+            ensureReflection()
+
+            hdGalleryUsernameField.set(gallery, username)
+            hdGalleryThumbBitmapField.set(gallery, bitmap)
+            hdGalleryHdBitmapField.set(gallery, bitmap)
+            hdGalleryLoadedField.setBoolean(gallery, true)
+            @Suppress("UNCHECKED_CAST")
+            val adapter = hdGalleryAdapterField.get(gallery) as? SpinnerAdapter
+            if (adapter is BaseAdapter) {
+                adapter.notifyDataSetChanged()
+            } else if (adapter != null) {
+                hdGallerySetAdapterMethod.invoke(gallery, adapter)
+            }
+            view.invalidate()
+        }.onFailure {
+            WeLogger.e(TAG, "failed to apply custom HD avatar for $username", it)
+            return false
+        }
+        return true
+    }
+
+    private fun decodeAvatarBitmap(uri: String, targetSize: Int, round: Boolean, radiusFactor: Float): Bitmap? {
+        val cacheKey = "$uri|$targetSize|$round|$radiusFactor"
+        val cache = if (round) roundedBitmapCache else originalBitmapCache
+        cache[cacheKey]?.takeIf { !it.isRecycled }?.let { return it }
+
+        val bitmap = runCatching {
+            HostInfo.application.contentResolver.openInputStream(uri.toUri())?.use { stream ->
+                android.graphics.BitmapFactory.decodeStream(stream)
+            }
+        }.getOrNull() ?: return null
+
+        val cropped = centerCrop(bitmap, targetSize, targetSize)
+        if (cropped !== bitmap && !bitmap.isRecycled) bitmap.recycle()
+
+        val result = if (round) roundBitmap(cropped, radiusFactor) else cropped
+        if (round && result !== cropped && !cropped.isRecycled) cropped.recycle()
+
+        cache[cacheKey] = result
+        trimBitmapCache(cache)
+        return result
+    }
+
+    private fun centerCrop(source: Bitmap, width: Int, height: Int): Bitmap {
+        val srcWidth = source.width
+        val srcHeight = source.height
+        if (srcWidth <= 0 || srcHeight <= 0) return source
+
+        val srcRatio = srcWidth.toFloat() / srcHeight
+        val dstRatio = width.toFloat() / height
+        val rect = if (srcRatio > dstRatio) {
+            val cropWidth = (srcHeight * dstRatio).toInt().coerceAtLeast(1)
+            val left = (srcWidth - cropWidth) / 2
+            Rect(left, 0, left + cropWidth, srcHeight)
+        } else {
+            val cropHeight = (srcWidth / dstRatio).toInt().coerceAtLeast(1)
+            val top = (srcHeight - cropHeight) / 2
+            Rect(0, top, srcWidth, top + cropHeight)
+        }
+
+        return createBitmap(width, height).also { out ->
+            Canvas(out).drawBitmap(source, rect, Rect(0, 0, width, height), Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                isFilterBitmap = true
+                isDither = true
+            })
+        }
+    }
+
+    private fun roundBitmap(source: Bitmap, radiusFactor: Float): Bitmap {
+        val radius = (min(source.width, source.height) * radiusFactor).coerceAtLeast(0f)
+        roundBitmapWithWeChat(source, radius)?.let { return it }
+        return roundBitmapFallback(source, radius)
+    }
+
+    private fun roundBitmapWithWeChat(source: Bitmap, radius: Float): Bitmap? {
+        return runCatching {
+            methodRoundBitmap.method.invoke(null, source, false, radius) as? Bitmap?
+        }.getOrNull()
+    }
+
+    private fun roundBitmapFallback(source: Bitmap, radius: Float): Bitmap {
+        val out = createBitmap(source.width, source.height)
+        val rect = RectF(0f, 0f, out.width.toFloat(), out.height.toFloat())
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            isDither = true
+            isFilterBitmap = true
+            color = -0x3f3f40
+        }
+
+        val path = Path().apply { addRoundRect(rect, radius, radius, Path.Direction.CW) }
+        Canvas(out).apply {
+            drawARGB(0, 0, 0, 0)
+            drawPath(path, paint)
+            paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+            drawBitmap(source, 0f, 0f, paint)
+            paint.xfermode = null
+        }
+        return out
+    }
+
+    private fun trimBitmapCache(cache: ConcurrentHashMap<String, Bitmap>) {
+        if (cache.size <= 24) return
+        cache.keys.take(cache.size - 24).forEach { key -> cache.remove(key) }
+    }
+
+    private fun showContactAvatarDialog(context: Context, wxId: String) {
+        val displayName = WeDatabaseApi.getDisplayName(wxId)
+        showComposeDialog(context) {
+            AlertDialogContent(
+                title = { Text(stringResource(R.string.contacts_custom_avatar_title)) },
+                text = {
+                    DefaultColumn {
+                        Text(displayName)
+                        Text(text = wxId, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                dismissButton = { TextButton(onDismiss) { Text(stringResource(R.string.dialog_cancel)) } },
+                confirmButton = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            removeAvatar(wxId)
+                            showToast(
+                                context.localizedContactsString(
+                                    R.string.contacts_custom_avatar_cleared_reopen,
+                                ),
+                            )
+                            onDismiss()
+                        }) { Text(stringResource(R.string.contacts_custom_avatar_clear)) }
+                        Button(onClick = {
+                            onDismiss()
+                            selectAvatarImage(context, wxId)
+                        }) { Text(stringResource(R.string.contacts_custom_avatar_change_action)) }
+                    }
+                }
+            )
+        }
+    }
+
+    fun selectAvatarImage(context: Context, wxId: String) {
+        TransparentActivity.launch(context) {
+            val launcher = registerForActivityResult(
+                ActivityResultContracts.PickVisualMedia()
+            ) { uri ->
+                finish()
+                if (uri == null) return@registerForActivityResult
+
+                persistReadPermission(uri)
+                setAvatar(wxId, uri.toString())
+                showToast(
+                    context.localizedContactsString(R.string.contacts_custom_avatar_set_reopen),
+                )
+            }
+            launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        }
+    }
+
+    private fun persistReadPermission(uri: Uri) {
+        runCatching {
+            HostInfo.application.contentResolver.takePersistableUriPermission(
+                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        }.onFailure { WeLogger.w(TAG, "failed to persist avatar uri permission: $uri", it) }
+    }
+
+    private fun setAvatar(wxId: String, uri: String) {
+        avatarMap = avatarMap + (wxId to uri)
+        avatarRevision += 1
+        clearBitmapCaches()
+    }
+
+    fun removeAvatar(wxId: String) {
+        avatarMap = avatarMap - wxId
+        avatarRevision += 1
+        clearBitmapCaches()
+    }
+
+    private fun clearBitmapCaches() {
+        roundedBitmapCache.clear()
+        originalBitmapCache.clear()
+    }
+
+    fun onRoundAvatarConfigChanged() {
+        clearBitmapCaches()
+        boundAvatarViews.entries.toList().forEach { (imageView, binding) ->
+            if (avatarMap[binding.username] != binding.uri) return@forEach
+            val radiusFactor = effectiveRadiusFactor(binding.loaderRadiusFactor)
+            val tag = "${binding.username}$SEP${binding.uri}$SEP$radiusFactor"
+            imageView.setTag(VIEW_TAG_CUSTOM_AVATAR, tag)
+            loadAvatarInto(imageView, binding.uri, radiusFactor)
+            imageView.post {
+                if (imageView.getTag(VIEW_TAG_CUSTOM_AVATAR) == tag) {
+                    loadAvatarInto(imageView, binding.uri, radiusFactor)
+                }
+            }
+        }
+    }
+
+    private fun ensureReflection() {
+        if (::hdGalleryUsernameField.isInitialized) return
+        val galleryClass = "${PackageNames.WECHAT}.plugin.setting.ui.setting.view.GetHdHeadImageGalleryView".toClass()
+        val mutableBitmapFields = galleryClass.fields {
+            type = Bitmap::class.java
+            modifiers { !it.contains(Modifiers.FINAL) }
+        }
+        hdGalleryThumbBitmapField = mutableBitmapFields[0].self
+        hdGalleryHdBitmapField = mutableBitmapFields[1].self
+        hdGalleryUsernameField = galleryClass.firstField {
+            type = BString
+            modifiers { !it.contains(Modifiers.FINAL) }
+        }.self.makeAccessible()
+        hdGalleryLoadedField = galleryClass.firstField { type = bool }.self.makeAccessible()
+        hdGalleryAdapterField = galleryClass.firstField { type { it isSubclassOf SpinnerAdapter::class } }.self.makeAccessible()
+        hdGallerySetAdapterMethod = galleryClass.firstMethod {
+            name = "setAdapter"
+            parameters(SpinnerAdapter::class)
+        }.self.makeAccessible()
+    }
+
+    private fun loadAvatarMap(): Map<String, String> {
+        if (!avatarMapFile.exists()) return emptyMap()
+        return runCatching {
+            val raw = avatarMapFile.readText()
+            Json.decodeFromString<Map<String, String>>(raw).filter { it.key.isNotBlank() && it.value.isNotBlank() }
+        }.getOrElse {
+            WeLogger.e(TAG, "failed to parse custom avatar map", it)
+            emptyMap()
+        }
+    }
+
+    private fun saveAvatarMap(value: Map<String, String>) {
+        runCatching {
+            val raw = Json.encodeToString(value)
+            avatarMapFile.writeText(raw)
+        }.onFailure { WeLogger.e(TAG, "failed to save custom avatar map", it) }
+    }
+
+    private fun loadContacts(): List<IWeContact> {
+        return runCatching {
+            (WeDatabaseApi.getFriends() + WeDatabaseApi.getGroups()).sortedBy { it.displayName.ifBlank { it.wxId } }
+        }.getOrElse {
+            WeLogger.e(TAG, "failed to load contacts for custom avatar manager", it)
+            emptyList()
+        }
+    }
+
+    @Composable
+    private fun CustomAvatarManagerDialog(
+        contacts: List<IWeContact>,
+        entries: Map<String, String>,
+        onDismiss: () -> Unit,
+        onSelectImage: (String) -> Unit,
+        onRemove: (String) -> Unit
+    ) {
+        var searchQuery by remember { mutableStateOf("") }
+        val chinaCollator = remember { Collator.getInstance(Locale.CHINA) }
+        val localizedContext = LocalJokerLocalizedContext.current
+
+        val fullContactsList = remember(contacts, entries) {
+            val entryContacts = entries.keys.map { wxId ->
+                contacts.firstOrNull { it.wxId == wxId } ?: SimpleContact(wxId, WeDatabaseApi.getDisplayName(wxId))
+            }
+            (entryContacts + contacts).distinctBy { it.wxId }
+        }
+
+        val filteredContacts = remember(searchQuery, fullContactsList, chinaCollator) {
+            fullContactsList.filter {
+                it.displayName.contains(searchQuery, ignoreCase = true) ||
+                        it.wxId.contains(searchQuery, ignoreCase = true)
+            }.sortedWith(
+                compareBy<IWeContact> { it.displayName.isBlank() }
+                    .thenComparator { c1, c2 -> chinaCollator.compare(c1.displayName, c2.displayName) }
+            )
+        }
+
+        BaseContactSelector(
+            title = stringResource(R.string.feature_custom_local_friend_avatars_name),
+            searchQuery = searchQuery,
+            onSearchQueryChange = { searchQuery = it },
+            filteredContacts = filteredContacts,
+            confirmButtonText = "",
+            confirmButtonEnabled = false,
+            showConfirmButton = false,
+            dismissButtonText = stringResource(R.string.dialog_close),
+            onDismiss = onDismiss,
+            onConfirm = {},
+            selectionKey = entries,
+            isSelected = { it.wxId in entries.keys },
+            avatarModelProvider = { contact -> entries[contact.wxId] ?: contact.avatarUrl },
+            subtitleProvider = { contact ->
+                if (contact.wxId in entries.keys) {
+                    localizedContext.localizedContactsString(
+                        R.string.contacts_custom_avatar_configured,
+                        contact.wxId,
+                    )
+                } else {
+                    contact.wxId
+                }
+            },
+            trailingControl = { contact ->
+                if (contact.wxId in entries.keys) {
+                    TextButton(onClick = { onRemove(contact.wxId) }) {
+                        Text(stringResource(R.string.contacts_custom_avatar_clear))
+                    }
+                } else {
+                    TextButton(onClick = { onSelectImage(contact.wxId) }) {
+                        Text(stringResource(R.string.contacts_custom_avatar_select))
+                    }
+                }
+            },
+            onItemClick = { contact -> onSelectImage(contact.wxId) }
+        )
+    }
+
+    private data class SimpleContact(
+        override val wxId: String,
+        override val nickname: String
+    ) : IWeContact {
+        override val displayName: String get() = nickname
+        override val avatarUrl: String get() = ""
+    }
+
+    private data class BoundAvatar(
+        val username: String,
+        val uri: String,
+        val loaderRadiusFactor: Float
+    )
+}

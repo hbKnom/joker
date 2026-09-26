@@ -4,12 +4,12 @@ from typing import TYPE_CHECKING
 
 from java import dynamic_proxy  # ty: ignore[unresolved-import]
 
-from dev.ujhhgtg.wekit.features.api.core import WeDatabaseListenerApi  # ty: ignore[unresolved-import]
-from wekit.dexkit import MethodMatcher, eq
-from wekit.runtime import PluginContext
+from dev.joker.features.api.core import WeDatabaseListenerApi  # ty: ignore[unresolved-import]
+from joker.dexkit import MethodMatcher, eq
+from joker.runtime import PluginContext
 
 if TYPE_CHECKING:
-    from wekit.runtime import HookParameter
+    from joker.runtime import HookParameter
 
 
 def setup(ctx: PluginContext) -> None:

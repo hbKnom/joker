@@ -713,7 +713,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root =
-            std::env::temp_dir().join(format!("wekit-i18n-{label}-{}-{nonce}", std::process::id()));
+            std::env::temp_dir().join(format!("joker-i18n-{label}-{}-{nonce}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
         root
     }

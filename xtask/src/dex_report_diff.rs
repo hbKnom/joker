@@ -846,7 +846,7 @@ mod tests {
     #[test]
     fn offline_command_writes_details_before_failing_and_preserves_inputs() {
         let root = std::env::temp_dir().join(format!(
-            "wekit-dex-diff-{}-{}",
+            "joker-dex-diff-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

@@ -19,7 +19,7 @@ kotlin {
 }
 
 configure<LibraryExtension> {
-    namespace = "dev.ujhhgtg.wekit.stubs"
+    namespace = "dev.joker.stubs"
 
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()

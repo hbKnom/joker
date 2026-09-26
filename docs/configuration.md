@@ -6,11 +6,11 @@
 
 ### 从微信设置进入
 
-微信首页 -> 「我」-> 「设置」-> 「WeKit 设置」
+微信首页 -> 「我」-> 「设置」-> 「Joker 设置」
 
 ### 从微信主页加号进入
 
-微信首页 -> 右上角 `+` 号 -> 菜单中点击「WeKit 设置」
+微信首页 -> 右上角 `+` 号 -> 菜单中点击「Joker 设置」
 
 ### 从主页浮动按钮进入
 
@@ -64,7 +64,7 @@
 模块运行时的文件存放在以下位置:
 
 ```text
-/sdcard/Android/data/<宿主包名>/WeKit/
+/sdcard/Android/data/<宿主包名>/Joker/
 ├── logs/                     # 运行日志
 ├── assets/                   # 媒体资源 (需手动创建)
 ├── scripts_java/             # Java 脚本 (需手动创建)
@@ -96,8 +96,8 @@ Java 脚本目录存放于 `<模块数据>/scripts_java/` 目录下, 该目录�
 
 模块的配置数据 (MMKV 文件) 存放在:
 
-- **单用户**: `/data/data/<宿主包名>/files/mmkv/{wekit_prefs,wekit_prefs.crc}`
-- **多用户 (如双开微信)**: `/data/user/<宿主安卓用户 ID>/<宿主包名>/files/mmkv/{wekit_prefs,wekit_prefs.crc}`
+- **单用户**: `/data/data/<宿主包名>/files/mmkv/{joker_prefs,joker_prefs.crc}`
+- **多用户 (如双开微信)**: `/data/user/<宿主安卓用户 ID>/<宿主包名>/files/mmkv/{joker_prefs,joker_prefs.crc}`
 
 > 如果模块功能失效或设置异常, 可以尝试清除上述 MMKV 文件 (会丢失所有设置)。
 

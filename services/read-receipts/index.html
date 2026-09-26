@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WeKit Read Receipts Dashboard</title>
+    <title>Joker Read Receipts Dashboard</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -1218,7 +1218,7 @@
                     <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
                 </svg>
             </div>
-            <h2>WeKit Dashboard</h2>
+            <h2>Joker Dashboard</h2>
             <p class="login-sub">请输入账号密码以访问面板</p>
             <form id="loginForm" onsubmit="return doLogin(event)">
                 <div class="login-field">
@@ -1244,7 +1244,7 @@
                         <circle cx="12" cy="12" r="3"></circle>
                     </svg>
                 </span>
-                WeKit Read Receipts Dashboard
+                Joker Read Receipts Dashboard
             </h1>
             <div class="header-actions">
                 <div class="header-clock" id="headerClock" title="当前北京时间 (UTC+8)">--:--:--</div>
@@ -1600,7 +1600,7 @@
         // ── Theme (dark / light) ──
         function applyTheme(theme) {
             document.documentElement.setAttribute('data-theme', theme);
-            try { localStorage.setItem('wekit-theme', theme); } catch (e) {}
+            try { localStorage.setItem('joker-theme', theme); } catch (e) {}
             const label = document.getElementById('themeLabel');
             if (label) label.textContent = theme === 'dark' ? '浅色' : '深色';
         }
@@ -1611,7 +1611,7 @@
         }
         function initTheme() {
             let saved = null;
-            try { saved = localStorage.getItem('wekit-theme'); } catch (e) {}
+            try { saved = localStorage.getItem('joker-theme'); } catch (e) {}
             const theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
             applyTheme(theme);
         }
@@ -1934,7 +1934,7 @@
             const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = 'wekit-read-receipts-export.csv';
+            a.download = 'joker-read-receipts-export.csv';
             a.click();
             URL.revokeObjectURL(a.href);
             showToast(`已导出 ${rows.length - 1} 条（当前页）`, 'success');
@@ -2125,7 +2125,7 @@
         }
 
         // Render WHO read the message for a read row:
-        // 1. precise reader (wxid + nickname) reported by the WeKit client that
+        // 1. precise reader (wxid + nickname) reported by the Joker client that
         //    rendered the incoming probing message — works for group chats too;
         // 2. fallback: the conversation context carried on the pixel URL (in a
         //    direct chat the receiver IS the reader, so talker/chatName are
@@ -2141,9 +2141,9 @@
                     <div class="chat-name" title="${escapeHtml(readerId + (readerName ? ' (' + readerName + ')' : ''))}" style="font-weight:600;">${escapeHtml(readerId)}${readerName ? ' <span style="color:#888; font-weight:400; font-size:12px;">(' + escapeHtml(readerName) + ')</span>' : ''}</div>
                 </div>`;
             }
-            // No precise WeKit reader: cross-check hint from the server — this IP
+            // No precise Joker reader: cross-check hint from the server — this IP
             // was recently attributed to a specific member (possibly not installed
-            // WeKit on THIS message, or sharing the same egress IP). HINT only.
+            // Joker on THIS message, or sharing the same egress IP). HINT only.
             const likelyId = (r.likely_reader_wx_id || '').trim();
             const likelyName = (r.likely_reader_nickname || '').trim();
             if (likelyId) {
@@ -2157,16 +2157,16 @@
             }
             if (r.talker || r.chat_name) {
                 const isGroup = (r.talker || '').endsWith('@chatroom');
-                const hint = isGroup ? '<div style="font-size:11px; color:#bbb; margin-top:2px;">群成员未装 WeKit，无法识别身份</div>' : '';
+                const hint = isGroup ? '<div style="font-size:11px; color:#bbb; margin-top:2px;">群成员未装 Joker，无法识别身份</div>' : '';
                 return chatBadge(r.talker, r.chat_name) + hint;
             }
             return '';
         }
 
-        // Group member roster panel: uploaded by the sender's WeKit client when
+        // Group member roster panel: uploaded by the sender's Joker client when
         // the probe was sent into a group. Lets you cross-check IP rows against
         // EVERY member of the group — including members who did NOT install
-        // WeKit. Members identified as readers (via WeKit) are highlighted.
+        // Joker. Members identified as readers (via Joker) are highlighted.
         // Honest caveat: WeChat never reports who read a message, so un-
         // instrumented members can only be matched by cross-referencing IPs.
         function renderGroupMembers(members, reads) {
@@ -2193,7 +2193,7 @@
                         ${chips}
                     </div>
                     <div style="margin-top:8px; font-size:11px; color:#aaa;">
-                        提示：微信不提供"谁已读"回执。✓ = 装了 WeKit 且已上报的成员（精确）；未装 WeKit 的成员请对照上方 IP/城市交叉判断。
+                        提示：微信不提供"谁已读"回执。✓ = 装了 Joker 且已上报的成员（精确）；未装 Joker 的成员请对照上方 IP/城市交叉判断。
                     </div>
                 </details>`;
         }
@@ -2318,7 +2318,7 @@
         function exportAll(type) {
             const a = document.createElement('a');
             a.href = `${API_BASE}/export?type=${type}`;
-            a.download = `wekit-${type}.csv`;
+            a.download = `joker-${type}.csv`;
             document.body.appendChild(a);
             a.click();
             a.remove();
@@ -2656,7 +2656,7 @@
             };
 
             let pref = 'on';
-            try { pref = localStorage.getItem('wekit-bgm') || 'on'; } catch (e) {}
+            try { pref = localStorage.getItem('joker-bgm') || 'on'; } catch (e) {}
 
             // Browsers block autoplay until the first user gesture: try now,
             // otherwise wait for the first click / tap / keypress.
@@ -2685,7 +2685,7 @@
                     audio.pause();
                     sync(false);
                 }
-                try { localStorage.setItem('wekit-bgm', audio.paused ? 'off' : 'on'); } catch (err) {}
+                try { localStorage.setItem('joker-bgm', audio.paused ? 'off' : 'on'); } catch (err) {}
             });
 
             audio.addEventListener('pause', () => sync(false));
@@ -2825,7 +2825,7 @@
                 if (!pet || !body) return;
 
                 const pawState = { left: 0, right: 0 };
-                const LS = 'wekit-bongo';
+                const LS = 'joker-bongo';
                 let hidden = false;
                 try { hidden = localStorage.getItem(LS) === 'off'; } catch (e) {}
                 if (hidden) pet.classList.add('is-hidden');
@@ -2948,14 +2948,14 @@
                     if (!drag) return;
                     pet.classList.remove('dragging');
                     drag = null;
-                    try { localStorage.setItem('wekit-bongo-pos', JSON.stringify({ l: pet.offsetLeft, t: pet.offsetTop })); } catch (e) {}
+                    try { localStorage.setItem('joker-bongo-pos', JSON.stringify({ l: pet.offsetLeft, t: pet.offsetTop })); } catch (e) {}
                 }
                 body.addEventListener('pointerup', endDrag);
                 body.addEventListener('pointercancel', endDrag);
 
                 // restore saved position
                 try {
-                    const p = JSON.parse(localStorage.getItem('wekit-bongo-pos') || 'null');
+                    const p = JSON.parse(localStorage.getItem('joker-bongo-pos') || 'null');
                     if (p && typeof p.l === 'number' && isFinite(p.l)) {
                         pet.style.left = p.l + 'px';
                         pet.style.top = p.t + 'px';

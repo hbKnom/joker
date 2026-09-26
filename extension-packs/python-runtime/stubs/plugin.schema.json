@@ -14,7 +14,7 @@
       "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$",
       "default": "main"
     },
-    "minWeKitVersionCode": { "type": "integer", "minimum": 0 },
+    "minJokerVersionCode": { "type": "integer", "minimum": 0 },
     "processes": { "const": ["main"] }
   },
   "additionalProperties": false

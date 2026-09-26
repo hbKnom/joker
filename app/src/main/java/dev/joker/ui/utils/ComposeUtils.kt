@@ -1,0 +1,103 @@
+package dev.joker.ui.utils
+
+import android.app.Dialog
+import android.content.Context
+import android.graphics.Color
+import android.view.View
+import android.view.Window
+import androidx.activity.ComponentDialog
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
+import androidx.core.graphics.drawable.toDrawable
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import dev.joker.i18n.LocaleResourceMode
+import dev.joker.i18n.JokerLocaleProvider
+import dev.joker.ui.content.nuke.NukeModuleTheme
+import dev.joker.ui.utils.theme.InjectedUiTheme
+import dev.joker.ui.utils.theme.ModuleTheme
+import dev.joker.ui.utils.theme.SettingsUiEngine
+import dev.joker.ui.utils.theme.ThemeSettings
+import dev.joker.utils.monet.MonetColors
+
+// useful for showing a compose dialog in non-compose context,
+// or when you don't want to manage the state for a dialog inside a composable
+//
+// note that you should use AlertDialogContent instead of AlertDialog inside 'content' to avoid
+// creating multiple windows
+fun showComposeDialog(
+    context: Context,
+    directlyDismissable: Boolean = true,
+    content: @Composable ShowComposeDialogScope.() -> Unit
+) {
+    val context = CommonContextWrapper(context)
+
+    val dialog = ComponentDialog(
+        context,
+        android.R.style.Theme_DeviceDefault_Light_Dialog_NoActionBar_MinWidth
+    )
+
+    dialog.apply {
+        window!!.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            requestFeature(Window.FEATURE_NO_TITLE)
+        }
+
+        setCancelable(directlyDismissable)
+
+        val scope = ShowComposeDialogScope(context, this, window!!, ::dismiss)
+
+        setContentView(
+            ComposeView(context).apply {
+                setContent {
+                    JokerLocaleProvider(mode = LocaleResourceMode.InjectedHost) {
+                        val dialogContent: @Composable () -> Unit = {
+                            Box(
+                                modifier = Modifier.wrapContentSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                scope.content()
+                            }
+                        }
+                        // 每个 Joker 弹窗都是「Joker 自己塞进微信界面」的组件：莫奈覆盖包改的是宿主
+                        // 资源 id，改不到我们的主题，所以引擎生效时这里直接接引擎色板（[MonetColors]，
+                        // 关闭开关即清零）。引擎没开时保持原来的 ModuleTheme，观感不变。
+                        val themedContent: @Composable () -> Unit = {
+                            if (MonetColors.isActive) {
+                                InjectedUiTheme(content = dialogContent)
+                            } else {
+                                ModuleTheme(content = dialogContent)
+                            }
+                        }
+                        if (ThemeSettings.uiEngine == SettingsUiEngine.NUKE) {
+                            NukeModuleTheme(content = themedContent)
+                        } else {
+                            themedContent()
+                        }
+                    }
+                }
+            }
+        )
+
+        window!!.setBackgroundDrawable(Color.TRANSPARENT.toDrawable())
+        show()
+    }
+}
+
+class ShowComposeDialogScope(
+    val context: Context,
+    val dialog: Dialog,
+    val window: Window,
+    val onDismiss: () -> Unit
+)
+
+fun View.setLifecycleOwner(lifecycleOwner: XposedLifecycleOwner) {
+    setViewTreeLifecycleOwner(lifecycleOwner)
+    setViewTreeViewModelStoreOwner(lifecycleOwner)
+    setViewTreeSavedStateRegistryOwner(lifecycleOwner)
+}

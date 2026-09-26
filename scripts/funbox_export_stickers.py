@@ -14,12 +14,12 @@ This is a PC-side data-export utility.  It does not load FunBox as an Xposed mod
 not execute any downloaded code.
 
 Authoritative reverse-engineering references:
-  /home/ujhhgtg/coding/funbox_deobf
-  /home/ujhhgtg/coding/funbox_deobf/output/decrypted_strings.json
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_shell_apk
-  /home/ujhhgtg/coding/funbox_deobf_main/funbox_payload
-  /home/ujhhgtg/coding/wechat_8069
-  /home/ujhhgtg/coding/wechat_8074
+  /home/joker/coding/funbox_deobf
+  /home/joker/coding/funbox_deobf/output/decrypted_strings.json
+  /home/joker/coding/funbox_deobf_main/funbox_shell_apk
+  /home/joker/coding/funbox_deobf_main/funbox_payload
+  /home/joker/coding/wechat_8069
+  /home/joker/coding/wechat_8074
   scripts/funbox_api_probe.py (GHd, TEA, SM2/SM3, resolver, operation 10/2 and object AES)
 """
 
@@ -56,7 +56,7 @@ from funbox_api_probe import (
 OP_PROBE = 100
 OP_CATALOG = 10
 OP_PACK_CONTENTS = 2
-USER_AGENT = "WeKit-FunBox-Sticker-Exporter/1.0"
+USER_AGENT = "Joker-FunBox-Sticker-Exporter/1.0"
 STATE_VERSION = 1
 DEFAULT_WORKERS = 4
 DEFAULT_RETRIES = 3

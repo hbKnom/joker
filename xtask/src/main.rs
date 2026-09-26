@@ -1,14 +1,14 @@
-//! WeKit xtask — build automation for the WeKit Android project.
+//! Joker xtask — build automation for the Joker Android project.
 //!
 //! Usage: cargo xtask <COMMAND>
 //!
-//!   configure            Regenerate wekit-native/.cargo/config.toml from the local NDK.
+//!   configure            Regenerate joker-native/.cargo/config.toml from the local NDK.
 //!   build [OPTIONS]      Build the project (default: full Android debug build via Gradle).
 //!   cloudflared-build    Build the embedded cloudflared bridge for Android.
 //!   zygisk <COMMAND>     Build, package, and install the Zygisk module.
 //!   check [OPTIONS]      Run `cargo check` on the native library.
 //!   clippy [OPTIONS]     Run `cargo clippy` on the native library.
-//!   dex-test [OPTIONS]   Resolve WeKit DexKit targets against desktop APKs.
+//!   dex-test [OPTIONS]   Resolve Joker DexKit targets against desktop APKs.
 //!   dex-test-ci          Prepare APK sources and mutable Dex-Test Release assets.
 //!   i18n-check           Validate the Android English and Chinese resource catalogs.
 //!
@@ -67,12 +67,12 @@ struct GoAndroidTarget {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ApkNativeBuildStep {
     Configure,
-    WeKitNative,
+    JokerNative,
 }
 
 const APK_NATIVE_BUILD_STEPS: &[ApkNativeBuildStep] = &[
     ApkNativeBuildStep::Configure,
-    ApkNativeBuildStep::WeKitNative,
+    ApkNativeBuildStep::JokerNative,
 ];
 
 // Order matches the template in ConfigureCargoTask.kt so that
@@ -87,9 +87,9 @@ static ABI_TABLE: &[AbiSpec] = &[AbiSpec {
 /// ABIs included in release APKs (the default build targets).
 static RELEASE_ABIS: &[&str] = &["arm64-v8a"];
 
-const ZYGISK_CARGO_PACKAGE: &str = "wekit-zygisk";
-const ZYGISK_MODULE_ID: &str = "wekit_zygisk";
-const ZYGISK_MODULE_NAME: &str = "WeKit";
+const ZYGISK_CARGO_PACKAGE: &str = "joker-zygisk";
+const ZYGISK_MODULE_ID: &str = "joker_zygisk";
+const ZYGISK_MODULE_NAME: &str = "Joker";
 
 struct ZygiskAbiSpec {
     android_name: &'static str,
@@ -108,7 +108,7 @@ static ZYGISK_ABIS: &[ZygiskAbiSpec] = &[ZygiskAbiSpec {
 #[derive(Parser)]
 #[command(
     name = "cargo xtask",
-    about = "WeKit build automation",
+    about = "Joker build automation",
     long_about = None,
     disable_help_subcommand = true,
 )]
@@ -119,7 +119,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Regenerate wekit-native/.cargo/config.toml from the local NDK.
+    /// Regenerate joker-native/.cargo/config.toml from the local NDK.
     Configure,
 
     /// Build the project.
@@ -293,7 +293,7 @@ struct ZygiskBuildArgs {
     #[arg(long)]
     skip_apk_build: bool,
 
-    /// Also write an unstripped native-symbol ZIP under wekit-zygisk/symbols/.
+    /// Also write an unstripped native-symbol ZIP under joker-zygisk/symbols/.
     #[arg(long)]
     save_symbols: bool,
 }
@@ -365,7 +365,7 @@ fn print_banner() {
     | |/ |/ /  __/ /| |/ / /_
     |__/|__/\___/_/ |_/_/\__/
 
-[WeKit] WeChat, now with superpowers
+[Joker] WeChat, now with superpowers
 "#
     );
 }
@@ -404,17 +404,17 @@ pub(crate) fn workspace_root() -> PathBuf {
         }
         dir = dir
             .parent()
-            .unwrap_or_else(|| panic!("workspace root not found; run from inside the WeKit repo"))
+            .unwrap_or_else(|| panic!("workspace root not found; run from inside the Joker repo"))
             .to_owned();
     }
 }
 
 fn native_crate_dir(root: &Path) -> PathBuf {
-    root.join("app/src/main/rust/wekit-native")
+    root.join("app/src/main/rust/joker-native")
 }
 
 fn cloudflared_bridge_dir(root: &Path) -> PathBuf {
-    root.join("app/src/main/go/wekit-cloudflared")
+    root.join("app/src/main/go/joker-cloudflared")
 }
 
 fn jni_libs_dir(root: &Path) -> PathBuf {
@@ -446,7 +446,7 @@ fn proot_cache_key(root: &Path, ndk: &Path) -> Result<String> {
     let patch = fs::read(proot_patch_path(root))?;
     let build_script = fs::read(proot_source_dir(root).join("tools/build-static-aarch64.sh"))?;
     let mut hasher = Sha256::new();
-    hasher.update(b"wekit-proot-cache-v1\0");
+    hasher.update(b"joker-proot-cache-v1\0");
     hasher.update(PROOT_COMMIT.as_bytes());
     hasher.update(ndk.to_string_lossy().as_bytes());
     hasher.update(MIN_SDK.to_le_bytes());
@@ -495,7 +495,7 @@ fn chroot_cleanup_artifact_paths(root: &Path, spec: &AbiSpec) -> (PathBuf, PathB
 }
 
 fn zygisk_dir(root: &Path) -> PathBuf {
-    root.join("wekit-zygisk")
+    root.join("joker-zygisk")
 }
 
 // ── ABI resolution ─────────────────────────────────────────────────────────────
@@ -688,22 +688,22 @@ fn task_configure() -> Result<()> {
 
     let out = out.trim_end_matches('\n').to_owned() + "\n";
 
-    // Write for wekit-native
+    // Write for joker-native
     let config_path = native_crate_dir(&root).join(".cargo/config.toml");
     fs::create_dir_all(config_path.parent().unwrap())?;
     fs::write(&config_path, &out)
         .with_context(|| format!("failed to write {}", config_path.display()))?;
     println!("configure: wrote {}", config_path.display());
 
-    // Write for wekit-zygisk (same linker config + extra linker flags for symbol visibility)
+    // Write for joker-zygisk (same linker config + extra linker flags for symbol visibility)
     let zygisk_config_path = zygisk_dir(&root).join("native/.cargo/config.toml");
     fs::create_dir_all(zygisk_config_path.parent().unwrap())?;
     fs::write(&zygisk_config_path, &out)
         .with_context(|| format!("failed to write {}", zygisk_config_path.display()))?;
     println!("configure: wrote {}", zygisk_config_path.display());
 
-    // Write for wekit-llama (same linker config; llama-cpp-sys-2's build.rs drives its own cmake)
-    let llama_config_path = root.join("app/src/main/rust/wekit-llama/.cargo/config.toml");
+    // Write for joker-llama (same linker config; llama-cpp-sys-2's build.rs drives its own cmake)
+    let llama_config_path = root.join("app/src/main/rust/joker-llama/.cargo/config.toml");
     fs::create_dir_all(llama_config_path.parent().unwrap())?;
     fs::write(&llama_config_path, &out)
         .with_context(|| format!("failed to write {}", llama_config_path.display()))?;
@@ -760,7 +760,7 @@ fn task_prepare_apk_native_inputs(abi_args: &[String]) -> Result<()> {
     for step in apk_native_build_steps() {
         match step {
             ApkNativeBuildStep::Configure => task_configure()?,
-            ApkNativeBuildStep::WeKitNative => task_build_native(abi_args)?,
+            ApkNativeBuildStep::JokerNative => task_build_native(abi_args)?,
         }
     }
     Ok(())
@@ -943,9 +943,9 @@ fn task_build_native(abi_args: &[String]) -> Result<()> {
         let so_src = root
             .join("target")
             .join(spec.cargo_triple)
-            .join("release/libwekit_native.so");
+            .join("release/libjoker_native.so");
         let so_dst_dir = jni_libs_dir(&root).join(spec.android_name);
-        let so_dst = so_dst_dir.join("libwekit_native.so");
+        let so_dst = so_dst_dir.join("libjoker_native.so");
 
         fs::create_dir_all(&so_dst_dir)
             .with_context(|| format!("could not create {}", so_dst_dir.display()))?;
@@ -1054,7 +1054,7 @@ pub(crate) fn task_build_cloudflared(abi_args: &[String]) -> Result<()> {
         let build_dir = root.join("target/cloudflared").join(spec.android_name);
         fs::create_dir_all(&build_dir)
             .with_context(|| format!("could not create {}", build_dir.display()))?;
-        let so_src = build_dir.join("libwekit_cloudflared.so");
+        let so_src = build_dir.join("libjoker_cloudflared.so");
         println!(
             "cloudflared-build: {} (android/{})",
             spec.android_name, target.arch
@@ -1093,7 +1093,7 @@ pub(crate) fn task_build_cloudflared(abi_args: &[String]) -> Result<()> {
         let so_dst_dir = jni_libs_dir(&root).join(spec.android_name);
         fs::create_dir_all(&so_dst_dir)
             .with_context(|| format!("could not create {}", so_dst_dir.display()))?;
-        let so_dst = so_dst_dir.join("libwekit_cloudflared.so");
+        let so_dst = so_dst_dir.join("libjoker_cloudflared.so");
         fs::copy(&so_src, &so_dst).with_context(|| {
             format!("could not copy {} → {}", so_src.display(), so_dst.display())
         })?;
@@ -1346,11 +1346,11 @@ fn task_zygisk_build(args: &ZygiskBuildArgs) -> Result<PathBuf> {
     let apk_profile = args.apk_profile.resolve();
     let zygisk_profile = args.zygisk_profile.resolve();
     if !args.skip_apk_build {
-        // Gradle does NOT compile wekit-native — the `configureCargo` / native-build tasks were
+        // Gradle does NOT compile joker-native — the `configureCargo` / native-build tasks were
         // removed from the build script when the toolchain moved into xtask, so `assemble*` only
         // packages whatever prebuilt .so already sits in app/src/main/jniLibs. `task_build_android`
         // and `task_run` account for that; this path used to not, which meant `./x zygisk build`
-        // and `./x zygisk flash` silently shipped a stale libwekit_native.so no matter how many
+        // and `./x zygisk flash` silently shipped a stale libjoker_native.so no matter how many
         // times the Rust sources changed.
         //
         // Build every supported ABI before Gradle packages the Zygisk payload APK.
@@ -1391,7 +1391,7 @@ fn apk_abis(path: &Path) -> Result<Vec<&'static str>> {
         .iter()
         .filter_map(|abi| {
             archive
-                .by_name(&format!("lib/{}/libwekit_native.so", abi.android_name))
+                .by_name(&format!("lib/{}/libjoker_native.so", abi.android_name))
                 .ok()
                 .map(|_| abi.android_name)
         })
@@ -1412,7 +1412,7 @@ fn resolve_zygisk_payload_apk(
     let candidates = if let Some(path) = provided {
         vec![
             path.canonicalize()
-                .with_context(|| format!("WeKit APK does not exist: {}", path.display()))?,
+                .with_context(|| format!("Joker APK does not exist: {}", path.display()))?,
         ]
     } else {
         let output_dir = root.join("app/build/outputs/apk");
@@ -1437,7 +1437,7 @@ fn resolve_zygisk_payload_apk(
     let mut resolved: Option<(bool, std::time::SystemTime, PathBuf)> = None;
     for candidate in candidates {
         if !candidate.is_file() {
-            bail!("WeKit APK does not exist: {}", candidate.display());
+            bail!("Joker APK does not exist: {}", candidate.display());
         }
         let abis = apk_abis(&candidate)?;
         if !ZYGISK_ABIS
@@ -1469,7 +1469,7 @@ fn resolve_zygisk_payload_apk(
             "app/build/outputs/apk"
         };
         format!(
-            "no WeKit APK containing {} found in {source}",
+            "no Joker APK containing {} found in {source}",
             ZYGISK_ABIS
                 .iter()
                 .map(|abi| abi.android_name)
@@ -1518,7 +1518,7 @@ fn export_zygisk_payload(apk: &Path, payload_dir: &Path) -> Result<()> {
         }
     }
 
-    let apk_destination = payload_dir.join("wekit.apk");
+    let apk_destination = payload_dir.join("joker.apk");
     fs::copy(apk, &apk_destination).with_context(|| {
         format!(
             "could not copy payload {} to {}",
@@ -1771,7 +1771,7 @@ fn package_zygisk_module(
     let source = resolve_zygisk_payload_apk(root, apk_profile, explicit_apk)?;
     export_zygisk_payload(&source, &payload_dir)?;
     println!(
-        "zygisk(package): embedded {} -> payload/wekit.apk (DEX extracted during installation)",
+        "zygisk(package): embedded {} -> payload/joker.apk (DEX extracted during installation)",
         source.display()
     );
 
@@ -1807,7 +1807,7 @@ fn latest_zygisk_zip(root: &Path, profile: ZygiskBuildProfile) -> Result<PathBuf
             path.is_file()
                 && path
                     .file_name()
-                    .is_some_and(|name| name.to_string_lossy().starts_with("WeKit-"))
+                    .is_some_and(|name| name.to_string_lossy().starts_with("Joker-"))
                 && path
                     .file_name()
                     .is_some_and(|name| name.to_string_lossy().ends_with(&suffix))
@@ -1852,7 +1852,7 @@ fn install_zygisk_zip(
         .and_then(|name| name.to_str())
         .context("Zygisk ZIP name must be UTF-8")?;
     let remote_zip = format!("/data/local/tmp/{zip_name}");
-    let remote_script = "/data/local/tmp/install_wekit_zygisk.sh";
+    let remote_script = "/data/local/tmp/install_joker_zygisk.sh";
     let script = zygisk_dir(root).join("scripts/install_module.sh");
     run_adb(
         root,
@@ -2059,15 +2059,15 @@ mod tests {
     fn test_git_repo() -> TestGitRepo {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         let path = env::temp_dir().join(format!(
-            "wekit-cloudflared-pin-test-{}-{}",
+            "joker-cloudflared-pin-test-{}-{}",
             std::process::id(),
             NEXT_ID.fetch_add(1, Ordering::Relaxed),
         ));
         fs::create_dir(&path).unwrap();
         for args in [
             vec!["init", "-q"],
-            vec!["config", "user.name", "WeKit Test"],
-            vec!["config", "user.email", "wekit-test@example.invalid"],
+            vec!["config", "user.name", "Joker Test"],
+            vec!["config", "user.email", "joker-test@example.invalid"],
         ] {
             assert!(
                 Command::new("git")
@@ -2111,12 +2111,12 @@ mod tests {
     }
 
     #[test]
-    fn apk_native_build_plan_runs_configure_before_wekit_native() {
+    fn apk_native_build_plan_runs_configure_before_joker_native() {
         assert_eq!(
             apk_native_build_steps(),
             &[
                 ApkNativeBuildStep::Configure,
-                ApkNativeBuildStep::WeKitNative,
+                ApkNativeBuildStep::JokerNative,
             ],
         );
     }
@@ -2186,7 +2186,7 @@ mod tests {
     fn proot_cache_requires_matching_inputs_and_artifacts() {
         static NEXT_CACHE_ID: AtomicU64 = AtomicU64::new(0);
         let root = env::temp_dir().join(format!(
-            "wekit-proot-cache-test-{}-{}",
+            "joker-proot-cache-test-{}-{}",
             std::process::id(),
             NEXT_CACHE_ID.fetch_add(1, Ordering::Relaxed),
         ));
@@ -2365,8 +2365,8 @@ mod tests {
 
     #[test]
     fn zygisk_build_accepts_only_one_payload_apk() {
-        let args = parse_zygisk_build_args(&["--apk", "wekit-arm64.apk"]);
-        assert_eq!(args.apk, Some(PathBuf::from("wekit-arm64.apk")));
+        let args = parse_zygisk_build_args(&["--apk", "joker-arm64.apk"]);
+        assert_eq!(args.apk, Some(PathBuf::from("joker-arm64.apk")));
 
         assert!(
             Cli::try_parse_from([

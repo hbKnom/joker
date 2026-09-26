@@ -674,7 +674,7 @@ def main() -> None:
 
     with zipfile.ZipFile(args.aar) as aar:
         classes_jar = aar.read("classes.jar")
-    with tempfile.TemporaryDirectory(prefix="wekit-dexkit-codegen-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="joker-dexkit-codegen-") as temporary:
         classes_path = Path(temporary, "classes.jar")
         classes_path.write_bytes(classes_jar)
         types = [
@@ -682,11 +682,11 @@ def main() -> None:
         ]
 
     write_if_changed(
-        args.python_out / "wekit/dexkit/_generated.py", render_runtime(types)
+        args.python_out / "joker/dexkit/_generated.py", render_runtime(types)
     )
-    write_if_changed(args.stub_out / "wekit/dexkit/_generated.pyi", render_stub(types))
+    write_if_changed(args.stub_out / "joker/dexkit/_generated.pyi", render_stub(types))
     write_if_changed(
-        args.stub_out / "wekit/dexkit/__init__.pyi", render_stub_init(types)
+        args.stub_out / "joker/dexkit/__init__.pyi", render_stub_init(types)
     )
 
 

@@ -1,0 +1,56 @@
+package dev.joker.features.items.profile
+
+import android.graphics.Bitmap
+import dev.joker.reflekt.reflekt
+import dev.joker.R
+import dev.joker.dexkit.abc.IResolveDex
+import dev.joker.dexkit.dsl.dexClass
+import dev.joker.features.core.FeatureCategoryIds
+import dev.joker.features.core.SwitchFeature
+import dev.joker.utils.reflection.int
+import java.io.OutputStream
+
+object UploadTransparentAvatars : SwitchFeature(), IResolveDex {
+
+    override val technicalId = "上传透明头像"
+    override val nameRes = R.string.feature_upload_transparent_avatars_name
+    override val categoryIds = listOf(FeatureCategoryIds.PROFILE)
+    override val descriptionRes = R.string.feature_upload_transparent_avatars_description
+
+    private val TRIGGER_PATTERNS = listOf(
+        "com.tencent.mm.modelavatar",
+        "PhotoCropActivity"
+    )
+
+    private val classMediaTailor by dexClass {
+        matcher {
+            usingEqStrings("Rect width or height contains zero. contentRect: ")
+        }
+    }
+
+    override fun onEnable() {
+        Bitmap::class.reflekt().firstMethod {
+            name = "compress"
+            parameters(Bitmap.CompressFormat::class, int, OutputStream::class)
+        }.hookBefore {
+            val stack = captureStackTrace()
+
+            val inAvatarContext = TRIGGER_PATTERNS.any { pattern ->
+                stack.contains(pattern)
+            }
+
+            val inUploadContext = classMediaTailor.clazz.name.let { stack.contains(it) }
+
+            if (inAvatarContext || inUploadContext) {
+                args[0] = Bitmap.CompressFormat.PNG
+            }
+        }
+    }
+
+    private fun captureStackTrace(): String {
+        val frames = Thread.currentThread().stackTrace
+        return frames.joinToString("\n") { frame ->
+            "${frame.className}.${frame.methodName}() (${frame.fileName}:${frame.lineNumber})"
+        }
+    }
+}

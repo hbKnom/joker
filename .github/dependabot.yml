@@ -65,7 +65,7 @@ updates:
 
   # Cargo — native Rust library (compiled into APK)
   - package-ecosystem: "cargo"
-    directory: "/app/src/main/rust/wekit-native"
+    directory: "/app/src/main/rust/joker-native"
     schedule:
       interval: "daily"
       time: "06:00"

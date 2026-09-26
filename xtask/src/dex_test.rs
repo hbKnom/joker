@@ -433,7 +433,7 @@ fn ensure_linux_dexkit(root: &Path) -> Result<DexKitNative> {
         .versions
         .dexkit
         .context("versions.dexkit is missing")?;
-    let cache_root = root.join(".wekit/dex-test");
+    let cache_root = root.join(".joker/dex-test");
     let source_dir = cache_root.join("source").join(format!("DexKit-{version}"));
     if source_dir.exists() {
         validate_dexkit_source(&source_dir, &version)?;
@@ -634,27 +634,27 @@ fn run_worker(
 ) -> Result<i32> {
     let gradle = root.join("gradlew");
     let mut properties = vec![
-        ("wekit.dexTest.apk", apk.to_string_lossy().to_string()),
+        ("joker.dexTest.apk", apk.to_string_lossy().to_string()),
         (
-            "wekit.dexTest.nativeLibrary",
+            "joker.dexTest.nativeLibrary",
             native.library_path.to_string_lossy().to_string(),
         ),
-        ("wekit.dexTest.report", report.to_string_lossy().to_string()),
-        ("wekit.dexTest.dexKitVersion", native.version.clone()),
-        ("wekit.dexTest.dexKitRevision", native.revision.clone()),
+        ("joker.dexTest.report", report.to_string_lossy().to_string()),
+        ("joker.dexTest.dexKitVersion", native.version.clone()),
+        ("joker.dexTest.dexKitRevision", native.revision.clone()),
         (
-            "wekit.dexTest.versionCode",
+            "joker.dexTest.versionCode",
             metadata.version_code.to_string(),
         ),
-        ("wekit.dexTest.versionName", metadata.version_name.clone()),
-        ("wekit.dexTest.buildTag", metadata.build_tag.clone()),
+        ("joker.dexTest.versionName", metadata.version_name.clone()),
+        ("joker.dexTest.buildTag", metadata.build_tag.clone()),
         (
-            "wekit.dexTest.isGooglePlay",
+            "joker.dexTest.isGooglePlay",
             metadata.is_google_play.to_string(),
         ),
     ];
     if let Some(features) = features {
-        properties.push(("wekit.dexTest.features", features.to_string()));
+        properties.push(("joker.dexTest.features", features.to_string()));
     }
     let mut command = Command::new(&gradle);
     command
