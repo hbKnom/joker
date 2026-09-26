@@ -1,7 +1,7 @@
 package me.hd.wauxv.data.bean
 
 import androidx.annotation.Keep
-import dev.ujhhgtg.reflekt.reflekt
+import dev.joker.reflekt.reflekt
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 

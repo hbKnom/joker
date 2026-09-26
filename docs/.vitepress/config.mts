@@ -9,8 +9,8 @@ export default defineConfig(() => {
   const sidebar = createSidebar(root)
   return {
     lang: 'zh-CN',
-    title: 'WeKit',
-    description: 'WeKit 开发版文档：安装、配置、微信增强功能与开发贡献指南。',
+    title: 'Joker',
+    description: 'Joker 开发版文档：安装、配置、微信增强功能与开发贡献指南。',
     cleanUrls: true,
     srcExclude: ['SUMMARY.md', 'features/**/README.md'],
     themeConfig: {
@@ -20,8 +20,8 @@ export default defineConfig(() => {
         { text: '开发与贡献', link: '/development/' },
       ],
       sidebar,
-      socialLinks: [{ icon: 'github', link: 'https://github.com/Ujhhgtg/WeKit' }],
-      editLink: { pattern: 'https://github.com/Ujhhgtg/WeKit/edit/master/docs/:path', text: '在 GitHub 上编辑此页' },
+      socialLinks: [{ icon: 'github', link: 'https://github.com/hbKnom/joker' }],
+      editLink: { pattern: 'https://github.com/hbKnom/joker/edit/master/docs/:path', text: '在 GitHub 上编辑此页' },
       outline: { label: '本页目录', level: [2, 3] },
       docFooter: { prev: '上一页', next: '下一页' },
       sidebarMenuLabel: '目录',
@@ -60,7 +60,7 @@ export default defineConfig(() => {
       },
     },
     vite: { plugins: [{
-      name: 'wekit-document-navigation',
+      name: 'joker-document-navigation',
       configureServer(server) {
         let previous = JSON.stringify(sidebar)
         let timer: ReturnType<typeof setTimeout> | undefined

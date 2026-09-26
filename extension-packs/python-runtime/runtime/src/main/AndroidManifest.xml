@@ -2,5 +2,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
         android:hasCode="true"
-        android:label="WeKit Python Runtime Container" />
+        android:label="Joker Python Runtime Container" />
 </manifest>

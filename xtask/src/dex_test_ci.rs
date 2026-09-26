@@ -392,7 +392,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "wekit-dex-test-ci-{label}-{}-{nonce}",
+            "joker-dex-test-ci-{label}-{}-{nonce}",
             std::process::id()
         ))
     }

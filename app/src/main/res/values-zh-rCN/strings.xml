@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_description">微信增强模块\nUjhhgtg@github</string>
+    <string name="app_description">微信增强模块\nJoker@github</string>
     <string name="settings_title">设置</string>
     <string name="settings_section_interface">界面</string>
     <string name="settings_general_title">通用设置</string>
@@ -12,10 +12,10 @@
     <string name="dialog_confirm">确定</string>
     <string name="dialog_close">关闭</string>
     <string name="accessibility_overflow_menu">更多选项</string>
-    <string name="module_app_sticker_import_invalid_caller">只允许从微信内的 WeKit 面板启动此操作</string>
+    <string name="module_app_sticker_import_invalid_caller">只允许从微信内的 Joker 面板启动此操作</string>
     <string name="manager_launch_opening_title">正在打开框架管理器…</string>
     <string name="manager_launch_failed_title">无法打开管理器</string>
-    <string name="manager_launch_invalid_caller">只允许从微信内的 WeKit 面板启动此操作</string>
+    <string name="manager_launch_invalid_caller">只允许从微信内的 Joker 面板启动此操作</string>
     <string name="manager_launch_root_required">打开 LSPosed 或 Vector 管理器需要 Root 权限</string>
     <string name="manager_launch_failed_message">两种受支持的管理器启动方式均执行失败</string>
     <string name="manager_launch_no_root_manager">未找到受支持的 Root 管理器</string>
@@ -50,7 +50,7 @@
     <string name="module_app_about_description">%1$s 是一款基于 Xposed 框架的开源免费微信模块</string>
     <string name="module_app_about_version">版本: %1$s</string>
     <string name="module_app_about_version_code">版本号: %1$d</string>
-    <string name="module_app_about_authors">作者：Ujhhgtg@github, cwuom@github</string>
+    <string name="module_app_about_authors">作者：hbKnom@github</string>
     <string name="contact_filter_all">全部</string>
     <string name="contact_filter_friends">好友</string>
     <string name="contact_filter_groups">群聊</string>
@@ -106,7 +106,7 @@
     <string name="dex_cache_continue_local_resolution">继续解析</string>
     <string name="dex_cache_failure_detail">%1$d. %2$s\n   错误: %3$s\n\n</string>
     <string name="dex_cache_copy_error_information">复制错误信息</string>
-    <string name="dex_error_report_title">=== WeKit DEX 扫描错误报告 ===</string>
+    <string name="dex_error_report_title">=== Joker DEX 扫描错误报告 ===</string>
     <string name="dex_error_report_entry">%1$d. %2$s\n   错误信息: %3$s\n   堆栈跟踪:\n%4$s\n\n</string>
     <string name="location_picker_instruction">点击地图或下方坐标以选择虚拟位置</string>
     <string name="location_picker_title">地图选点</string>
@@ -229,8 +229,8 @@
     <string name="home_module_activated">模块已激活</string>
     <string name="home_device_info_title">设备信息</string>
     <string name="home_learn_more_title">了解更多</string>
-    <string name="home_learn_more_item_title">WeKit 文档</string>
-    <string name="home_learn_more_item_summary">了解如何配置和使用 WeKit</string>
+    <string name="home_learn_more_item_title">Joker 文档</string>
+    <string name="home_learn_more_item_summary">了解如何配置和使用 Joker</string>
     <string name="home_wechat_version">微信版本</string>
     <string name="home_module_version">模块版本</string>
     <string name="home_build_time">构建时间</string>
@@ -386,7 +386,7 @@
     <string name="nuke_appearance_title">界面设置</string>
     <string name="nuke_about_title">关于模块</string>
     <string name="nuke_support_us_title">赞赏我们</string>
-    <string name="nuke_settings_title">WeKit 设置</string>
+    <string name="nuke_settings_title">Joker 设置</string>
     <string name="nuke_section_security">安全</string>
     <string name="nuke_section_general">通用</string>
     <string name="nuke_wechat_account">微信账号</string>
@@ -443,16 +443,16 @@
     <string name="nuke_update_installed">已安装</string>
     <string name="nuke_installed_version_details">版本代码 %1$d\n构建时间 %2$s</string>
     <string name="nuke_update_checking">正在检查更新</string>
-    <string name="nuke_update_check_summary">检查 WeKit 是否有可用的新版本。</string>
+    <string name="nuke_update_check_summary">检查 Joker 是否有可用的新版本。</string>
     <string name="nuke_update_check_again">重新检测</string>
     <string name="nuke_download_install">下载并安装</string>
     <string name="nuke_about_project">项目</string>
-    <string name="nuke_about_description_one">WeKit 是一个免费的开源 Xposed 模块。</string>
+    <string name="nuke_about_description_one">Joker 是一个免费的开源 Xposed 模块。</string>
     <string name="nuke_about_description_two">它为微信提供可选的功能增强与界面优化。</string>
     <string name="nuke_about_developers">开发者</string>
     <string name="nuke_about_links">链接</string>
     <string name="nuke_github_contributions">GitHub 贡献 %1$d 次</string>
-    <string name="nuke_wekit_developer">WeKit 开发者</string>
+    <string name="nuke_joker_developer">Joker 开发者</string>
     <string name="nuke_github_avatar">%1$s 的 GitHub 头像</string>
     <string name="licenses_unknown_author">未知作者</string>
     <string name="licenses_version">版本 %1$s</string>
@@ -570,7 +570,7 @@
     <string name="feature_hide_other_devices_banner_name">隐藏其他设备横幅</string>
     <string name="feature_hide_other_devices_banner_description">隐藏主页顶部其他设备已登录横幅</string>
     <string name="feature_monet_engine_name">莫奈引擎</string>
-    <string name="feature_monet_engine_description">在运行时重新着色微信自身的界面资源，跟随 WeKit 主题色。无需 Root 或模块，选项修改实时生效。需要 Android 11+。</string>
+    <string name="feature_monet_engine_description">在运行时重新着色微信自身的界面资源，跟随 Joker 主题色。无需 Root 或模块，选项修改实时生效。需要 Android 11+。</string>
     <string name="feature_replace_navigation_bar_name">美化首页底部导航栏</string>
     <string name="feature_replace_navigation_bar_description">将首页底栏替换为 Material Design 或 Backdrop 风格</string>
     <string name="feature_themes_name">主题</string>
@@ -680,7 +680,7 @@
     <string name="feature_markdown_rendering_name">Markdown 渲染</string>
     <string name="feature_markdown_rendering_description">渲染 Markdown 消息</string>
     <string name="feature_merge_chat_message_context_menu_items_name">消息长按菜单项合并展示</string>
-    <string name="feature_merge_chat_message_context_menu_items_description">开启后, 消息长按菜单只显示一个 WeKit 项, 点击后在对话框中集中展示所有模块菜单项</string>
+    <string name="feature_merge_chat_message_context_menu_items_description">开启后, 消息长按菜单只显示一个 Joker 项, 点击后在对话框中集中展示所有模块菜单项</string>
     <string name="feature_merge_messages_into_groups_name">合并消息显示</string>
     <string name="feature_merge_messages_into_groups_description">将同一发送者的连续多条消息合并为一组消息显示 (Telegram 风格)</string>
     <string name="feature_message_entrance_animation_name">消息进入动画</string>
@@ -831,7 +831,7 @@
     <string name="feature_mark_all_as_read_name">清空未读</string>
     <string name="feature_mark_all_as_read_description">在首页右上角菜单添加「清空未读」选项</string>
     <string name="feature_module_settings_name">模块设置</string>
-    <string name="feature_module_settings_description">在首页右上角菜单添加「WeKit」选项</string>
+    <string name="feature_module_settings_description">在首页右上角菜单添加「Joker」选项</string>
     <string name="feature_open_conversation_menu_name">跳转对话菜单</string>
     <string name="feature_open_conversation_menu_description">在首页右上角菜单添加「跳转对话」选项</string>
     <string name="feature_toggle_all_conversations_visibility_name">显隐全部对话</string>
@@ -1613,7 +1613,7 @@
     <string name="sticker_telegram_single_title">从 Telegram 导入单个包</string>
     <string name="sticker_telegram_source_manual_description">从系统文件选择器读取一个 Telegram 数据库</string>
     <string name="sticker_telegram_source_manual_title">手动选择 Telegram 数据库 (cache4.db)</string>
-    <string name="sticker_telegram_source_root_description">跳转到 WeKit 模块应用扫描实例并解析数据库</string>
+    <string name="sticker_telegram_source_root_description">跳转到 Joker 模块应用扫描实例并解析数据库</string>
     <string name="sticker_telegram_source_root_title">使用 Root 权限直接读取 Telegram 数据库</string>
     <string name="sticker_telegram_token_required">请先在设置中填写 Telegram Bot Token</string>
     <string name="sticker_telegram_will_import">将导入：%1$s</string>
@@ -2034,7 +2034,7 @@
     <string name="read_receipts_error_credential_save_failed">隧道已验证，但无法安全保存凭据</string>
     <string name="read_receipts_error_start_handoff_timeout">隧道服务未能及时接管启动请求</string>
     <string name="read_receipts_error_stop_timeout">隧道未能及时停止；将继续停止内置服务器</string>
-    <string name="read_receipts_error_service_unavailable">WeKit 隧道服务不可用，请返回可见设置界面后重试</string>
+    <string name="read_receipts_error_service_unavailable">Joker 隧道服务不可用，请返回可见设置界面后重试</string>
     <string name="read_receipts_error_health_check_failed">隧道健康检查失败，请检查内置服务器、公网主机名和 ingress 配置</string>
     <string name="read_receipts_error_unexpected_failure">Cloudflare Tunnel 操作意外失败</string>
     <string name="read_receipts_verified_public_url">已验证公网地址：%1$s</string>
@@ -2904,7 +2904,7 @@
     </plurals>
     <string name="contacts_detect_stop">终止</string>
     <string name="contacts_detect_back">返回</string>
-    <string name="contacts_detect_suggested_label">WeKit_单删好友_%1$s</string>
+    <string name="contacts_detect_suggested_label">Joker_单删好友_%1$s</string>
     <string name="contacts_detect_mark_label">标记标签</string>
     <string name="contacts_detect_delete_all">全部删除</string>
     <string name="contacts_hide_restored">已恢复隐藏联系人</string>
@@ -3200,11 +3200,11 @@
     <string name="shortvideos_unknown_media_type">未知的媒体类型</string>
     <string name="shortvideos_image_download_started">开始下载第 %1$d 张图片</string>
     <string name="shortvideos_image_download_reported_success">第 %1$d 张图片下载成功</string>
-    <string name="shortvideos_image_downloaded_to">已将图片下载到 /sdcard/Download/WeKit/%1$s</string>
+    <string name="shortvideos_image_downloaded_to">已将图片下载到 /sdcard/Download/Joker/%1$s</string>
     <string name="shortvideos_downloading_video">正在下载视频…</string>
     <string name="shortvideos_decrypting_video">正在解密视频…</string>
     <string name="shortvideos_video_download_failed">视频下载失败</string>
-    <string name="shortvideos_video_downloaded_to">已将视频下载到 /sdcard/Download/WeKit/%1$s</string>
+    <string name="shortvideos_video_downloaded_to">已将视频下载到 /sdcard/Download/Joker/%1$s</string>
     <string name="shortvideos_video_download_started">开始下载视频</string>
     <!-- Task 5 group 2: themes and home side panel -->
     <string name="action_back">返回</string>
@@ -3227,7 +3227,7 @@
     <string name="home_side_panel_moments">朋友圈</string>
     <string name="home_side_panel_channels">视频号</string>
     <string name="home_side_panel_mark_all_read">清空未读</string>
-    <string name="home_side_panel_wekit_settings">WeKit 设置</string>
+    <string name="home_side_panel_joker_settings">Joker 设置</string>
     <string name="home_side_panel_open_profile">打开个人资料</string>
     <string name="home_side_panel_settings">侧栏设置</string>
     <string name="home_side_panel_online">在线</string>
@@ -3811,25 +3811,25 @@
     <string name="system_api_server_port">端口</string>
     <string name="system_api_server_invalid_port">端口格式不正确！</string>
     <!-- Non-Compose and injected-host messages -->
-    <string name="noncompose_features_loaded">WeKit 加载成功！</string>
+    <string name="noncompose_features_loaded">Joker 加载成功！</string>
     <string name="noncompose_restarting_host">正在重启…</string>
     <string name="noncompose_bsh_saved">已保存到 %1$s</string>
     <string name="noncompose_bsh_empty_result">错误：反编译结果为空。</string>
     <string name="noncompose_bsh_error">错误：%1$s</string>
     <string name="noncompose_bsh_selection_cancelled">已取消选择文件。</string>
-    <string name="noncompose_update_download_title">WeKit 更新</string>
+    <string name="noncompose_update_download_title">Joker 更新</string>
     <string name="noncompose_update_downloading">正在下载更新…</string>
     <string name="noncompose_moments_thumbnail_warning">警告：正在使用缩略图。建议先查看一次图片以下载原图。</string>
     <string name="noncompose_chat_input_no_actions">没有可用的聊天输入栏功能。</string>
     <string name="noncompose_chat_input_actions_title">聊天功能</string>
-    <string name="noncompose_message_menu_no_actions">没有可用于所选消息的 WeKit 菜单项。</string>
+    <string name="noncompose_message_menu_no_actions">没有可用于所选消息的 Joker 菜单项。</string>
     <plurals name="noncompose_message_menu_selected_title">
-        <item quantity="other">WeKit（%1$d 条消息）</item>
+        <item quantity="other">Joker（%1$d 条消息）</item>
     </plurals>
     <string name="noncompose_message_menu_adapted_section">已适配多选消息</string>
     <string name="noncompose_message_menu_automatic_section">自动兼容多选消息</string>
-    <string name="noncompose_wekit_settings_entry">WeKit 设置</string>
-    <string name="noncompose_wekit_settings_group">插件</string>
+    <string name="noncompose_joker_settings_entry">Joker 设置</string>
+    <string name="noncompose_joker_settings_group">插件</string>
     <!-- WeAgent live panel -->
     <string name="agent_panel_collapse_sessions">收起会话侧栏</string>
     <string name="agent_panel_sessions">会话</string>
@@ -3870,7 +3870,7 @@
     <string name="agent_panel_rejection_reason">拒绝理由（可选）</string>
     <string name="agent_panel_reject">拒绝</string>
     <string name="agent_panel_approve">同意</string>
-    <string name="telegram_root_permission_required">需要授予 WeKit 模块应用 Root 权限。</string>
+    <string name="telegram_root_permission_required">需要授予 Joker 模块应用 Root 权限。</string>
     <string name="telegram_database_scan_failed">扫描 Telegram 数据库失败：%1$s</string>
     <string name="telegram_root_command_failed">Root 命令执行失败</string>
     <string name="telegram_database_not_found">未找到 cache4.db，请确认 Telegram 已登录并至少启动过一次。</string>
@@ -4102,7 +4102,7 @@
 
     <!-- 音频剪辑 (由 FunBox 移植) -->
 
-    <!-- WeKit: 会话选择器 / TTS 引擎枚举 / 点歌仅自己指令 (2026-09-22) -->
+    <!-- Joker: 会话选择器 / TTS 引擎枚举 / 点歌仅自己指令 (2026-09-22) -->
     <string name="conversation_picker_loading">正在加载会话…</string>
     <string name="conversation_picker_empty">没有读取到任何会话</string>
     <string name="conversation_picker_group">群聊</string>
@@ -4208,7 +4208,7 @@
     <string name="yanwai_recent_empty">本次运行还没有解读记录。</string>
 
     <string name="monet_error_colors">未读角标与错误色</string>
-    <string name="monet_color_source_summary">跟随 WeKit 主题（动态壁纸取色或种子颜色），可在 WeKit 设置 → 主题中修改。</string>
+    <string name="monet_color_source_summary">跟随 Joker 主题（动态壁纸取色或种子颜色），可在 Joker 设置 → 主题中修改。</string>
     <string name="monet_resolve_title">正在分析微信资源</string>
     <string name="monet_resolve_failed">在%1$s阶段分析失败：%2$s</string>
     <string name="monet_reresolve">重新分析微信资源</string>

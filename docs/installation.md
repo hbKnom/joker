@@ -2,10 +2,9 @@
 
 ## 下载
 
-本项目不会发布稳定版本, 请从以下渠道下载最新 CI 构建产物 (每夜版)。Xposed 模式请下载 APK, Zygisk 模式请下载 `wekit-zygisk` ZIP:
+本项目不会发布稳定版本, 请从以下渠道下载最新 CI 构建产物 (每夜版)。Xposed 模式请下载 APK, Zygisk 模式请下载 `joker-zygisk` ZIP:
 
-- [GitHub Actions](https://github.com/Ujhhgtg/WeKit/actions/workflows/ci.yml)
-- [Telegram 超级群组](https://t.me/+7j5dJ6g16B43OWVl)
+- [GitHub Actions](https://github.com/hbKnom/joker/actions/workflows/ci.yml)
 
 ## 安装
 
@@ -21,13 +20,13 @@
 
 1. 下载模块与 NPatch 管理器 APK
 2. 安装模块与 NPatch 管理器
-3. 修补微信, 并根据你的需求选择「本地模式」或「集成模式」。若使用「集成模式」, 需在「嵌入模块」界面勾选「WeKit」。修补时, 包名必须为 `com.tencent.mm` 或以 `com.tencent.mm` 开头, 且建议启用「注入文件提供器」以方便管理模块 KV 数据。
+3. 修补微信, 并根据你的需求选择「本地模式」或「集成模式」。若使用「集成模式」, 需在「嵌入模块」界面勾选「Joker」。修补时, 包名必须为 `com.tencent.mm` 或以 `com.tencent.mm` 开头, 且建议启用「注入文件提供器」以方便管理模块 KV 数据。
 4. 安装修补后的微信。由于未知原因, 即使修补的包名与已安装应用的包名不一致, NPatch 也会请求卸载已安装应用, 请注意不要误操作导致丢失微信数据。
-5. 若使用「本地模式」, 需在修补的微信作用域中启用 WeKit。
+5. 若使用「本地模式」, 需在修补的微信作用域中启用 Joker。
 
 ### Root + Zygisk
 
-1. 下载 `wekit-zygisk` ZIP
+1. 下载 `joker-zygisk` ZIP
 2. 确保你的 Root 管理器中已启用任意 Zygisk 实现
 
     对于非 Magisk 用户, 请确保安装了任意 Zygisk 模块

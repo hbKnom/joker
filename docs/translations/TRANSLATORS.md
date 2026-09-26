@@ -1,11 +1,11 @@
-# WeKit Translators
+# Joker Translators
 
-Translation contributions are distributed under WeKit's GPLv3 license. Names are listed only when
+Translation contributions are distributed under Joker's GPLv3 license. Names are listed only when
 the contributor chooses public credit.
 
 ## Simplified Chinese
 
-- WeKit maintainers — initial migration and review
+- Joker maintainers — initial migration and review
 
 ## Traditional Chinese
 

@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches:
+      - main
       - master
       - dev
     paths-ignore:
@@ -12,6 +13,7 @@ on:
       - '.idea/**'
   pull_request:
     branches:
+      - main
       - master
       - dev
     paths-ignore:
@@ -124,16 +126,16 @@ jobs:
       - name: Decode keystore
         if: github.event_name != 'pull_request' && env.HAS_KEYSTORE == 'true'
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/wekit-keystore.jks
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $RUNNER_TEMP/joker-keystore.jks
 
       - name: Build Release (Signed)
         if: github.event_name != 'pull_request' && env.HAS_KEYSTORE == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          WEKIT_KEYSTORE_FILE: ${{ runner.temp }}/wekit-keystore.jks
-          WEKIT_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          WEKIT_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          WEKIT_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          JOKER_KEYSTORE_FILE: ${{ runner.temp }}/joker-keystore.jks
+          JOKER_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          JOKER_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          JOKER_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleStandardRelease --warning-mode all --stacktrace
 
       - name: Build Release (Unsigned)
@@ -177,13 +179,13 @@ jobs:
       - name: Upload Release APKs
         uses: actions/upload-artifact@v7
         with:
-          name: wekit-apk
+          name: joker-apk
           path: dist/apk/*.apk
 
       - name: Upload Release Obfuscation Mapping
         uses: actions/upload-artifact@v7
         with:
-          name: wekit-mapping
+          name: joker-mapping
           path: dist/mapping/*.txt
 
   build_zygisk:
@@ -222,7 +224,7 @@ jobs:
       - name: Download Release APK artifact
         uses: actions/download-artifact@v8
         with:
-          name: wekit-apk
+          name: joker-apk
           path: artifacts
 
       - name: Build Zygisk module
@@ -233,8 +235,8 @@ jobs:
       - name: Upload Zygisk module
         uses: actions/upload-artifact@v7
         with:
-          name: wekit-zygisk
-          path: wekit-zygisk/release/*.zip
+          name: joker-zygisk
+          path: joker-zygisk/release/*.zip
           if-no-files-found: error
 
   dex-test:
@@ -273,22 +275,22 @@ jobs:
         id: apk-cache
         uses: actions/cache/restore@v6
         with:
-          path: ${{ runner.temp }}/wekit-dex-test-apks
+          path: ${{ runner.temp }}/joker-dex-test-apks
           key: dex-test-apks-v1-${{ runner.os }}-${{ hashFiles('docs/getting-started.md', '.github/scripts/download-dex-test-apks.sh', 'xtask/src/dex_test_ci.rs') }}
 
       - name: Restore DexKit desktop cache
         id: dexkit-cache
         uses: actions/cache/restore@v6
         with:
-          path: .wekit/dex-test/source
+          path: .joker/dex-test/source
           key: dexkit-desktop-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('gradle/libs.versions.toml', 'xtask/src/dex_test.rs') }}
 
       - name: Generate supported APK manifest
         run: |
           ./x dex-test-ci sources \
             --doc docs/getting-started.md \
-            --output "$RUNNER_TEMP/wekit-dex-test-sources.json"
-          test "$(jq '.sources | length' "$RUNNER_TEMP/wekit-dex-test-sources.json")" -gt 0
+            --output "$RUNNER_TEMP/joker-dex-test-sources.json"
+          test "$(jq '.sources | length' "$RUNNER_TEMP/joker-dex-test-sources.json")" -gt 0
 
       - name: Download supported WeChat APKs
         id: apks
@@ -296,19 +298,19 @@ jobs:
           chmod +x .github/scripts/download-dex-test-apks.sh
           set +e
           .github/scripts/download-dex-test-apks.sh \
-            "$RUNNER_TEMP/wekit-dex-test-sources.json" \
-            "$RUNNER_TEMP/wekit-dex-test-apks" \
-            --failures-out "$RUNNER_TEMP/wekit-dex-test-download-failures.txt" \
-            > "$RUNNER_TEMP/wekit-dex-test-apks.txt"
+            "$RUNNER_TEMP/joker-dex-test-sources.json" \
+            "$RUNNER_TEMP/joker-dex-test-apks" \
+            --failures-out "$RUNNER_TEMP/joker-dex-test-download-failures.txt" \
+            > "$RUNNER_TEMP/joker-dex-test-apks.txt"
           download_status=$?
           set -e
-          if [[ -s "$RUNNER_TEMP/wekit-dex-test-download-failures.txt" ]]; then
+          if [[ -s "$RUNNER_TEMP/joker-dex-test-download-failures.txt" ]]; then
             while IFS= read -r failed_apk; do
               echo "::warning::failed to download $failed_apk; skipping its dex resolution"
-            done < "$RUNNER_TEMP/wekit-dex-test-download-failures.txt"
+            done < "$RUNNER_TEMP/joker-dex-test-download-failures.txt"
           fi
-          if [[ -s "$RUNNER_TEMP/wekit-dex-test-apks.txt" ]]; then
-            mapfile -t downloaded_apks < "$RUNNER_TEMP/wekit-dex-test-apks.txt"
+          if [[ -s "$RUNNER_TEMP/joker-dex-test-apks.txt" ]]; then
+            mapfile -t downloaded_apks < "$RUNNER_TEMP/joker-dex-test-apks.txt"
             echo "apk-count=${#downloaded_apks[@]}" >> "$GITHUB_OUTPUT"
           else
             echo "apk-count=0" >> "$GITHUB_OUTPUT"
@@ -322,7 +324,7 @@ jobs:
         id: dex-resolution
         if: steps.apks.outcome == 'success' && fromJSON(steps.apks.outputs.apk-count || '0') > 0
         run: |
-          mapfile -t apks < "$RUNNER_TEMP/wekit-dex-test-apks.txt"
+          mapfile -t apks < "$RUNNER_TEMP/joker-dex-test-apks.txt"
           args=()
           for apk in "${apks[@]}"; do
             args+=(--apk "$apk")
@@ -348,7 +350,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: wekit-dex-test-reports
+          name: joker-dex-test-reports
           path: dex-test-results/ci
           if-no-files-found: warn
 
@@ -356,14 +358,14 @@ jobs:
         if: always() && steps.apks.outcome == 'success'
         uses: actions/cache/save@v6
         with:
-          path: ${{ runner.temp }}/wekit-dex-test-apks
+          path: ${{ runner.temp }}/joker-dex-test-apks
           key: ${{ steps.apk-cache.outputs.cache-primary-key }}
 
       - name: Save DexKit desktop cache
         if: always() && steps.dex-resolution.outcome == 'success'
         uses: actions/cache/save@v6
         with:
-          path: .wekit/dex-test/source
+          path: .joker/dex-test/source
           key: ${{ steps.dexkit-cache.outputs.cache-primary-key }}
 
       - name: Enforce Dex resolution result
@@ -392,7 +394,7 @@ jobs:
       - name: Download Dex resolution reports
         uses: actions/download-artifact@v8
         with:
-          name: wekit-dex-test-reports
+          name: joker-dex-test-reports
           path: dex-test-results/ci
 
       - name: Stage successful Release assets
@@ -466,9 +468,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: app/src/main/go/wekit-cloudflared/go.mod
+          go-version-file: app/src/main/go/joker-cloudflared/go.mod
           cache: true
-          cache-dependency-path: app/src/main/go/wekit-cloudflared/go.sum
+          cache-dependency-path: app/src/main/go/joker-cloudflared/go.sum
 
       - name: Install system dependencies
         # glslc compiles the llama.cpp Vulkan shaders for the llama-native pack.
@@ -511,7 +513,7 @@ jobs:
 
       - name: Build packs
         env:
-          WEKIT_ARCH_ROOTFS: ${{ runner.temp }}/arch-pack/ArchLinuxARM-aarch64-rootfs.tar.gz
+          JOKER_ARCH_ROOTFS: ${{ runner.temp }}/arch-pack/ArchLinuxARM-aarch64-rootfs.tar.gz
         run: |
           SOURCE=extensions/archlinux-arm64-sources.json
           ROOTFS_URL=$(jq -r '.rootfs.url' "$SOURCE")
@@ -522,18 +524,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/arch-pack"
           curl --fail --location --retry 3 \
             "$ROOTFS_URL" \
-            -o "$WEKIT_ARCH_ROOTFS"
-          printf '%s  %s\n' "$ROOTFS_SHA256" "$WEKIT_ARCH_ROOTFS" | sha256sum --check --strict
-          printf '%s  %s\n' "$ROOTFS_MD5" "$WEKIT_ARCH_ROOTFS" | md5sum --check --strict
+            -o "$JOKER_ARCH_ROOTFS"
+          printf '%s  %s\n' "$ROOTFS_SHA256" "$JOKER_ARCH_ROOTFS" | sha256sum --check --strict
+          printf '%s  %s\n' "$ROOTFS_MD5" "$JOKER_ARCH_ROOTFS" | md5sum --check --strict
           curl --fail --location --retry 3 \
             "$ROOTFS_SIGNATURE_URL" \
-            -o "$WEKIT_ARCH_ROOTFS.sig"
+            -o "$JOKER_ARCH_ROOTFS.sig"
           curl --fail --location --retry 3 \
             "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$SIGNING_FINGERPRINT" \
             -o "$RUNNER_TEMP/arch-pack/signing-key.asc"
           test "$(gpg --show-keys --with-colons "$RUNNER_TEMP/arch-pack/signing-key.asc" | awk -F: '$1 == "fpr" { print $10; exit }')" = "$SIGNING_FINGERPRINT"
           gpg --batch --import "$RUNNER_TEMP/arch-pack/signing-key.asc"
-          gpg --batch --verify "$WEKIT_ARCH_ROOTFS.sig" "$WEKIT_ARCH_ROOTFS"
+          gpg --batch --verify "$JOKER_ARCH_ROOTFS.sig" "$JOKER_ARCH_ROOTFS"
           cargo xtask configure
           cargo xtask build --native-only --abi arm64-v8a
           cargo xtask extensions pack
@@ -608,14 +610,14 @@ jobs:
       - name: Download APK artifact
         uses: actions/download-artifact@v8
         with:
-          name: wekit-apk
+          name: joker-apk
           path: artifacts
 
       - name: Download Zygisk artifact
         if: ${{ needs.build_zygisk.result == 'success' }}
         uses: actions/download-artifact@v8
         with:
-          name: wekit-zygisk
+          name: joker-zygisk
           path: artifacts
 
       - name: Delete existing CI release (if exists)
@@ -679,14 +681,14 @@ jobs:
       - name: Download APK artifact
         uses: actions/download-artifact@v8
         with:
-          name: wekit-apk
+          name: joker-apk
           path: artifacts
 
       - name: Download Zygisk artifact
         if: ${{ needs.build_zygisk.result == 'success' }}
         uses: actions/download-artifact@v8
         with:
-          name: wekit-zygisk
+          name: joker-zygisk
           path: artifacts
 
       - name: Wait for Telegram API

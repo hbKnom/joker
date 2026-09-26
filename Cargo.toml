@@ -1,5 +1,5 @@
 [workspace]
-members = ["app/src/main/rust/wekit-native/", "app/src/main/rust/wekit-llama/", "services/read-receipts", "wekit-zygisk/native/", "xtask"]
+members = ["app/src/main/rust/joker-native/", "app/src/main/rust/joker-llama/", "services/read-receipts", "joker-zygisk/native/", "xtask"]
 resolver = "3"
 
 [profile.release]
@@ -8,12 +8,12 @@ lto = true
 codegen-units = 1
 strip = true
 # NOTE: `panic = "abort"` was removed because maxminddb (used by
-# contrib/wekit-read-receipts-server) requires the unwind panic runtime.
+# contrib/joker-read-receipts-server) requires the unwind panic runtime.
 panic = "unwind"
 
-[profile.release.package.wekit-zygisk]
+[profile.release.package.joker-zygisk]
 strip = "none"
 
 # llama.cpp matmul perf; workspace "z"/LTO defaults stay
-[profile.release.package.wekit-llama]
+[profile.release.package.joker-llama]
 opt-level = 3

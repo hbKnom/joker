@@ -1,7 +1,7 @@
 package me.hd.wauxv.data.bean
 
 import androidx.annotation.Keep
-import dev.ujhhgtg.wekit.features.api.core.WeContactLabelApi
+import dev.joker.features.api.core.WeContactLabelApi
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 

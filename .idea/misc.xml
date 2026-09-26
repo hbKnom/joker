@@ -3,8 +3,8 @@
   <component name="CidrRootsConfiguration">
     <excludeRoots>
       <file path="$PROJECT_DIR$/app/src/main/rust" />
-      <file path="$PROJECT_DIR$/app/src/main/rust/wekit-native" />
-      <file path="$PROJECT_DIR$/app/src/main/rust/wekit-native/target" />
+      <file path="$PROJECT_DIR$/app/src/main/rust/joker-native" />
+      <file path="$PROJECT_DIR$/app/src/main/rust/joker-native/target" />
     </excludeRoots>
   </component>
   <component name="ExternalStorageConfigurationManager" enabled="true" />

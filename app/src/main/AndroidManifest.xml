@@ -60,7 +60,7 @@
             android:launchMode="singleTask"
             android:resizeableActivity="true"
             android:supportsPictureInPicture="true"
-            android:taskAffinity="dev.ujhhgtg.wekit.voip_pip"
+            android:taskAffinity="dev.joker.voip_pip"
             android:theme="@style/Theme.Material3.DynamicColors.DayNight.NoActionBar" />
 
         <receiver

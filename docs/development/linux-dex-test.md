@@ -13,7 +13,7 @@ DEX 文件中解析出目标。
 未指定 `--apk` 时，工具会对符合 `~/coding/wechat_*.apk` 的普通文件进行自然排序并逐一测试。
 每个 APK 都会在独立的 JVM 工作进程中运行。默认情况下，报告会写入
 `dex-test-results/<run-id>/`（也可使用指定的输出目录），每个 APK 对应一个 JSON 文件，
-并生成汇总文件 `summary.json`。DexKit 源码和原生构建缓存保存在 `.wekit/dex-test/` 下。
+并生成汇总文件 `summary.json`。DexKit 源码和原生构建缓存保存在 `.joker/dex-test/` 下。
 
 委托项的状态如下：
 
@@ -90,17 +90,17 @@ CI 使用以下命令将该文档转换为清单：
 ```bash
 ./x dex-test-ci sources \
   --doc docs/getting-started.md \
-  --output /tmp/wekit-dex-test-sources.json
+  --output /tmp/joker-dex-test-sources.json
 ```
 
 下载的 APK 会被验证为包含 `AndroidManifest.xml` 和至少一个 DEX 的 ZIP 文件，随后使用由
 文档、下载器和清单实现共同派生的键进行缓存。匹配的缓存 APK 及其 SHA-256 辅助文件会被
 复用。测试前，APKMirror 拆分包会使用固定版本的 APKEditor 进行合并。
 
-CI 仅缓存 `.wekit/dex-test/source` 下经过验证的 DexKit 源码检出内容；原生库会在每次运行时
+CI 仅缓存 `.joker/dex-test/source` 下经过验证的 DexKit 源码检出内容；原生库会在每次运行时
 重新构建，避免 CMake 复用旧运行器镜像中已经失效的 JDK 绝对包含路径。
 
-每次 CI 事件都会将完整的运行目录上传为 `wekit-dex-test-reports` Actions 构件，其中包括
+每次 CI 事件都会将完整的运行目录上传为 `joker-dex-test-reports` Actions 构件，其中包括
 失败的各 APK 报告和汇总文件 `summary.json`。即使已经保留所有可用报告，任何失败、阻塞、
 未完成、工作进程、APK 或基础设施异常仍会使 `dex-test` 作业失败。
 

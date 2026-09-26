@@ -6,8 +6,8 @@ plugins {
     id("com.android.library")
 }
 
-group = "dev.ujhhgtg.wekit"
-version = providers.gradleProperty("wekitPythonApiVersion")
+group = "dev.joker"
+version = providers.gradleProperty("jokerPythonApiVersion")
     .orElse(libs.versions.pythonRuntimeApiVersion).get()
 
 java {
@@ -23,7 +23,7 @@ kotlin {
 }
 
 configure<LibraryExtension> {
-    namespace = "dev.ujhhgtg.wekit.python.api"
+    namespace = "dev.joker.python.api"
 
     defaultConfig {
         minSdk = libs.versions.minSdk.get().toInt()

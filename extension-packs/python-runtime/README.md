@@ -1,9 +1,9 @@
-# WeKit Python runtime container
+# Joker Python runtime container
 
 This is an independently built, APK-shaped extension container. It is not an
-installable application and is mounted by WeKit's `PythonRuntimeLoader`. The build
+installable application and is mounted by Joker's `PythonRuntimeLoader`. The build
 reads its AGP, Gradle, JDK, SDK, Chaquopy, Python, NDK and ABI versions from
-WeKit's root version catalog. The first supported runtime is Python 3.13 on
+Joker's root version catalog. The first supported runtime is Python 3.13 on
 arm64-v8a.
 
 The API AAR is compile-only and is supplied by `xtask extensions pack` from a

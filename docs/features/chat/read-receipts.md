@@ -4,7 +4,7 @@
 
 ## 工作方式与限制
 
-使用所选发送模式发送带追踪的文本时，WeKit 会先向所选服务器注册
+使用所选发送模式发送带追踪的文本时，Joker 会先向所选服务器注册
 `wxId`、明文消息内容和创建时间，再发送包含透明追踪像素的消息。收到消息的客户端加载
 像素后，服务器记录请求的 TCP 对端 IP；发送方每隔一段时间查询去重计数。
 
@@ -31,7 +31,7 @@
 - `GET /pixel?wxId=<wxId>&id=<id>`：返回追踪像素并记录读取；
 - `GET /count?wxId=<wxId>&id=<id>`：返回 `{"count": <number>}`。
 
-仓库中的 [`services/read-receipts`](https://github.com/Ujhhgtg/WeKit/blob/master/services/read-receipts/README.md) 是保留独立
+仓库中的 [`services/read-receipts`](https://github.com/hbKnom/joker/blob/master/services/read-receipts/README.md) 是保留独立
 dashboard、REPL、管理 API、本地 SQLite 和远程 Turso 的参考实现，不是官方托管服务，
 也不是生产级多租户服务。可直接部署它，也可以按协议使用其他兼容实现。
 
@@ -53,7 +53,7 @@ Cloudflare Tunnel 连接器转发到这个 loopback origin。
   tunnel 和已配置主机名；同样要求固定端口和匹配的根路径 HTTPS 主机名。授权页面无法
   自动打开时，可以显式复制授权 URL。
 
-WeKit **不会**创建、删除或修改 Cloudflare tunnel、DNS 记录、hostname、route、ingress
+Joker **不会**创建、删除或修改 Cloudflare tunnel、DNS 记录、hostname、route、ingress
 或 Public Hostname 配置。Remotely-managed tunnel 的配置保存在 Cloudflare，并由用户在
 dashboard/API 管理。相关官方说明：
 
@@ -63,9 +63,9 @@ dashboard/API 管理。相关官方说明：
 
 ## Android 前台服务
 
-公网 tunnel 由 WeKit 自己的 Android 进程和 `specialUse` 前台服务持有。内置 origin 先启动，
-tunnel 后启动；停止时顺序相反。必须从可见设置页面执行连接，且必须允许 WeKit 的通知
-权限和通知渠道。Android 拒绝后台启动或无法显示持续通知时，WeKit 会要求用户打开通知
+公网 tunnel 由 Joker 自己的 Android 进程和 `specialUse` 前台服务持有。内置 origin 先启动，
+tunnel 后启动；停止时顺序相反。必须从可见设置页面执行连接，且必须允许 Joker 的通知
+权限和通知渠道。Android 拒绝后台启动或无法显示持续通知时，Joker 会要求用户打开通知
 设置并重试，不会静默运行不可见 tunnel。持续通知提供停止入口。
 
 Quick 地址、Token/Browser 主机名只有在公网 `GET /health` 精确返回空 `204` 后才会成为
@@ -74,7 +74,7 @@ Quick 地址、Token/Browser 主机名只有在公网 `GET /health` 精确返回
 ## 凭据边界
 
 Cloudflare 官方说明：持有 remotely-managed tunnel token 的任何人都可以运行该 tunnel。
-应把 token 当作密码处理；泄漏后应在 Cloudflare 中轮换。WeKit 不把 token 或 origin
+应把 token 当作密码处理；泄漏后应在 Cloudflare 中轮换。Joker 不把 token 或 origin
 certificate 写入 MMKV、Intent、广播、通知、日志、剪贴板或保存的 UI 状态。通过验证的
 凭据使用 Android Keystore AES-256-GCM 加密，保存在 `noBackupFilesDir` 下，并排除备份和
 设备迁移；这样做用于无人值守重连，但不能替代设备本身的安全保护。
@@ -94,7 +94,7 @@ certificate 写入 MMKV、Intent、广播、通知、日志、剪贴板或保存
 24-byte 随机 nonce（`Base64.NO_WRAP` 后为 32 个 ASCII 字符），不会写入持久配置、通知或
 日志。Rust origin 只有在 constant-time 验证该认证值后才采用 reader IP；直接访问
 loopback origin、第三方部署以及认证失败的请求仍只使用真实 TCP 对端，不能通过伪造
-`Forwarded`、`X-Forwarded-For`、`CF-Connecting-IP` 或 WeKit 内部头选择身份。
+`Forwarded`、`X-Forwarded-For`、`CF-Connecting-IP` 或 Joker 内部头选择身份。
 
 Cloudflare 对 `CF-Connecting-IP` 的定义及 Workers 子请求差异见
 [HTTP request headers](https://developers.cloudflare.com/fundamentals/reference/http-request-headers/)；

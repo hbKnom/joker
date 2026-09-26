@@ -1,0 +1,312 @@
+package dev.joker.dexkit.cache
+
+import dev.joker.utils.fs.moveReplacing
+import kotlin.io.path.createDirectories
+import kotlin.io.path.moveTo
+import dev.joker.constants.Preferences
+import dev.joker.dexkit.abc.IResolveDex
+import dev.joker.features.core.BaseFeature
+import dev.joker.preferences.WePrefs
+import dev.joker.utils.WeLogger
+import dev.joker.utils.fs.KnownPaths
+import dev.joker.utils.fs.createDirsSafe
+import dev.joker.utils.unreachable
+import org.json.JSONObject
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption.ATOMIC_MOVE
+import java.nio.file.StandardCopyOption.REPLACE_EXISTING
+import kotlin.io.path.deleteIfExists
+import kotlin.io.path.isDirectory
+import kotlin.io.path.deleteRecursively
+import kotlin.io.path.getLastModifiedTime
+import kotlin.io.path.div
+import kotlin.io.path.exists
+import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import kotlin.io.path.ExperimentalPathApi
+
+/**
+ * Dex 缓存管理器
+ * 负责管理 Dex 查找结果的缓存，支持版本控制和增量更新。
+ *
+ * 缓存的 key → value 由各 [dev.joker.dexkit.dsl.BaseDexDelegate] 直接提供
+ */
+object DexCacheManager {
+
+    private const val TAG = "DexCacheManager"
+
+    private const val CACHE_DIR_NAME = "dex_cache"
+    private const val CACHE_FILE_SUFFIX = ".json"
+    private const val KEY_HOST_VERSION = "host_version"
+    private const val UNVERSIONED = "unversioned"
+
+    private const val MAX_RETAINED_VERSIONS = 3
+
+    private val cacheRoot: Path by lazy {
+        (KnownPaths.moduleData / CACHE_DIR_NAME).createDirsSafe()
+    }
+
+    @Volatile
+    private var activeVersion: String? = null
+
+    /**
+     * Dex caches live in a per-host-version directory.
+     *
+     * Upstream 09-19 stopped wiping every version's cache when WeChat updates: switching between
+     * WeChat versions (or downgrading) now reuses the matching cache directory, and only stale
+     * versions beyond [MAX_RETAINED_VERSIONS] are pruned.
+     */
+    private val cacheDir: Path
+        get() = cacheRoot / (activeVersion ?: UNVERSIONED)
+
+    fun init(currentVer: String) {
+        val cachedVer = WePrefs.getString(KEY_HOST_VERSION)
+        activeVersion = currentVer
+        if (cachedVer != currentVer) {
+            WeLogger.i(TAG, "host version changed: $cachedVer -> $currentVer, keeping per-version caches")
+            Preferences.noDexResolve = false
+            WeLogger.i(TAG, "disabling NO_DEX_RESOLVE due to host version change")
+            runCatching { pruneOldVersions(keep = currentVer) }
+                .onFailure { WeLogger.w(TAG, "failed to prune old dex caches", it) }
+        }
+
+        WePrefs.putString(KEY_HOST_VERSION, currentVer)
+        cacheDir.createDirsSafe()
+    }
+
+    /** Keeps the active version plus the most recently modified others up to the retention cap. */
+    @OptIn(ExperimentalPathApi::class)
+    private fun pruneOldVersions(keep: String) {
+        if (!cacheRoot.exists()) return
+        val directories = cacheRoot.listDirectoryEntries()
+            .filter { it.isDirectory() && it.fileName.toString() != keep }
+            .sortedByDescending { it.getLastModifiedTime().toMillis() }
+        directories.drop(MAX_RETAINED_VERSIONS - 1).forEach { stale ->
+            stale.deleteRecursively()
+            WeLogger.i(TAG, "pruned stale dex cache for host version ${stale.fileName}")
+        }
+    }
+
+    /**
+     * 检查 Feature 的缓存是否完整有效。
+     *
+     * 有效条件：
+     * 1. 缓存文件存在
+     * 2. methodHash 匹配（检测代码变化）
+     * 3. [item] 的每个委托 key 都有非空值
+     */
+    fun isItemCacheValid(item: IResolveDex): Boolean {
+        if (item !is BaseFeature) unreachable()
+
+        val cacheFile = getCacheFile(item.technicalId)
+        if (!cacheFile.exists()) {
+            WeLogger.d(TAG, "cache not found for ${item.technicalId}")
+            return false
+        }
+
+        return try {
+            val json = JSONObject(cacheFile.readText())
+
+            val cachedHash = json.optString("methodHash", "")
+            val currentHash = methodHash(item)
+            if (cachedHash != currentHash) {
+                WeLogger.d(TAG, "resolveDex of ${item.technicalPath} changed: cached=$cachedHash, current=$currentHash")
+                return false
+            }
+
+            // 每个委托对应一个 key，全部必须存在且非空
+            val missingOrEmpty = item.dexDelegates.filter { delegate ->
+                val v = json.optString(delegate.key, "")
+                v.isEmpty() || v == "null"
+            }
+
+            if (missingOrEmpty.isNotEmpty()) {
+                WeLogger.d(TAG, "cache incomplete for ${item.technicalPath}, missing keys: ${missingOrEmpty.map { it.key }}")
+                return false
+            }
+
+            true
+        } catch (e: Exception) {
+            WeLogger.e(TAG, "failed to read cache for: ${item.technicalPath}", e)
+            false
+        }
+    }
+
+    /**
+     * 将 [item] 所有委托的当前描述符持久化到缓存文件。
+     * 数据来自 [IResolveDex.collectDescriptors]。
+     */
+    fun saveItemCache(item: IResolveDex) {
+        if (item !is BaseFeature) {
+            error("item is not BaseFeature")
+        }
+
+        val cacheFile = getCacheFile(item.technicalId)
+        try {
+            val json = JSONObject()
+            json.put("methodHash", methodHash(item))
+            json.put("timestamp", System.currentTimeMillis())
+
+            item.collectDescriptors().forEach { (key, value) ->
+                json.put(key, value)
+            }
+
+            cacheFile.writeText(json.toString(2))
+            WeLogger.d(TAG, "cache saved for: ${item.technicalPath}")
+        } catch (e: Exception) {
+            WeLogger.e(TAG, "failed to save cache for: ${item.technicalPath}", e)
+            throw e
+        }
+    }
+
+    /**
+     * 从缓存文件加载原始 Map（不包含元数据 key）。
+     * 由 [IResolveDex.loadFromCache] 消费，后者负责逐委托分发。
+     */
+    fun loadItemCache(item: IResolveDex): Map<String, Any>? {
+        if (item !is BaseFeature) {
+            error("item is not BaseFeature")
+        }
+
+        val cacheFile = getCacheFile(item.technicalId)
+        if (!cacheFile.exists()) return null
+
+        return try {
+            val json = JSONObject(cacheFile.readText())
+            buildMap {
+                for (key in json.keys()) {
+                    if (key !in META_KEYS) put(key, json.get(key))
+                }
+            }
+        } catch (e: Exception) {
+            WeLogger.e(TAG, "failed to load cache for: ${item.technicalPath}", e)
+            null
+        }
+    }
+
+    fun deleteCache(path: String) {
+        getCacheFile(path).deleteIfExists()
+    }
+
+    /** Explicit user action ("reset dex cache"): wipes every host version's cache. */
+    @OptIn(ExperimentalPathApi::class)
+    fun clearAllCache() {
+        if (cacheRoot.exists()) {
+            cacheRoot.listDirectoryEntries().forEach { path ->
+                runCatching {
+                    if (path.isDirectory()) path.deleteRecursively() else path.deleteIfExists()
+                }
+            }
+        }
+        cacheDir.createDirsSafe()
+        WeLogger.i(TAG, "all cache cleared")
+    }
+
+    fun getOutdatedItems(items: List<IResolveDex>): List<IResolveDex> =
+        items.filter { !isItemCacheValid(it) }
+
+    fun importCloudCaches(entries: List<CloudDexCacheEntry>) {
+        writeCloudCacheFiles(cacheDir, entries, System.currentTimeMillis())
+    }
+
+    // ---------------------------------------------------------------------------
+
+    private val META_KEYS = setOf("methodHash", "timestamp")
+
+    fun cacheFileName(technicalId: String): String =
+        technicalId.replace("/", "_") + CACHE_FILE_SUFFIX
+
+    private fun getCacheFile(technicalId: String): Path =
+        cacheDir / cacheFileName(technicalId)
+
+    /**
+     * 获取 resolveDex 方法编译时生成的哈希，用于检测实现变化。
+     * 以 technicalId 为 key，与宿主 R8 混淆后的类名解耦。
+     */
+    fun methodHash(item: IResolveDex): String {
+        val hash = GeneratedMethodHashes.HASHES[(item as BaseFeature).technicalId]
+        if (hash.isNullOrBlank())
+            error("failed to retrieve method hash for item ${item.technicalId}; this shouldn't happen")
+        return hash
+    }
+}
+
+fun writeCloudCacheFiles(
+    cacheDir: Path,
+    entries: List<CloudDexCacheEntry>,
+    timestamp: Long,
+) {
+    if (entries.isEmpty()) return
+    require(entries.map(CloudDexCacheEntry::technicalId).distinct().size == entries.size) {
+        "duplicate cloud cache technical ID"
+    }
+
+    cacheDir.createDirectories()
+    val transactionId = "${System.currentTimeMillis()}-${System.nanoTime()}"
+    val staged = mutableListOf<CloudCacheStagedFile>()
+    val committed = mutableSetOf<Path>()
+    try {
+        for (entry in entries) {
+            val destination = cacheDir.resolve(DexCacheManager.cacheFileName(entry.technicalId))
+            val temp = destination.resolveSibling(".${destination.fileName}.$transactionId.tmp")
+            val backup = destination.resolveSibling(".${destination.fileName}.$transactionId.bak")
+            staged += CloudCacheStagedFile(destination, temp, backup)
+            val json = buildString {
+                append("{\n")
+                append("  \"methodHash\": ").appendJsonString(entry.methodHash).append(",\n")
+                append("  \"timestamp\": ").append(timestamp)
+                entry.descriptors.forEach { (key, value) ->
+                    append(",\n  ").appendJsonString(key).append(": ").appendJsonString(value)
+                }
+                append("\n}")
+            }
+            temp.writeText(json)
+        }
+
+        for (file in staged) {
+            if (file.destination.exists()) {
+                file.destination.moveReplacing(file.backup)
+            }
+            file.temp.moveReplacing(file.destination)
+            committed.add(file.destination)
+        }
+    } catch (error: Exception) {
+        for (file in staged.asReversed()) {
+            if (file.backup.exists()) {
+                runCatching { file.backup.moveReplacing(file.destination) }
+            } else if (file.destination in committed) {
+                runCatching { file.destination.deleteIfExists() }
+            }
+        }
+        throw error
+    } finally {
+        staged.forEach { file ->
+            runCatching { file.temp.deleteIfExists() }
+            runCatching { file.backup.deleteIfExists() }
+        }
+    }
+}
+
+private data class CloudCacheStagedFile(
+    val destination: Path,
+    val temp: Path,
+    val backup: Path,
+)
+
+private fun StringBuilder.appendJsonString(value: String): StringBuilder {
+    append('"')
+    value.forEach { character ->
+        when (character) {
+            '"' -> append("\\\"")
+            '\\' -> append("\\\\")
+            '\b' -> append("\\b")
+            '\u000C' -> append("\\f")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> if (character.code < 0x20) append("\\u%04x".format(character.code)) else append(character)
+        }
+    }
+    return append('"')
+}

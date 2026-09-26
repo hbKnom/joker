@@ -14,7 +14,7 @@ Zygisk 模式先确认 WebUI 中对应 Android 用户和微信的开关已经打
 
 ## 3. 模块数据在哪?
 
-`/sdcard/Android/data/<宿主包名>/WeKit`
+`/sdcard/Android/data/<宿主包名>/Joker`
 
 ## 4. 不受支持的旧版本启动一直弹 DEX 缓存更新怎么办?
 
@@ -65,4 +65,4 @@ Zygisk 模式先确认 WebUI 中对应 Android 用户和微信的开关已经打
 
 ## 10. 其他问题
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Ujhhgtg/WeKit)
+请在 [GitHub Issues](https://github.com/hbKnom/joker/issues) 中搜索已有问题，或新建问题反馈。

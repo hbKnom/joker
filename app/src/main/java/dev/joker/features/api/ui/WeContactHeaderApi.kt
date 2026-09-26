@@ -1,0 +1,139 @@
+package dev.joker.features.api.ui
+
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.ContextWrapper
+import android.util.TypedValue
+import android.view.View
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.TextView
+import dev.joker.reflekt.reflekt
+import dev.joker.R
+import dev.joker.dexkit.abc.IResolveDex
+import dev.joker.dexkit.dsl.dexMethod
+import dev.joker.features.core.ApiFeature
+import dev.joker.features.core.FeatureCategoryIds
+import dev.joker.ui.utils.findViewsWhich
+import java.util.concurrent.CopyOnWriteArrayList
+
+object WeContactHeaderApi : ApiFeature(), IResolveDex {
+
+    override val technicalId = "联系人详情头部扩展"
+    override val nameRes = R.string.feature_we_contact_header_api_name
+    override val categoryIds = listOf(FeatureCategoryIds.API)
+
+    fun interface Provider {
+        /** Return null when this profile should not have an extra row. */
+        fun getHeaderText(activity: Activity): String?
+    }
+
+    private val providers = CopyOnWriteArrayList<Provider>()
+    private const val ROW_TAG = "joker_contact_header_row"
+
+    /** Friend profile screen; the only screen that binds [bindHeader]'s host preference. */
+    private const val FRIEND_PROFILE_ACTIVITY = "com.tencent.mm.plugin.profile.ui.ContactInfoUI"
+
+    private val bindHeader by dexMethod {
+        matcher {
+            declaredClass = "com.tencent.mm.plugin.profile.ui.NormalProfileHeaderPreference"
+            paramTypes(View::class.java)
+            returnType = "void"
+            usingStrings("[onBindView] never attach!")
+        }
+    }
+
+    fun addProvider(provider: Provider) {
+        providers.addIfAbsent(provider)
+    }
+
+    fun removeProvider(provider: Provider) {
+        providers.remove(provider)
+    }
+
+    /**
+     * True when `activity` is one of the screens whose header renders the provider rows.
+     *
+     * Providers that also publish the same value through [WeContactPrefsScreenApi] use this to
+     * avoid printing it twice on a single screen: the header is the canonical spot there, while
+     * screens that render no header (the chatroom detail list) keep their list row.
+     *
+     * The comparison walks the name of the concrete class instead of using an `is
+     * com.tencent.mm.plugin.profile.ui.ContactInfoUI` check, because the host types only exist as
+     * compile-only stubs here (they are not Activity subclasses at compile time, which makes such
+     * a check a hard "always false" compiler error) and a subclass on the host side must still
+     * match.
+     */
+    fun showsHeaderOn(activity: Activity): Boolean {
+        var clazz: Class<*>? = activity.javaClass
+        while (clazz != null) {
+            if (clazz.name == FRIEND_PROFILE_ACTIVITY) return true
+            clazz = clazz.superclass
+        }
+        return false
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onEnable() {
+        bindHeader.hookAfter {
+            val root = args[0] as View
+            // The host only creates its ViewHolder after the preference is attached.
+            if (root.tag == null) return@hookAfter
+            root.findViewsWhich { it.tag == ROW_TAG }.toList().forEach {
+                (it.parent as ViewGroup).removeView(it)
+            }
+            if (providers.isEmpty()) return@hookAfter
+
+            var context = root.context
+            while (context is ContextWrapper && context !is Activity) context = context.baseContext
+            val activity = context as Activity
+            val header = thisObject as View.OnLongClickListener
+
+            // The native ViewHolder binds the header itself to the nickname, alias,
+            // WeChat number and location TextViews. These share one vertical container.
+            // Use that actual listener identity, not translated text or obfuscated IDs.
+            val templates = root.findViewsWhich { view ->
+                view is TextView && view.reflekt().getField("mListenerInfo", true)?.let {
+                    it.reflekt().getField("mOnLongClickListener") === header
+                } == true
+            }.map { it as TextView }.toList()
+            val parent = templates.map { it.parent }.distinct().single() as LinearLayout
+            check(parent.orientation == LinearLayout.VERTICAL)
+            val template = templates.first()
+            val touch = template.reflekt().getField("mListenerInfo", true)!!
+                .reflekt().getField("mOnTouchListener") as View.OnTouchListener
+
+            for (provider in providers) {
+                val headerText = provider.getHeaderText(activity) ?: continue
+                val row = TextView(template.context).apply {
+                    id = View.generateViewId()
+                    tag = ROW_TAG
+                    layoutParams = LinearLayout.LayoutParams(template.layoutParams as LinearLayout.LayoutParams)
+                    setTextSize(TypedValue.COMPLEX_UNIT_PX, template.textSize)
+                    setTextColor(template.textColors)
+                    typeface = template.typeface
+                    gravity = template.gravity
+                    includeFontPadding = template.includeFontPadding
+                    textDirection = template.textDirection
+                    setPaddingRelative(template.paddingStart, template.paddingTop, template.paddingEnd, template.paddingBottom)
+                    setLineSpacing(template.lineSpacingExtra, template.lineSpacingMultiplier)
+                    text = headerText
+                    // This also sets the native touch-coordinate tag used to anchor its popup.
+                    setOnTouchListener(touch)
+                    setOnLongClickListener {
+                        val ownId = id
+                        try {
+                            // Native onLongClick dispatches by the source row's ID, but
+                            // reads/highlights this TextView and restores it on dismissal.
+                            id = template.id
+                            header.onLongClick(this)
+                        } finally {
+                            id = ownId
+                        }
+                    }
+                }
+                parent.addView(row)
+            }
+        }
+    }
+}

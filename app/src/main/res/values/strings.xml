@@ -1,6 +1,6 @@
 <resources>
-    <string name="app_name" translatable="false">WeKit</string>
-    <string name="app_description">WeChat, now with superpowers\nUjhhgtg@github</string>
+    <string name="app_name" translatable="false">Joker</string>
+    <string name="app_description">WeChat, now with superpowers\nJoker@github</string>
     <string name="res_inject_success" translatable="false">Resources injection success</string>
 
     <string name="settings_title">Settings</string>
@@ -21,10 +21,10 @@
     <string name="accessibility_overflow_menu">More options</string>
     <string name="brand_github" translatable="false">GitHub</string>
     <string name="brand_telegram" translatable="false">Telegram</string>
-    <string name="module_app_sticker_import_invalid_caller">This action can only be started from the WeKit panel inside WeChat.</string>
+    <string name="module_app_sticker_import_invalid_caller">This action can only be started from the Joker panel inside WeChat.</string>
     <string name="manager_launch_opening_title">Opening framework manager…</string>
     <string name="manager_launch_failed_title">Unable to open manager</string>
-    <string name="manager_launch_invalid_caller">This action can only be started from the WeKit panel inside WeChat.</string>
+    <string name="manager_launch_invalid_caller">This action can only be started from the Joker panel inside WeChat.</string>
     <string name="manager_launch_root_required">Root access is required to open the LSPosed or Vector manager.</string>
     <string name="manager_launch_failed_message">Both supported manager launch methods failed.</string>
     <string name="manager_launch_no_root_manager">No supported Root manager was found.</string>
@@ -63,7 +63,7 @@
     <string name="module_app_about_description">%1$s is a free and open-source Xposed module for WeChat.</string>
     <string name="module_app_about_version">Version: %1$s</string>
     <string name="module_app_about_version_code">Version code: %1$d</string>
-    <string name="module_app_about_authors">Authors: Ujhhgtg@github, cwuom@github</string>
+    <string name="module_app_about_authors">Authors: hbKnom@github</string>
     <string name="contact_filter_all">All</string>
     <string name="contact_filter_friends">Friends</string>
     <string name="contact_filter_groups">Groups</string>
@@ -121,7 +121,7 @@
     <string name="dex_cache_continue_local_resolution">Continue resolution</string>
     <string name="dex_cache_failure_detail">%1$d. %2$s\n   Error: %3$s\n\n</string>
     <string name="dex_cache_copy_error_information">Copy error information</string>
-    <string name="dex_error_report_title">=== WeKit DEX Scan Error Report ===</string>
+    <string name="dex_error_report_title">=== Joker DEX Scan Error Report ===</string>
     <string name="dex_error_report_entry">%1$d. %2$s\n   Error: %3$s\n   Stack trace:\n%4$s\n\n</string>
     <string name="location_picker_instruction">Tap the map or the coordinates below to choose a virtual location.</string>
     <string name="location_picker_title">Choose location on map</string>
@@ -255,8 +255,8 @@
     <string name="home_module_activated">Module activated</string>
     <string name="home_device_info_title">Device information</string>
     <string name="home_learn_more_title">Learn more</string>
-    <string name="home_learn_more_item_title">WeKit documentation</string>
-    <string name="home_learn_more_item_summary">Learn how to configure and use WeKit</string>
+    <string name="home_learn_more_item_title">Joker documentation</string>
+    <string name="home_learn_more_item_summary">Learn how to configure and use Joker</string>
     <string name="home_wechat_version">WeChat version</string>
     <string name="home_module_version">Module version</string>
     <string name="home_build_time">Build time</string>
@@ -418,7 +418,7 @@
     <string name="nuke_appearance_title">Appearance</string>
     <string name="nuke_about_title">About the module</string>
     <string name="nuke_support_us_title">Support us</string>
-    <string name="nuke_settings_title">WeKit Settings</string>
+    <string name="nuke_settings_title">Joker Settings</string>
     <string name="nuke_section_security">Security</string>
     <string name="nuke_section_general">General</string>
     <string name="nuke_wechat_account">WeChat account</string>
@@ -477,16 +477,16 @@
     <string name="nuke_update_installed">Installed</string>
     <string name="nuke_installed_version_details">Version code %1$d\nBuild time %2$s</string>
     <string name="nuke_update_checking">Checking for updates</string>
-    <string name="nuke_update_check_summary">Check whether a new version of WeKit is available.</string>
+    <string name="nuke_update_check_summary">Check whether a new version of Joker is available.</string>
     <string name="nuke_update_check_again">Check again</string>
     <string name="nuke_download_install">Download and install</string>
     <string name="nuke_about_project">Project</string>
-    <string name="nuke_about_description_one">WeKit is a free and open-source Xposed module.</string>
+    <string name="nuke_about_description_one">Joker is a free and open-source Xposed module.</string>
     <string name="nuke_about_description_two">It provides optional feature enhancements and interface improvements for WeChat.</string>
     <string name="nuke_about_developers">Developers</string>
     <string name="nuke_about_links">Links</string>
     <string name="nuke_github_contributions">%1$d GitHub contributions</string>
-    <string name="nuke_wekit_developer">WeKit developer</string>
+    <string name="nuke_joker_developer">Joker developer</string>
     <string name="nuke_github_avatar">GitHub avatar for %1$s</string>
     <string name="licenses_unknown_author">Unknown author</string>
     <string name="licenses_version">Version %1$s</string>
@@ -607,7 +607,7 @@
     <string name="feature_hide_other_devices_banner_name">Hide other device banners</string>
     <string name="feature_hide_other_devices_banner_description">Hide other devices logged in banner at top of homepage</string>
     <string name="feature_monet_engine_name">Monet engine</string>
-    <string name="feature_monet_engine_description">Recolor WeChat’s own UI resources at runtime to follow the WeKit theme color. No root or module needed; option changes apply live. Requires Android 11+.</string>
+    <string name="feature_monet_engine_description">Recolor WeChat’s own UI resources at runtime to follow the Joker theme color. No root or module needed; option changes apply live. Requires Android 11+.</string>
     <string name="feature_replace_navigation_bar_name">Replace home navigation bar</string>
     <string name="feature_replace_navigation_bar_description">Replace the bottom navigation bar of the homepage with Material Design or Backdrop style</string>
     <string name="feature_themes_name">Themes</string>
@@ -717,7 +717,7 @@
     <string name="feature_markdown_rendering_name">Markdown rendering</string>
     <string name="feature_markdown_rendering_description">Rendering Markdown messages</string>
     <string name="feature_merge_chat_message_context_menu_items_name">Merge message context-menu items</string>
-    <string name="feature_merge_chat_message_context_menu_items_description">After it is turned on, only one WeKit item will be displayed in the message long-press menu. After clicking, all module menu items will be displayed in the dialog box.</string>
+    <string name="feature_merge_chat_message_context_menu_items_description">After it is turned on, only one Joker item will be displayed in the message long-press menu. After clicking, all module menu items will be displayed in the dialog box.</string>
     <string name="feature_merge_messages_into_groups_name">Group consecutive messages</string>
     <string name="feature_merge_messages_into_groups_description">Combine multiple consecutive messages from the same sender into one message display (Telegram style)</string>
     <string name="feature_message_entrance_animation_name">Message entry animation</string>
@@ -868,7 +868,7 @@
     <string name="feature_mark_all_as_read_name">Mark all as read</string>
     <string name="feature_mark_all_as_read_description">Add the "Clear Unread" option to the menu in the upper right corner of the homepage</string>
     <string name="feature_module_settings_name">Module settings</string>
-    <string name="feature_module_settings_description">Add the "WeKit" option to the menu in the upper right corner of the homepage</string>
+    <string name="feature_module_settings_description">Add the "Joker" option to the menu in the upper right corner of the homepage</string>
     <string name="feature_open_conversation_menu_name">Open conversation menu</string>
     <string name="feature_open_conversation_menu_description">Add the "Jump to Conversation" option to the menu in the upper right corner of the homepage</string>
     <string name="feature_toggle_all_conversations_visibility_name">Toggle all conversation visibility</string>
@@ -1648,7 +1648,7 @@
     <string name="sticker_telegram_single_title">Import one pack from Telegram</string>
     <string name="sticker_telegram_source_manual_description">Read a Telegram database with the system file picker</string>
     <string name="sticker_telegram_source_manual_title">Select a Telegram database manually (cache4.db)</string>
-    <string name="sticker_telegram_source_root_description">Open the WeKit module app to scan instances and parse their databases</string>
+    <string name="sticker_telegram_source_root_description">Open the Joker module app to scan instances and parse their databases</string>
     <string name="sticker_telegram_source_root_title">Read the Telegram database directly with root access</string>
     <string name="sticker_telegram_token_required">Enter a Telegram Bot Token in Settings first</string>
     <string name="sticker_telegram_will_import">Will import: %1$s</string>
@@ -1984,7 +1984,7 @@
     <string name="chat_forward_untested_type_warning">Warning: this message type has not been tested. Falling back to sending it as a card, which may fail.</string>
     <string name="chat_redirect_path_exists">The current directory already exists.</string>
     <string name="chat_redirect_path_not_directory">The current path exists but is not a directory. Downloads will fall back to the default directory.</string>
-    <string name="chat_redirect_path_will_create">The current directory does not exist. WeKit will try to create it when downloading.</string>
+    <string name="chat_redirect_path_will_create">The current directory does not exist. Joker will try to create it when downloading.</string>
     <string name="chat_redirect_save_directory">Save directory</string>
     <string name="chat_redirect_actual_directory">Actual directory: %1$s</string>
     <string name="chat_redirect_default_directory_hint">Leave blank to use the default directory: %1$s</string>
@@ -2087,7 +2087,7 @@
     <string name="read_receipts_error_credential_save_failed">The Tunnel was verified, but its credential could not be saved securely</string>
     <string name="read_receipts_error_start_handoff_timeout">The tunnel service did not accept the start request in time</string>
     <string name="read_receipts_error_stop_timeout">The tunnel did not stop in time; shutdown of the built-in server will continue</string>
-    <string name="read_receipts_error_service_unavailable">The WeKit tunnel service is unavailable. Return to the visible settings screen and try again.</string>
+    <string name="read_receipts_error_service_unavailable">The Joker tunnel service is unavailable. Return to the visible settings screen and try again.</string>
     <string name="read_receipts_error_health_check_failed">The tunnel health check failed. Check the built-in server, public hostname, and ingress configuration.</string>
     <string name="read_receipts_error_unexpected_failure">The Cloudflare Tunnel operation failed unexpectedly</string>
     <string name="read_receipts_verified_public_url">Verified public URL: %1$s</string>
@@ -2867,7 +2867,7 @@
     <plurals name="contacts_detect_marking"><item quantity="one">Applying label “%1$s”; please wait…\nCompleted: %2$d/%3$d friend</item><item quantity="other">Applying label “%1$s”; please wait…\nCompleted: %2$d/%3$d friends</item></plurals>
     <string name="contacts_detect_stop">Stop</string>
     <string name="contacts_detect_back">Back</string>
-    <string name="contacts_detect_suggested_label">WeKit_deleted_friends_%1$s</string>
+    <string name="contacts_detect_suggested_label">Joker_deleted_friends_%1$s</string>
     <string name="contacts_detect_mark_label">Apply label</string>
     <string name="contacts_detect_delete_all">Delete all</string>
     <string name="contacts_hide_restored">Hidden contacts restored</string>
@@ -3151,11 +3151,11 @@
     <string name="shortvideos_unknown_media_type">Unknown media type</string>
     <string name="shortvideos_image_download_started">Starting download of image %1$d</string>
     <string name="shortvideos_image_download_reported_success">Image %1$d download completed</string>
-    <string name="shortvideos_image_downloaded_to">Image saved to /sdcard/Download/WeKit/%1$s</string>
+    <string name="shortvideos_image_downloaded_to">Image saved to /sdcard/Download/Joker/%1$s</string>
     <string name="shortvideos_downloading_video">Downloading video…</string>
     <string name="shortvideos_decrypting_video">Decrypting video…</string>
     <string name="shortvideos_video_download_failed">Video download failed</string>
-    <string name="shortvideos_video_downloaded_to">Video saved to /sdcard/Download/WeKit/%1$s</string>
+    <string name="shortvideos_video_downloaded_to">Video saved to /sdcard/Download/Joker/%1$s</string>
     <string name="shortvideos_video_download_started">Starting video download</string>
 
     <!-- Task 5 group 2: themes and home side panel -->
@@ -3179,7 +3179,7 @@
     <string name="home_side_panel_moments">Moments</string>
     <string name="home_side_panel_channels">Channels</string>
     <string name="home_side_panel_mark_all_read">Mark all as read</string>
-    <string name="home_side_panel_wekit_settings">WeKit settings</string>
+    <string name="home_side_panel_joker_settings">Joker settings</string>
     <string name="home_side_panel_open_profile">Open profile</string>
     <string name="home_side_panel_settings">Side panel settings</string>
     <string name="home_side_panel_online">Online</string>
@@ -3777,26 +3777,26 @@
     <string name="system_api_server_port">Port</string>
     <string name="system_api_server_invalid_port">Invalid port!</string>
     <!-- Non-Compose and injected-host messages -->
-    <string name="noncompose_features_loaded">WeKit loaded successfully!</string>
+    <string name="noncompose_features_loaded">Joker loaded successfully!</string>
     <string name="noncompose_restarting_host">Restarting…</string>
     <string name="noncompose_bsh_saved">Saved to %1$s</string>
     <string name="noncompose_bsh_empty_result">Error: the decompiled result is empty.</string>
     <string name="noncompose_bsh_error">Error: %1$s</string>
     <string name="noncompose_bsh_selection_cancelled">File selection cancelled.</string>
-    <string name="noncompose_update_download_title">WeKit update</string>
+    <string name="noncompose_update_download_title">Joker update</string>
     <string name="noncompose_update_downloading">Downloading update…</string>
     <string name="noncompose_moments_thumbnail_warning">Warning: using a thumbnail. View the image once first to download the original.</string>
     <string name="noncompose_chat_input_no_actions">No chat input-bar actions are available.</string>
     <string name="noncompose_chat_input_actions_title">Chat actions</string>
-    <string name="noncompose_message_menu_no_actions">No WeKit menu actions are available for the selected messages.</string>
+    <string name="noncompose_message_menu_no_actions">No Joker menu actions are available for the selected messages.</string>
     <plurals name="noncompose_message_menu_selected_title">
-        <item quantity="one">WeKit (%1$d message)</item>
-        <item quantity="other">WeKit (%1$d messages)</item>
+        <item quantity="one">Joker (%1$d message)</item>
+        <item quantity="other">Joker (%1$d messages)</item>
     </plurals>
     <string name="noncompose_message_menu_adapted_section">Actions supporting multiple messages</string>
     <string name="noncompose_message_menu_automatic_section">Actions automatically applied to multiple messages</string>
-    <string name="noncompose_wekit_settings_entry">WeKit settings</string>
-    <string name="noncompose_wekit_settings_group">Plugins</string>
+    <string name="noncompose_joker_settings_entry">Joker settings</string>
+    <string name="noncompose_joker_settings_group">Plugins</string>
 
     <!-- WeAgent live panel -->
     <string name="agent_panel_collapse_sessions">Collapse session sidebar</string>
@@ -3839,7 +3839,7 @@
     <string name="agent_panel_rejection_reason">Rejection reason (optional)</string>
     <string name="agent_panel_reject">Reject</string>
     <string name="agent_panel_approve">Approve</string>
-    <string name="telegram_root_permission_required">Grant root access to the WeKit module app.</string>
+    <string name="telegram_root_permission_required">Grant root access to the Joker module app.</string>
     <string name="telegram_database_scan_failed">Failed to scan Telegram databases: %1$s</string>
     <string name="telegram_root_command_failed">The root command failed</string>
     <string name="telegram_database_not_found">No cache4.db was found. Make sure Telegram is signed in and has been opened at least once.</string>
@@ -4075,13 +4075,13 @@
 
     <!-- Audio clipper (ported from FunBox) -->
 
-    <!-- WeKit: 会话选择器 / TTS 引擎枚举 / 点歌仅自己指令 (2026-09-22) -->
+    <!-- Joker: 会话选择器 / TTS 引擎枚举 / 点歌仅自己指令 (2026-09-22) -->
     <string name="conversation_picker_loading">Loading chats…</string>
     <string name="conversation_picker_empty">No chats were found</string>
     <string name="conversation_picker_group">Group</string>
     <string name="text_speech_engine_system_default">System default engine</string>
     <string name="text_speech_engine_not_ready">The TTS engine is not ready yet. Please wait or pick another engine.</string>
-    <string name="text_speech_test_utterance">Hello, this is a test of the WeKit text-to-speech announcement.</string>
+    <string name="text_speech_test_utterance">Hello, this is a test of the Joker text-to-speech announcement.</string>
     <string name="text_speech_test_speak">Test announcement</string>
     <string name="text_speech_engine_pick">Choose a TTS engine</string>
     <string name="text_speech_engine_switched">Engine switched, re-initialising…</string>
@@ -4183,7 +4183,7 @@
     <string name="yanwai_recent_empty">No verdict yet in this session.</string>
 
     <string name="monet_error_colors">Unread badges and error colors</string>
-    <string name="monet_color_source_summary">Follows the WeKit theme (dynamic wallpaper color or seed color). Change it in WeKit settings → Theme.</string>
+    <string name="monet_color_source_summary">Follows the Joker theme (dynamic wallpaper color or seed color). Change it in Joker settings → Theme.</string>
     <string name="monet_resolve_title">Analyzing WeChat resources</string>
     <string name="monet_resolve_failed">Analysis failed during %1$s: %2$s</string>
     <string name="monet_reresolve">Re-analyze WeChat resources</string>

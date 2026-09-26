@@ -32,7 +32,6 @@ dependencyResolutionManagement {
         }
         maven("https://jitpack.io") {
             content {
-                includeGroup("com.github.Ujhhgtg")
                 includeGroup("com.github.topjohnwu.libsu")
             }
         }
@@ -67,7 +66,7 @@ plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
-rootProject.name = "wekit"
+rootProject.name = "joker"
 
 // Composite build: scripta code editor (not published to Maven Central; keep its own
 // toolchain, plugins and version catalog).

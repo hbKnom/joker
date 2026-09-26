@@ -7,7 +7,7 @@ plugins {
     id("org.jetbrains.kotlin.android") version libs.versions.kotlin
 }
 
-group = "dev.ujhhgtg.wekit.python.runtime"
+group = "dev.joker.python.runtime"
 version = libs.versions.pythonRuntimeVersion.get()
 
 val nativeLibraries = listOf(
@@ -68,11 +68,11 @@ val generateRuntimeManifest = tasks.register("generateRuntimeManifest") {
 }
 
 configure<ApplicationExtension> {
-    namespace = "dev.ujhhgtg.wekit.python.runtime"
+    namespace = "dev.joker.python.runtime"
     compileSdk = libs.versions.compileSdk.get().toInt()
     ndkVersion = libs.versions.pythonRuntimeNdk.get()
     defaultConfig {
-        applicationId = "dev.ujhhgtg.wekit.python.runtime.container"
+        applicationId = "dev.joker.python.runtime.container"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = libs.versions.pythonRuntimeVersionCode.get().toInt()
@@ -107,8 +107,8 @@ val dexKitCodegen = configurations.create("dexKitCodegen") {
 dependencies {
     // Supplied by xtask from a controlled local Maven repository; compile-only
     // prevents API classes from entering the runtime DEX.
-    val apiVersion = providers.gradleProperty("wekitPythonApiVersion").orElse(libs.versions.pythonRuntimeApiVersion)
-    compileOnly("dev.ujhhgtg.wekit:python-runtime-api:${apiVersion.get()}")
+    val apiVersion = providers.gradleProperty("jokerPythonApiVersion").orElse(libs.versions.pythonRuntimeApiVersion)
+    compileOnly("dev.joker:python-runtime-api:${apiVersion.get()}")
     chaquopyTarget(
         "com.chaquo.python:target:${libs.versions.pythonRuntimeChaquopyTarget.get()}:" +
             "${libs.versions.pythonRuntimeAbi.get()}@zip",
@@ -141,12 +141,12 @@ chaquopy {
     defaultConfig {
         version = libs.versions.pythonRuntimePython.get()
         buildPython(
-            providers.gradleProperty("wekitPythonBuildExecutable")
+            providers.gradleProperty("jokerPythonBuildExecutable")
                 .orElse("python${libs.versions.pythonRuntimePython.get()}")
                 .get(),
         )
         pip {
-            providers.gradleProperty("wekitPythonWheelDirectory").orNull?.let { directory ->
+            providers.gradleProperty("jokerPythonWheelDirectory").orNull?.let { directory ->
                 options("--find-links", directory)
             }
             install("-r", "requirements.txt")
@@ -177,12 +177,12 @@ listOf("debug", "release").forEach { variant ->
     val capitalized = variant.replaceFirstChar(Char::uppercaseChar)
     val stagePatchedBridge = tasks.register<Copy>("stage${capitalized}PatchedChaquopyBridge") {
         dependsOn("generate${capitalized}PythonMiscAssets")
-        val bridge = providers.gradleProperty("wekitPatchedChaquopyBridge").map(::file)
+        val bridge = providers.gradleProperty("jokerPatchedChaquopyBridge").map(::file)
         from(bridge)
         into(layout.buildDirectory.dir("python/assets/misc/$variant/chaquopy/bootstrap-native/arm64-v8a/java"))
         doFirst {
             require(bridge.isPresent && bridge.get().isFile) {
-                "wekitPatchedChaquopyBridge must point to the bridge built by xtask"
+                "jokerPatchedChaquopyBridge must point to the bridge built by xtask"
             }
         }
     }

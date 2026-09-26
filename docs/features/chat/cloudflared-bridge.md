@@ -2,11 +2,11 @@
 
 ## Scope
 
-WeKit embeds Cloudflare's official Go tunnel transport as a separate Android shared library. It
+Joker embeds Cloudflare's official Go tunnel transport as a separate Android shared library. It
 supports repeated Quick Tunnel sessions, remotely-managed named tunnels started with a run token,
 and browser-assisted read-only selection of an existing remotely-managed tunnel, forwarding only
 to an HTTP(S) loopback origin. The Android runtime consumer is an exported `specialUse` foreground
-service in WeKit's own process, controlled from the injected WeChat process through a narrow
+service in Joker's own process, controlled from the injected WeChat process through a narrow
 Messenger protocol with calling-UID validation.
 
 Android browser authentication uses an independent JNI auth handle and never stops or replaces the
@@ -15,7 +15,7 @@ six-symbol C compatibility adapter can attach authentication to an existing conn
 selection only advances that auth session's non-secret state; its fixed signature cannot safely
 return a token or switch the connector.
 
-WeKit does not create tunnels, DNS records, hostnames, ingress routes, or public-hostname
+Joker does not create tunnels, DNS records, hostnames, ingress routes, or public-hostname
 configuration, and it does not mutate those resources during login, selection, startup, recovery,
 or logout. Authenticated modes connect only an existing remotely-managed tunnel and an existing
 hostname configured by the user in Cloudflare. Cloudflare documents that remotely-managed
@@ -59,7 +59,7 @@ does not import `os/signal`, and installs no handler. A static bridge test rejec
 `os/signal`, `Notify`, or `NotifyContext` use and confines this safe one-shot import to that adapter.
 
 Each public handle owns its cancellation context, worker wait group, and single-consumer callback
-queue. Producers never call foreign callbacks directly. An external `wekit_tunnel_stop` cancels
+queue. Producers never call foreign callbacks directly. An external `joker_tunnel_stop` cancels
 the context, joins every producer, drains and joins callback dispatch, unregisters the handle, and
 then frees its opaque C allocation. If a callback calls stop reentrantly, callback-scope TLS avoids
 self-deadlock and handle release is deferred until that callback returns. Callbacks contain only a
@@ -81,7 +81,7 @@ feature, so dashboard ingress is applied by Cloudflare after registration.
 The pinned ingress pipeline installs a connector-specific authenticated reader-IP channel before
 the request reaches the loopback origin. Its local handler removes caller-supplied internal and
 forwarding headers, parses the edge-provided `CF-Connecting-IP` as one canonical IP address, and
-overwrites two WeKit-only origin headers. The authenticator reuses the controller's existing
+overwrites two Joker-only origin headers. The authenticator reuses the controller's existing
 24-byte random Binder START nonce (32 ASCII characters after `Base64.NO_WRAP`); no second secret is
 created, persisted, displayed, or carried in a new Binder field or exported native entry point. It
 is removed from the origin URL before
@@ -97,21 +97,21 @@ placing a Worker in front of the tunnel changes the identity semantics according
 
 ## C ABI
 
-The exact symbols are declared in `app/src/main/go/wekit-cloudflared/bridge.h`:
+The exact symbols are declared in `app/src/main/go/joker-cloudflared/bridge.h`:
 
 ```c
-wekit_tunnel_handle wekit_tunnel_start_quick(const char *origin, wekit_callback callback, void *user);
-wekit_tunnel_handle wekit_tunnel_start_token(const char *token, const char *origin, wekit_callback callback, void *user);
-int wekit_tunnel_begin_login(wekit_tunnel_handle handle, wekit_callback callback, void *user);
-int wekit_tunnel_select_existing(wekit_tunnel_handle handle, const char *tunnel_id, const char *hostname);
-int wekit_tunnel_stop(wekit_tunnel_handle handle);
-int wekit_tunnel_status(wekit_tunnel_handle handle, char *buffer, size_t buffer_len);
+joker_tunnel_handle joker_tunnel_start_quick(const char *origin, joker_callback callback, void *user);
+joker_tunnel_handle joker_tunnel_start_token(const char *token, const char *origin, joker_callback callback, void *user);
+int joker_tunnel_begin_login(joker_tunnel_handle handle, joker_callback callback, void *user);
+int joker_tunnel_select_existing(joker_tunnel_handle handle, const char *tunnel_id, const char *hostname);
+int joker_tunnel_stop(joker_tunnel_handle handle);
+int joker_tunnel_status(joker_tunnel_handle handle, char *buffer, size_t buffer_len);
 ```
 
 Status codes are `STOPPED=0`, `STARTING=1`, `CONNECTED=2`, `RECONNECTING=3`, `FAILED=4`,
 `STOPPING=5`, and the retained compatibility value `UNSUPPORTED=6`. Function results are `0` for
 success, `-1` for invalid input or handle, the retained compatibility value `-2` for unsupported,
-and `-3` for a status buffer that is too small. `wekit_tunnel_status` writes a NUL-terminated JSON
+and `-3` for a status buffer that is too small. `joker_tunnel_status` writes a NUL-terminated JSON
 object containing only `status`, `url`, and `error`.
 
 The same Go library also exports nine direct JNI entry points used by
@@ -127,7 +127,7 @@ first, verifies local `/health`, then starts the foreground service only from a 
 action. Android background-start rejection is reported as `NEEDS_USER_ACTION`. Shutdown reverses
 the order: the tunnel receives a bounded teardown window before the origin is stopped.
 
-Every service command is accepted only from WeKit's UID or a UID containing `com.tencent.mm`.
+Every service command is accepted only from Joker's UID or a UID containing `com.tencent.mm`.
 Tokens travel only in Binder command data, never Intents, broadcasts, notifications, logs,
 saved-instance state, clipboard, or MMKV. Status uses Binder replies plus a per-controller random
 nonce. Configuration generations derive from the boot-monotonic clock, so stale callbacks and a
@@ -167,8 +167,8 @@ invalidates the URL on loss/reconnect, follows bounded reconnect backoff, and re
 default-network changes.
 
 Android 13+ notification permission is declared. Because the feature UI runs inside WeChat and cannot
-request another package's runtime permission, a disabled WeKit notification channel/permission rejects
-START as `NEEDS_USER_ACTION`; the UI provides an explicit button to open WeKit's app notification
+request another package's runtime permission, a disabled Joker notification channel/permission rejects
+START as `NEEDS_USER_ACTION`; the UI provides an explicit button to open Joker's app notification
 settings. It never runs a connected tunnel with an invisible ongoing notification/stop action.
 
 ## Build
@@ -184,7 +184,7 @@ objects are copied into the APK input directories:
 Outputs:
 
 ```text
-app/src/main/jniLibs/arm64-v8a/libwekit_cloudflared.so
+app/src/main/jniLibs/arm64-v8a/libjoker_cloudflared.so
 ```
 
 A normal `./x build` and `./x run` refresh these bridge artifacts before the Rust native library
@@ -195,7 +195,7 @@ library.
 
 Quick Tunnels are Cloudflare testing/development facilities, not production infrastructure. They
 produce a random `trycloudflare.com` hostname, have no uptime guarantee, currently cap a tunnel at
-200 in-flight requests, and do not support Server-Sent Events. WeKit must not promise SSE behavior
+200 in-flight requests, and do not support Server-Sent Events. Joker must not promise SSE behavior
 through this mode. The URL is valid only while the current tunnel session is connected and changes
 when a new Quick Tunnel is allocated.
 
@@ -208,9 +208,9 @@ and that [anyone holding a tunnel token can run that tunnel](https://developers.
 The real integration test is opt-in because it uses Cloudflare's public service:
 
 ```bash
-WEKIT_CLOUDFLARED_INTEGRATION=1 go test -v -count=1 -timeout 5m \
+JOKER_CLOUDFLARED_INTEGRATION=1 go test -v -count=1 -timeout 5m \
   -run TestRealQuickTunnelForwardsAndStopsWithoutLeaking \
-  ./app/src/main/go/wekit-cloudflared
+  ./app/src/main/go/joker-cloudflared
 ```
 
 It runs two sessions sequentially in one process. Each session creates a temporary loopback HTTP
@@ -226,9 +226,9 @@ Automated host tests cannot prove Android/WeChat lifecycle behavior. Before rele
 28 and a current target-SDK device:
 
 1. A visible **验证并连接** action starts the low-importance ongoing notification; a background or
-   automatic attempt reports `NEEDS_USER_ACTION` instead of claiming success. Disable WeKit
+   automatic attempt reports `NEEDS_USER_ACTION` instead of claiming success. Disable Joker
    notifications on Android 13+, confirm START is rejected, and use the UI button to open the correct
-   WeKit notification settings page before retrying.
+   Joker notification settings page before retrying.
 2. Quick mode forwards public `/health` and pixel requests, publishes only the verified
    `trycloudflare.com` URL, and invalidates it after network loss.
 3. Token mode rejects automatic ports, malformed tokens, and non-root/non-HTTPS hostnames; with a

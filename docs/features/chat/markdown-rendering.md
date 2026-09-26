@@ -1,6 +1,6 @@
 # Markdown 渲染
 
-入口：WeKit 设置 → 功能 → 聊天 → Markdown 渲染。
+入口：Joker 设置 → 功能 → 聊天 → Markdown 渲染。
 
 开启后渲染聊天中的 Markdown 文本。点击功能选择解析与渲染引擎：微信原生、markdown-rs + Html 或 Markwon。
 

@@ -1,8 +1,8 @@
-# WeKit「写 Java 脚本」接口开发文档
+# Joker「写 Java 脚本」接口开发文档
 
-> ⚠️ **本文档是未完成的草稿，仅写到第 1 章。完整版（10 章 + 接口速查表 + 负一屏迁移附录）请移步 workspace 根目录的 `WeKit-Scripting-Java-API.md`。**
+> ⚠️ **本文档是未完成的草稿，仅写到第 1 章。完整版（10 章 + 接口速查表 + 负一屏迁移附录）请移步 workspace 根目录的 `Joker-Scripting-Java-API.md`。**
 
-> 面向 WeKit 内置的 **脚本引擎 (Java)** 功能（`features/items/scripting_java`）。
+> 面向 Joker 内置的 **脚本引擎 (Java)** 功能（`features/items/scripting_java`）。
 > 本文档覆盖：脚本编写教程、全部内置接口（参数 / 回调 / 返回值）、生命周期回调、
 > 核心数据类型，以及两大扩展包（Java 依赖 `script-deps`、WeAgent Linux 环境 `archlinux-arm64`）的用法。
 > 所有接口签名均逐行提取自源码 `JavaEngine.kt`，保证"一个不落下"。
@@ -13,7 +13,7 @@
 
 1. [架构概览](#1-架构概览)
 2. [快速上手：写第一个脚本](#2-快速上手写第一个脚本)
-3. [BeanShell 语法要点（WeKit 环境）](#3-beanshell-语法要点wekit-环境)
+3. [BeanShell 语法要点（Joker 环境）](#3-beanshell-语法要点joker-环境)
 4. [脚本工程结构（目录 / 元信息 / 资源）](#4-脚本工程结构目录--元信息--资源)
 5. [内置全局变量（宿主 / 引擎 / 插件信息）](#5-内置全局变量宿主--引擎--插件信息)
 6. [内置接口完整清单（按分类）](#6-内置接口完整清单按分类)
@@ -48,7 +48,7 @@
 ## 1. 架构概览
 
 「写 Java 脚本」功能的本质：**在微信进程内嵌入一个 BeanShell（`bsh`）解释器**，把脚本以
-`.java` 文件的形式存放，用 BeanShell 语法（Java 的宽松超集）编写，直接调用 WeKit 注入到解释器
+`.java` 文件的形式存放，用 BeanShell 语法（Java 的宽松超集）编写，直接调用 Joker 注入到解释器
 命名空间（`NameSpace`）里的一大批内置函数来操作微信。
 
 关键类与职责：

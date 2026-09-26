@@ -121,7 +121,7 @@ struct RegisterRequest {
     chat_name: Option<String>,
     /// JSON array of the group member roster (群昵称 + nickname + remark + wxId),
     /// uploaded by the sender's client so the detail view can list group members
-    /// even when they did NOT install WeKit. Empty for direct chats.
+    /// even when they did NOT install Joker. Empty for direct chats.
     members: Option<String>,
 }
 
@@ -157,7 +157,7 @@ struct RegisterResponse {
 }
 
 /// Query parameters for the tracking pixel and count endpoints.
-/// Payload of `/read-report`: a WeKit client that RENDERED an incoming probing
+/// Payload of `/read-report`: a Joker client that RENDERED an incoming probing
 /// message reports itself as the reader, so the dashboard can label the probed
 /// IP with the reader's wxid + nickname (works for group chats too, where the
 /// pixel URL alone can only name the room).
@@ -303,7 +303,7 @@ struct AppState {
 }
 
 /// Dashboard login guard middleware. Rejects requests without a valid
-/// `wekit_session` cookie. Applied only to the dashboard/API routes below —
+/// `joker_session` cookie. Applied only to the dashboard/API routes below —
 /// the client collection endpoints are registered OUTSIDE this layer.
 async fn require_auth(
     State(state): State<Arc<AppState>>,
@@ -332,11 +332,11 @@ async fn require_auth(
     }
 }
 
-/// Pulls the `wekit_session` value out of a raw Cookie header.
+/// Pulls the `joker_session` value out of a raw Cookie header.
 fn extract_session_token(cookie: &str) -> Option<String> {
     for part in cookie.split(';') {
         let part = part.trim();
-        if let Some(v) = part.strip_prefix("wekit_session=") {
+        if let Some(v) = part.strip_prefix("joker_session=") {
             let v = v.trim();
             return if v.is_empty() { None } else { Some(v.to_string()) };
         }
@@ -430,7 +430,7 @@ struct ReadRecord {
     browser_version: String,
     referrer: String,
     reader_wx_id: String,
-    /// Nickname of the reader (reported by the WeKit client that rendered the
+    /// Nickname of the reader (reported by the Joker client that rendered the
     /// incoming probing message), so the dashboard can label each probed IP
     /// with both WHO read it (wxid) and their display name.
     #[serde(rename = "readerNickname")]
@@ -440,7 +440,7 @@ struct ReadRecord {
     /// Human-readable conversation name (remark/nickname or group name).
     chat_name: String,
     /// Best-effort hint for rows WITHOUT a precise reader: if the same IP was
-    /// recently attributed to a specific group member (via a WeKit client), we
+    /// recently attributed to a specific group member (via a Joker client), we
     /// suggest "可能是 X" so un-instrumented members can be cross-checked.
     /// This is a HINT only — the same IP may be shared by several people.
     #[serde(rename = "likelyReaderWxId")]
@@ -476,12 +476,12 @@ struct MessageDetailResponse {
     talker: String,
     chat_name: String,
     /// Group member roster uploaded at registration time (群昵称 + nick + remark + wxId).
-    /// Lets the detail view show who is IN the group even without WeKit installed.
+    /// Lets the detail view show who is IN the group even without Joker installed.
     members: Vec<GroupMember>,
 }
 
 /// For each read row that has NO precise reader, look up whether the same IP
-/// was recently attributed to a specific group member (via a WeKit client).
+/// was recently attributed to a specific group member (via a Joker client).
 /// Fills `likely_reader_*` as a cross-check hint — not a certainty, because a
 /// single IP (esp. mobile carrier NAT / shared WiFi) can be used by several
 /// people. Rows already carrying a reader are left untouched.
@@ -2145,7 +2145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // HTTP client for the third-party IP geolocation chain.
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(8))
-        .user_agent("wekit-read-receipts-server/0.1")
+        .user_agent("joker-read-receipts-server/0.1")
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
@@ -2173,7 +2173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Public routes: login page, auth endpoints, and client collection
-    // endpoints (probe/report/count traffic comes from the WeKit app, not from
+    // endpoints (probe/report/count traffic comes from the Joker app, not from
     // a logged-in browser — it must NEVER be gated). The index page is public
     // too: it renders the login gate until a valid session exists, then shows
     // the dashboard.
@@ -2376,7 +2376,7 @@ async fn auth_login(
         .retain(|_, exp| *exp > now);
     let mut headers = HeaderMap::new();
     let cookie_val = format!(
-        "wekit_session={token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800"
+        "joker_session={token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=604800"
     );
     headers.insert(
         header::SET_COOKIE,
@@ -2406,7 +2406,7 @@ async fn auth_logout(
     let mut headers = HeaderMap::new();
     headers.insert(
         header::SET_COOKIE,
-        "wekit_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"
+        "joker_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"
             .parse()
             .unwrap(),
     );
@@ -2734,7 +2734,7 @@ async fn broadcast_stats(state: &Arc<AppState>) {
 /// id. The reader's wxId is never observable here, so identity is approximated
 /// by a per-browser visitor cookie (falling back to distinct IP for legacy
 /// clients that do not store cookies).
-/// `/read-report`: a WeKit client that rendered an INCOMING probing message
+/// `/read-report`: a Joker client that rendered an INCOMING probing message
 /// reports itself as the reader, so the dashboard can label the probed IP with
 /// the reader's wxid + nickname (covers group chats too, where the pixel URL
 /// alone can only name the room). We first try to enrich an existing pixel
@@ -3537,7 +3537,7 @@ async fn export_csv(
     );
     headers.insert(
         header::CONTENT_DISPOSITION,
-        format!("attachment; filename=\"wekit-{export_type}.csv\"")
+        format!("attachment; filename=\"joker-{export_type}.csv\"")
             .parse()
             .unwrap(),
     );
@@ -3548,13 +3548,13 @@ async fn export_csv(
 async fn health_check() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
-        "service": "wekit-read-receipts-server"
+        "service": "joker-read-receipts-server"
     }))
 }
 
 /// Batch read-count lookup for multiple message ids, e.g.
 /// `GET /batch-status?ids=id1,id2,id3` → `{ "statuses": { id1: 3, id2: 0 } }`.
-/// Mirrors the reference read-receipt-tracker `/batch-status` so WeKit clients
+/// Mirrors the reference read-receipt-tracker `/batch-status` so Joker clients
 /// can refresh a whole conversation's badges in one round trip.
 async fn batch_status(
     State(state): State<Arc<AppState>>,

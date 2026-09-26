@@ -51,7 +51,7 @@ android {
         }
 
         buildConfigField("String", "COMMIT_HASH", "\"${gitHash}\"")
-        buildConfigField("String", "TAG", "\"WeKit\"")
+        buildConfigField("String", "TAG", "\"Joker\"")
         buildConfigField("long", "BUILD_TIMESTAMP", "${System.currentTimeMillis()}L")
         buildConfigField("long", "PYTHON_SYNC_HOOK_BUDGET_MS", "${libs.versions.pythonRuntimeSyncHookBudgetMs.get()}L")
         buildConfigField("long", "PYTHON_TASK_DRAIN_TIMEOUT_MS", "${libs.versions.pythonRuntimeTaskDrainTimeoutMs.get()}L")
@@ -93,14 +93,14 @@ android {
 
     @Suppress("LocalVariableName")
     signingConfigs {
-        val _storeFile = System.getenv("WEKIT_KEYSTORE_FILE")
-            ?: runCatching { project.property("WEKIT_KEYSTORE_FILE") }.getOrNull() as? String?
-        val _storePassword = System.getenv("WEKIT_KEYSTORE_PASSWORD")
-            ?: runCatching { project.property("WEKIT_KEYSTORE_PASSWORD") }.getOrNull() as? String?
-        val _keyAlias = System.getenv("WEKIT_KEY_ALIAS")
-            ?: runCatching { project.property("WEKIT_KEY_ALIAS") }.getOrNull() as? String?
-        val _keyPassword = System.getenv("WEKIT_KEY_PASSWORD")
-            ?: runCatching { project.property("WEKIT_KEY_PASSWORD") }.getOrNull() as? String?
+        val _storeFile = System.getenv("JOKER_KEYSTORE_FILE")
+            ?: runCatching { project.property("JOKER_KEYSTORE_FILE") }.getOrNull() as? String?
+        val _storePassword = System.getenv("JOKER_KEYSTORE_PASSWORD")
+            ?: runCatching { project.property("JOKER_KEYSTORE_PASSWORD") }.getOrNull() as? String?
+        val _keyAlias = System.getenv("JOKER_KEY_ALIAS")
+            ?: runCatching { project.property("JOKER_KEY_ALIAS") }.getOrNull() as? String?
+        val _keyPassword = System.getenv("JOKER_KEY_PASSWORD")
+            ?: runCatching { project.property("JOKER_KEY_PASSWORD") }.getOrNull() as? String?
 
         if (_storeFile != null && _storePassword != null && _keyAlias != null && _keyPassword != null) {
             create("release") {
@@ -198,7 +198,7 @@ androidComponents {
 
 val generateMethodHashes = tasks.register<GenerateMethodHashesTask>("generateMethodHashes") {
     description = "Generate resolveDex() method hashes"
-    group = "wekit"
+    group = "joker"
     sourceDir.set(file("src/main/java"))
     outputDir.set(layout.buildDirectory.dir("generated/source/methodhashes"))
     namespace.set(libs.versions.namespace.get())
@@ -221,7 +221,7 @@ tasks.named("preBuild") {
 
 val generateNewFeatures = tasks.register<GenerateNewFeaturesTask>("generateNewFeatures") {
     description = "Collect features added within the last 30 days of history"
-    group = "wekit"
+    group = "joker"
     sourceDir.set(file("src/main/java"))
     repoDir.set(rootProject.layout.projectDirectory)
     outputDir.set(layout.buildDirectory.dir("generated/source/newfeatures"))
@@ -257,7 +257,7 @@ val r8Tool = configurations.detachedConfiguration(
 )
 
 val generateScriptDepsDex = tasks.register<GenerateScriptDepsDexTask>("generateScriptDepsDex") {
-    group = "wekit"
+    group = "joker"
     description = "Compile the script-deps extension pack DEX (fastjson2 + okhttp + kotlin-stdlib)"
     jars.from(scriptDeps)
     r8Classpath.from(r8Tool)
@@ -381,26 +381,26 @@ dependencies {
 }
 
 val dexTestWorkerProperties = listOf(
-    "wekit.dexTest.apk",
-    "wekit.dexTest.nativeLibrary",
-    "wekit.dexTest.report",
-    "wekit.dexTest.dexKitVersion",
-    "wekit.dexTest.dexKitRevision",
-    "wekit.dexTest.versionCode",
-    "wekit.dexTest.versionName",
-    "wekit.dexTest.buildTag",
-    "wekit.dexTest.isGooglePlay",
-    "wekit.dexTest.features",
+    "joker.dexTest.apk",
+    "joker.dexTest.nativeLibrary",
+    "joker.dexTest.report",
+    "joker.dexTest.dexKitVersion",
+    "joker.dexTest.dexKitRevision",
+    "joker.dexTest.versionCode",
+    "joker.dexTest.versionName",
+    "joker.dexTest.buildTag",
+    "joker.dexTest.isGooglePlay",
+    "joker.dexTest.features",
 )
 val dexTestWorker = providers.gradleProperty("dexTestWorker").map(String::toBoolean).orElse(false)
-val monetCorpus = providers.gradleProperty("wekit.monetCorpus").map(String::toBoolean).orElse(false)
+val monetCorpus = providers.gradleProperty("joker.monetCorpus").map(String::toBoolean).orElse(false)
 
 tasks.withType<Test>().configureEach {
-    systemProperty("wekit.monetCorpus", monetCorpus.get())
+    systemProperty("joker.monetCorpus", monetCorpus.get())
     if (monetCorpus.get()) maxHeapSize = "4g"
     if (dexTestWorker.get()) {
         filter {
-            includeTestsMatching("dev.ujhhgtg.wekit.dextest.DexTestWorkerTest")
+            includeTestsMatching("dev.joker.dextest.DexTestWorkerTest")
         }
         dexTestWorkerProperties.forEach { propertyName ->
             systemProperty(propertyName, providers.gradleProperty(propertyName).orNull.orEmpty())
@@ -408,7 +408,7 @@ tasks.withType<Test>().configureEach {
         outputs.upToDateWhen { false }
     } else {
         filter {
-            excludeTestsMatching("dev.ujhhgtg.wekit.dextest.DexTestWorkerTest")
+            excludeTestsMatching("dev.joker.dextest.DexTestWorkerTest")
         }
     }
 }

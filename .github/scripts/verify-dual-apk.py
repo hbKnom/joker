@@ -20,7 +20,7 @@ REQUIRED = (
     "META-INF/com/google/android/updater-script",
     "webroot/index.html", "webroot/css/app.css", "webroot/js/bridge.js",
     "webroot/js/app.js", "webroot/js/kernelsu.js",
-    "lib/arm64-v8a/libwekit_native.so", "lib/arm64-v8a/libwekit_zygisk.so",
+    "lib/arm64-v8a/libjoker_native.so", "lib/arm64-v8a/libjoker_zygisk.so",
 )
 
 
@@ -38,7 +38,7 @@ def check_apk(apk, tools):
         assert {name.split('/')[1] for name in names if name.startswith('lib/') and name.endswith('.so')} == {"arm64-v8a"}
         assert "assets/xposed_init" in names
         props = dict(line.split('=', 1) for line in archive.read("module.prop").decode().splitlines() if '=' in line and not line.startswith('#'))
-        assert props["id"] == "wekit_zygisk"
+        assert props["id"] == "joker_zygisk"
         modern = any(name.startswith("META-INF/xposed/") for name in names)
         assert modern == ("(standard" in props["description"]), "flavor entrypoint mismatch"
 
@@ -51,17 +51,17 @@ def check_apk(apk, tools):
 
 
 def check_installer(apk):
-    with tempfile.TemporaryDirectory(prefix="wekit-module-check-") as work:
+    with tempfile.TemporaryDirectory(prefix="joker-module-check-") as work:
         work = Path(work)
         module = work / "module"
         module.mkdir()
         temp = work / "tmp"
         temp.mkdir()
         adb = work / "adb"
-        (adb / "wekit").mkdir(parents=True)
-        (adb / "modules/wekit").mkdir(parents=True)
+        (adb / "joker").mkdir(parents=True)
+        (adb / "modules/joker").mkdir(parents=True)
         choices = b"0\tcom.tencent.mm\t1\n10\tcom.tencent.mm\t0\n"
-        (adb / "wekit/injection-targets.tsv").write_bytes(choices)
+        (adb / "joker/injection-targets.tsv").write_bytes(choices)
         old_payload = module / "payload"
         old_payload.mkdir()
         (old_payload / "classes2.dex").write_bytes(b"obsolete")
@@ -73,7 +73,7 @@ def check_installer(apk):
             # temporary directory. No device or real /data/adb is accessed.
             installer = work / "customize.sh"
             installer.write_text(archive.read("customize.sh").decode().replace("/data/adb", str(adb)))
-            loader = archive.read("lib/arm64-v8a/libwekit_zygisk.so")
+            loader = archive.read("lib/arm64-v8a/libjoker_zygisk.so")
         harness = r'''
 ui_print() { :; }
 abort() { echo "$*" >&2; exit 1; }
@@ -99,17 +99,17 @@ unzip() {
         assert (module / "zygisk/arm64-v8a.so").read_bytes() == loader
         assert not (module / "payload").exists()
         assert not list(module.rglob("*.dex"))
-        assert (adb / "wekit_zygisk/injection-targets.tsv").read_bytes() == choices
-        assert (adb / "modules/wekit/disable").exists()
+        assert (adb / "joker_zygisk/injection-targets.tsv").read_bytes() == choices
+        assert (adb / "modules/joker/disable").exists()
         retained = b"10\tcom.tencent.mm\t1\n"
-        (adb / "wekit_zygisk/injection-targets.tsv").write_bytes(retained)
+        (adb / "joker_zygisk/injection-targets.tsv").write_bytes(retained)
         run(True)
-        assert (adb / "wekit_zygisk/injection-targets.tsv").read_bytes() == retained
+        assert (adb / "joker_zygisk/injection-targets.tsv").read_bytes() == retained
         run(False, ARCH="x86_64")
         missing = work / "missing.zip"
         with zipfile.ZipFile(apk) as source, zipfile.ZipFile(missing, "w") as dest:
             for entry in source.infolist():
-                if entry.filename != "lib/arm64-v8a/libwekit_zygisk.so":
+                if entry.filename != "lib/arm64-v8a/libjoker_zygisk.so":
                     dest.writestr(entry, source.read(entry))
         run(False, ZIPFILE=str(missing))
         corrupt = work / "corrupt.zip"

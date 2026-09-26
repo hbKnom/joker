@@ -312,7 +312,7 @@ wheels = [
 ]
 
 [[package]]
-name = "wekit-scripts"
+name = "joker-scripts"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
