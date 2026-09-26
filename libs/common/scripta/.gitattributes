@@ -1,0 +1,11 @@
+# 仓库内恒 LF；工作区也统一 LF——不写 eol 时 Windows 的 core.autocrlf=true 会对每个
+# 新建 LF 文件预告「下次 Git 接触时 LF 将被 CRLF 替换」，混行尾工作区里每次 git add 都刷屏。
+* text=auto eol=lf
+
+# Windows 批处理必须 CRLF（cmd 对 LF 行尾的解析不可靠）。
+*.bat text eol=crlf
+
+# 二进制永不做行尾转换。
+*.jar binary
+*.png binary
+*.webp binary

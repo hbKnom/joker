@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 聊天记录分析（chat analysis）第 16 轮的文案：扩展维度包与六个新维度的名称。
+     由三语同表生成，key 必须三份一致；报告正文本身不走资源（它是数据，
+     由引擎生成、被弹窗与 PNG 两侧的解析器按字形识别，不能本地化）。 -->
+<resources>
+    <string name="chat_analysis_extra_dims_card">Dimension pack · Time</string>
+    <string name="chat_analysis_extra_dims_badge">%1$d dimensions</string>
+    <string name="chat_analysis_extra_dims_title">Time dimension pack</string>
+    <string name="chat_analysis_extra_dims_desc">4 time dimensions: activity calendar and trend, reply speed, activity density and continuity, bursts and rounds. All computed inside the same scan; turning it off just omits this pack.</string>
+    <string name="chat_analysis_extra_dims_list_title">Dimensions in this pack</string>
+
+    <string name="chat_analysis_dim_density">Speech density</string>
+    <string name="chat_analysis_dim_trend">Daily trend</string>
+    <string name="chat_analysis_dim_latency">Reply-speed profile</string>
+    <string name="chat_analysis_dim_reply_fetch">Who gets replied to</string>
+    <string name="chat_analysis_dim_topic_period">Topic time-of-day</string>
+    <string name="chat_analysis_dim_rhythm">Daily rhythm</string>
+    <!-- 第 17 轮：观感美化 + 六个新维度（同样只追加，老 key 一字未改） -->
+    <string name="chat_analysis_dims17_card">Dimension pack · Relation</string>
+    <string name="chat_analysis_dims17_badge">%1$d dimensions</string>
+    <string name="chat_analysis_dims17_title">Relation dimension pack</string>
+    <string name="chat_analysis_dims17_desc">4 relation dimensions: who picks up and asks, repeats and copycats, reply-speed ranking, per-person rhythm radar. All computed inside the same scan; turning it off just omits this pack.</string>
+    <string name="chat_analysis_dims17_list_title">Dimensions in this pack</string>
+
+    <string name="chat_analysis_dim_concentration">Hourly concentration</string>
+    <string name="chat_analysis_dim_repeat">Repeats &amp; copycats</string>
+    <string name="chat_analysis_dim_ask_reply">Questions &amp; replies</string>
+    <string name="chat_analysis_dim_special_msg">Special-message radar</string>
+    <string name="chat_analysis_dim_streak">Active streaks</string>
+    <string name="chat_analysis_dim_daynight_words">Day/night length</string>
+    <!-- ===== 第 18 轮：第三个扩展维度包 + 全弹窗文案三语化 =====
+         key 与 values-zh-rCN / values-zh-rTW 两份**必须同名**；
+         报告正文本身不走资源（它是数据，由引擎生成、被弹窗与 PNG 两侧解析器按字形识别）。 -->
+    <string name="chat_analysis_dims18_card">Dimension pack · Language</string>
+    <string name="chat_analysis_dims18_badge">%1$d dimensions</string>
+    <string name="chat_analysis_dims18_title">Language dimension pack</string>
+    <string name="chat_analysis_dims18_desc">4 language dimensions: emotion word radar, typing habits, plans and reminders, hourly volume profile. All computed inside the same scan; turning it off just omits this pack.</string>
+    <string name="chat_analysis_dims18_list_title">Dimensions in this pack</string>
+
+    <string name="chat_analysis_dim_revoke">Recalls &amp; system events</string>
+    <string name="chat_analysis_dim_rounds">Conversation rounds</string>
+    <string name="chat_analysis_dim_silence">Silence spectrum</string>
+    <string name="chat_analysis_dim_profile">Speaking profile</string>
+    <string name="chat_analysis_dim_emoji">Emoji ranking</string>
+    <string name="chat_analysis_dim_pair">Best duos</string>
+    <string name="chat_analysis_dim_daily">Daily opener &amp; closer</string>
+    <!-- ===== 第 20 轮：维度整合新增的维度名（第 21 轮再凝练：24 个维度 = 核心 12 + 三个进阶包各 4） ===== -->
+    <string name="chat_analysis_dim_reply_rank">Reply-speed ranking</string>
+    <string name="chat_analysis_dim_profile_radar">Per-person rhythm radar</string>
+    <string name="chat_analysis_dim_mood_words">Emotion word radar</string>
+    <string name="chat_analysis_dim_vocab_breadth">Vocabulary breadth</string>
+    <string name="chat_analysis_dim_typing">Typing habits</string>
+    <string name="chat_analysis_dim_appointment">Plans and reminders</string>
+    <string name="chat_analysis_dim_hour_volume">Hourly volume profile</string>
+
+    <!-- 弹窗与设置页的界面文案（与报告正文无关，可以本地化） -->
+    <string name="chat_analysis_copy_report">Copy report</string>
+    <string name="chat_analysis_ai_summary_action">AI summary</string>
+    <string name="chat_analysis_meta_text_n">Text %1$d msgs</string>
+    <string name="chat_analysis_meta_has_ai">Includes AI summary</string>
+    <string name="chat_analysis_meta_stats_only">Local stats only</string>
+    <string name="chat_analysis_meta_ai_generated">AI generated</string>
+    <string name="chat_analysis_meta_body_chars">Body %1$d chars</string>
+    <string name="chat_analysis_stats_report_subtitle">Local statistics report</string>
+    <string name="chat_analysis_ai_report_subtitle">AI summary · LLM insights from a sampled transcript</string>
+    <string name="chat_analysis_empty_stats_title">No text messages in this range</string>
+    <string name="chat_analysis_empty_stats_hint">Only plain-text messages are counted (images / voice / stickers are excluded).\nPick another time range, or make sure “Local Statistics” is on in Settings.</string>
+    <string name="chat_analysis_empty_report_title">Report is empty</string>
+    <string name="chat_analysis_empty_report_hint">No text messages to count in this range (images / voice / stickers are excluded).\nPick another time range, or make sure “Local Statistics” is on in Settings.</string>
+    <string name="chat_analysis_ai_body_section">AI response</string>
+    <string name="chat_analysis_ai_empty_title">The model returned nothing</string>
+    <string name="chat_analysis_ai_empty_hint">The model returned an empty body. Check the model config and the network, or lower “Text limit fed to AI” and retry.</string>
+    <string name="chat_analysis_toc_section">Quick jump</string>
+    <string name="chat_analysis_toc_badge">%1$d sections</string>
+    <string name="chat_analysis_badge_metrics">%1$d metrics</string>
+    <string name="chat_analysis_badge_rows">%1$d rows</string>
+    <string name="chat_analysis_overview_section">Report overview</string>
+    <string name="chat_analysis_overview_sections">Sections</string>
+    <string name="chat_analysis_overview_rows">Rows</string>
+    <string name="chat_analysis_overview_ai_chars">AI chars</string>
+    <string name="chat_analysis_chart_total">Total</string>
+    <string name="chat_analysis_heat_less">Less</string>
+    <string name="chat_analysis_heat_more">More</string>
+    <string name="chat_analysis_settings_dialog_title">Chat analysis · Settings</string>
+    <string name="chat_analysis_settings_subtitle">Changes are saved instantly and apply to the next run.</string>
+    <string name="chat_analysis_features_badge">%1$d/3 enabled</string>
+    <string name="chat_analysis_feature_ai_desc">Summarize this range with an LLM (configure a model first)</string>
+    <string name="chat_analysis_feature_stats_desc">Core metrics / media preference / activity frequency / top words / mood fingerprint</string>
+    <string name="chat_analysis_feature_rank_desc">Speaker comparison / group top 10</string>
+    <string name="chat_analysis_param_items">%1$d items</string>
+    <string name="chat_analysis_max_count_hint_all">0 = all (reads every message in the range; larger is slower)</string>
+    <string name="chat_analysis_max_count_hint_value">Currently %1$d msgs · 0 = all</string>
+    <string name="chat_analysis_sample_limit_hint_value">Max text messages fed to AI (currently %1$d) · 0 = all</string>
+    <string name="chat_analysis_line_max_title">Per-message limit</string>
+    <string name="chat_analysis_line_max_hint_value">Max chars of one message fed to AI (currently %1$d)</string>
+    <string name="chat_analysis_transcript_max_title">Total text limit fed to AI</string>
+    <string name="chat_analysis_transcript_max_hint_value">Total chars of the whole transcript (currently %1$d); lower it for models with a small context, otherwise the server reports a context overflow</string>
+    <string name="chat_analysis_model_configured">Configured</string>
+    <string name="chat_analysis_model_unconfigured">Not configured</string>
+    <string name="chat_analysis_model_current_empty">Not configured — add one via “Model manager” below</string>
+    <string name="chat_analysis_model_test_desc">Fetch the model list and send a minimal chat request to verify the current model</string>
+    <string name="chat_analysis_status_section">Configuration status</string>
+    <string name="chat_analysis_status_none_on">All three modules are off, so the report would be empty. Enable at least one.</string>
+    <string name="chat_analysis_status_ai_no_model">AI summary is on but no usable model exists, so it will fail immediately. Add and select one under “AI Models” first.</string>
+    <string name="chat_analysis_status_ready_all">Ready: both local statistics and AI summary can run.</string>
+    <string name="chat_analysis_status_ready_stats">Ready: local statistics only, no network request will be made.</string>
+    <string name="chat_analysis_range_today">Today</string>
+    <string name="chat_analysis_range_yesterday">Yesterday</string>
+    <string name="chat_analysis_range_this_week">This week</string>
+    <string name="chat_analysis_range_last_week">Last week</string>
+    <string name="chat_analysis_range_this_month">This month</string>
+    <string name="chat_analysis_range_last_month">Last month</string>
+    <string name="chat_analysis_range_hint_today">Today 00:00 → now</string>
+    <string name="chat_analysis_range_hint_yesterday">All of yesterday (00:00 - 24:00)</string>
+    <string name="chat_analysis_range_hint_this_week">This Monday 00:00 → now</string>
+    <string name="chat_analysis_range_hint_last_week">Last Monday to last Sunday</string>
+    <string name="chat_analysis_range_hint_this_month">The 1st of this month → now</string>
+    <string name="chat_analysis_range_hint_last_month">The whole previous month</string>
+    <string name="chat_analysis_time_range_title">Analysis time range</string>
+    <string name="chat_analysis_time_range_hint">Both local statistics and AI summary only read plain-text messages inside the selected range.</string>
+    <string name="chat_analysis_range_section">Time range</string>
+    <string name="chat_analysis_range_items">%1$d options</string>
+    <string name="chat_analysis_more_section">More</string>
+    <string name="chat_analysis_settings_entry_desc">Feature switches / analysis parameters / AI models</string>
+    <string name="chat_analysis_current_session">Current chat</string>
+    <string name="chat_analysis_unknown_session">(unknown chat)</string>
+    <string name="chat_analysis_range_scope">Analysis range</string>
+</resources>

@@ -1,0 +1,63 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+build/
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+/target
+/.wekit/
+/dex-test-results/
+/monet-test-results/
+
+# Project exclude paths
+/.spec-workflow/
+/app/release/
+/.idea/inspectionProfiles/Project_Default.xml
+/app/.cxx/
+/app/debug/
+/.kotlin
+/nul
+/app/nul
+/.idea/deploymentTargetSelector.xml
+/app/src/main/jniLibs/*/libwekit_native.so
+/app/src/main/jniLibs/*/libwekit_zygisk.so
+/app/src/main/jniLibs/*/libwekit_cloudflared.so
+/app/src/main/jniLibs/*/libinvoke_tool.so
+/app/src/main/jniLibs/*/libchroot_cleanup.so
+/app/src/main/jniLibs/*/libproot.so
+/app/src/main/jniLibs/*/libproot_loader.so
+/build-logic/convention/build/
+
+/decrypted_wechat.db
+
+# Local server runtime data (not for repo)
+GeoLite2-City.mmdb
+read_receipts.db
+services/read-receipts/read_receipts.db
+server.log
+*.db
+
+# Local server working dir (runtime db backups, media, test scripts/screenshots)
+/contrib/
+
+# Built APKs (kept locally, never committed)
+*.apk
+
+# Superpowers artifacts live in /home/ujhhgtg/coding/wekit_dev/superpowers (AGENTS.md there)
+.superpowers/
+docs/superpowers/
+.worktrees/
+
+# Extension-pack build outputs (./x extensions pack/lock)
+dist/

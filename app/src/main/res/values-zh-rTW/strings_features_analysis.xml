@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 聊天記錄分析（chat analysis）第 16 輪的文案：擴展維度包與六個新維度的名稱。
+     由三語同表生成，key 必須三份一致；報告正文本身不走資源（它是資料，
+     由引擎生成、被彈窗與 PNG 兩側的解析器按字形識別，不能本地化）。 -->
+<resources>
+    <string name="chat_analysis_extra_dims_card">維度包 · 時間</string>
+    <string name="chat_analysis_extra_dims_badge">%1$d 項維度</string>
+    <string name="chat_analysis_extra_dims_title">時間維度包</string>
+    <string name="chat_analysis_extra_dims_desc">時間包 4 個維度：活躍日曆與趨勢、回應速度、活躍密度與連續、連擊與輪次。全部在同一次掃描裡算完，關掉只是不輸出這一包。</string>
+    <string name="chat_analysis_extra_dims_list_title">本包包含的維度</string>
+
+    <string name="chat_analysis_dim_density">發言密度</string>
+    <string name="chat_analysis_dim_trend">每日趨勢</string>
+    <string name="chat_analysis_dim_latency">回應速度畫像</string>
+    <string name="chat_analysis_dim_reply_fetch">被接話榜</string>
+    <string name="chat_analysis_dim_topic_period">話題時段偏好</string>
+    <string name="chat_analysis_dim_rhythm">作息畫像</string>
+    <!-- 第 17 輪：觀感美化 + 六個新維度（同樣只追加，舊 key 一字未改） -->
+    <string name="chat_analysis_dims17_card">維度包 · 關係</string>
+    <string name="chat_analysis_dims17_badge">%1$d 項維度</string>
+    <string name="chat_analysis_dims17_title">關係維度包</string>
+    <string name="chat_analysis_dims17_desc">關係包 4 個維度：接話·提問·默契、複讀與重複、回覆速度榜、個人作息雷達。全部在同一次掃描裡算完，關掉只是不輸出這一包。</string>
+    <string name="chat_analysis_dims17_list_title">本包包含的維度</string>
+
+    <string name="chat_analysis_dim_concentration">活躍集中度</string>
+    <string name="chat_analysis_dim_repeat">複讀與重複</string>
+    <string name="chat_analysis_dim_ask_reply">提問與回應</string>
+    <string name="chat_analysis_dim_special_msg">特殊訊息雷達</string>
+    <string name="chat_analysis_dim_streak">連續活躍</string>
+    <string name="chat_analysis_dim_daynight_words">晝夜話量</string>
+    <!-- ===== 第 18 輪：第三個擴展維度包 + 全彈窗文案三語化 =====
+         key 與 values / values-zh-rCN 兩份**必須同名**；
+         報告正文本身不走資源（它是資料，由引擎生成、被彈窗與 PNG 兩側解析器按字形識別）。 -->
+    <string name="chat_analysis_dims18_card">維度包 · 語言</string>
+    <string name="chat_analysis_dims18_badge">%1$d 項維度</string>
+    <string name="chat_analysis_dims18_title">語言維度包</string>
+    <string name="chat_analysis_dims18_desc">語言包 4 個維度：情緒詞雷達、打字習慣、約定與提醒、時段話量畫像。全部在同一次掃描裡算完，關掉只是不輸出這一包。</string>
+    <string name="chat_analysis_dims18_list_title">本包包含的維度</string>
+
+    <string name="chat_analysis_dim_revoke">撤回與系統事件</string>
+    <string name="chat_analysis_dim_rounds">對話輪次結構</string>
+    <string name="chat_analysis_dim_silence">沉默間隔譜</string>
+    <string name="chat_analysis_dim_profile">每人說話畫像</string>
+    <string name="chat_analysis_dim_emoji">表情符號排行</string>
+    <string name="chat_analysis_dim_pair">默契搭檔</string>
+    <string name="chat_analysis_dim_daily">每日開場與收尾</string>
+    <!-- ===== 第 20 輪：維度整合新增的維度名（第 21 輪再凝練：24 個維度 = 核心 12 + 三個進階包各 4） ===== -->
+    <string name="chat_analysis_dim_reply_rank">回覆速度榜</string>
+    <string name="chat_analysis_dim_profile_radar">個人作息雷達</string>
+    <string name="chat_analysis_dim_mood_words">情緒詞雷達</string>
+    <string name="chat_analysis_dim_vocab_breadth">用詞廣度</string>
+    <string name="chat_analysis_dim_typing">打字習慣</string>
+    <string name="chat_analysis_dim_appointment">約定與提醒</string>
+    <string name="chat_analysis_dim_hour_volume">時段話量畫像</string>
+
+    <!-- 彈窗與設定頁的介面文案（與報告正文無關，可以本地化） -->
+    <string name="chat_analysis_copy_report">複製報告</string>
+    <string name="chat_analysis_ai_summary_action">AI 總結</string>
+    <string name="chat_analysis_meta_text_n">純文字 %1$d 則</string>
+    <string name="chat_analysis_meta_has_ai">已含 AI 總結</string>
+    <string name="chat_analysis_meta_stats_only">僅本地統計</string>
+    <string name="chat_analysis_meta_ai_generated">AI 生成</string>
+    <string name="chat_analysis_meta_body_chars">正文 %1$d 字</string>
+    <string name="chat_analysis_stats_report_subtitle">本地統計報告</string>
+    <string name="chat_analysis_ai_report_subtitle">AI 總結 · 基於抽樣轉錄的大模型洞察</string>
+    <string name="chat_analysis_empty_stats_title">該時段沒有可統計的文字訊息</string>
+    <string name="chat_analysis_empty_stats_hint">統計只涵蓋純文字訊息（圖片 / 語音 / 表情不計入）。\n換個時間範圍，或在設定裡確認「本地統計」已開啟。</string>
+    <string name="chat_analysis_empty_report_title">報告為空</string>
+    <string name="chat_analysis_empty_report_hint">該時段沒有可統計的文字訊息（圖片 / 語音 / 表情不計入）。\n換個時間範圍，或在設定裡確認「本地統計」已開啟。</string>
+    <string name="chat_analysis_ai_body_section">AI 分析正文</string>
+    <string name="chat_analysis_ai_empty_title">AI 沒有回傳內容</string>
+    <string name="chat_analysis_ai_empty_hint">模型回傳為空。請檢查模型設定與網路，或調小「餵給 AI 的文字上限」後重試。</string>
+    <string name="chat_analysis_toc_section">快速跳轉</string>
+    <string name="chat_analysis_toc_badge">%1$d 節</string>
+    <string name="chat_analysis_badge_metrics">%1$d 項指標</string>
+    <string name="chat_analysis_badge_rows">%1$d 行資料</string>
+    <string name="chat_analysis_overview_section">報告概覽</string>
+    <string name="chat_analysis_overview_sections">資料分節</string>
+    <string name="chat_analysis_overview_rows">資料行</string>
+    <string name="chat_analysis_overview_ai_chars">AI 正文</string>
+    <string name="chat_analysis_chart_total">合計</string>
+    <string name="chat_analysis_heat_less">少</string>
+    <string name="chat_analysis_heat_more">多</string>
+    <string name="chat_analysis_settings_dialog_title">聊天記錄分析 · 設定</string>
+    <string name="chat_analysis_settings_subtitle">改動即時儲存，下一次分析生效。</string>
+    <string name="chat_analysis_features_badge">已啟用 %1$d/3</string>
+    <string name="chat_analysis_feature_ai_desc">用大模型總結該時段聊天內容（需要先設定模型）</string>
+    <string name="chat_analysis_feature_stats_desc">核心指標 / 載體偏好 / 活躍頻次 / 高頻詞 / 情緒指紋</string>
+    <string name="chat_analysis_feature_rank_desc">發言對比 / 群組成員發言 Top10</string>
+    <string name="chat_analysis_param_items">%1$d 項</string>
+    <string name="chat_analysis_max_count_hint_all">0 = 全部（讀該時段所有訊息，越大越慢）</string>
+    <string name="chat_analysis_max_count_hint_value">目前 %1$d 則 · 0 = 全部</string>
+    <string name="chat_analysis_sample_limit_hint_value">餵給 AI 的最大文字則數（目前 %1$d）· 0 = 全部</string>
+    <string name="chat_analysis_line_max_title">單則文字上限</string>
+    <string name="chat_analysis_line_max_hint_value">一則訊息餵給 AI 的最多字數（目前 %1$d 字）</string>
+    <string name="chat_analysis_transcript_max_title">餵給 AI 的文字上限</string>
+    <string name="chat_analysis_transcript_max_hint_value">整段紀錄的總字數上限（目前 %1$d 字）；模型上下文小就要調小，否則伺服器會回報上下文超限</string>
+    <string name="chat_analysis_model_configured">已設定</string>
+    <string name="chat_analysis_model_unconfigured">未設定</string>
+    <string name="chat_analysis_model_current_empty">未設定，點下方「模型管理」新增</string>
+    <string name="chat_analysis_model_test_desc">取得模型清單 + 最小對話，驗證目前模型能否正常請求</string>
+    <string name="chat_analysis_status_section">設定狀態</string>
+    <string name="chat_analysis_status_none_on">三個模組都沒開：分析結果會是空的，請至少開啟一個。</string>
+    <string name="chat_analysis_status_ai_no_model">AI 總結已開啟，但還沒有可用模型：AI 總結會直接失敗，請先在「AI 模型」裡新增並選取。</string>
+    <string name="chat_analysis_status_ready_all">設定就緒：本地統計與 AI 總結都可以執行。</string>
+    <string name="chat_analysis_status_ready_stats">設定就緒：只做本地統計，不會發起任何網路請求。</string>
+    <string name="chat_analysis_range_today">今天</string>
+    <string name="chat_analysis_range_yesterday">昨天</string>
+    <string name="chat_analysis_range_this_week">本週</string>
+    <string name="chat_analysis_range_last_week">上週</string>
+    <string name="chat_analysis_range_this_month">本月</string>
+    <string name="chat_analysis_range_last_month">上月</string>
+    <string name="chat_analysis_range_hint_today">今天 00:00 至今</string>
+    <string name="chat_analysis_range_hint_yesterday">昨天全天（00:00 - 24:00）</string>
+    <string name="chat_analysis_range_hint_this_week">本週一 00:00 至今</string>
+    <string name="chat_analysis_range_hint_last_week">上週一至上週日</string>
+    <string name="chat_analysis_range_hint_this_month">本月 1 日至今</string>
+    <string name="chat_analysis_range_hint_last_month">上個月整月</string>
+    <string name="chat_analysis_time_range_title">分析時間範圍</string>
+    <string name="chat_analysis_time_range_hint">本地統計與 AI 總結都只讀取所選時段內的純文字訊息。</string>
+    <string name="chat_analysis_range_section">統計時段</string>
+    <string name="chat_analysis_range_items">%1$d 項</string>
+    <string name="chat_analysis_more_section">更多</string>
+    <string name="chat_analysis_settings_entry_desc">功能開關 / 分析參數 / AI 模型管理</string>
+    <string name="chat_analysis_current_session">目前會話</string>
+    <string name="chat_analysis_unknown_session">（未知會話）</string>
+    <string name="chat_analysis_range_scope">分析範圍</string>
+</resources>

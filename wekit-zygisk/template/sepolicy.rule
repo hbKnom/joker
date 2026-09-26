@@ -1,0 +1,2 @@
+allow zygote adb_data_file dir { read search open getattr }
+allow zygote adb_data_file file { read open getattr map execute execute_no_trans }

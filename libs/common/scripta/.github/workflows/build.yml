@@ -1,0 +1,86 @@
+name: Build
+
+on:
+  push:
+    paths-ignore:
+      - "**.md"
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: Test & Build APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: 21
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Run editor tests
+        run: ./gradlew :editor:desktopTest
+
+      - name: Build Debug APK
+        run: ./gradlew :sandbox:android:assembleDebug
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: scripta-android-debug
+          path: sandbox/android/build/outputs/apk/debug/*.apk
+          archive: false
+
+  build-desktop:
+    name: Build Desktop (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x64
+          - os: ubuntu-latest
+            platform: linux-x64
+          - os: macos-latest
+            platform: macos-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: 21
+          distribution: temurin
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build release distributable
+        run: ./gradlew :sandbox:desktop:createReleaseDistributable
+
+      - name: Upload distributable
+        uses: actions/upload-artifact@v7
+        with:
+          name: scripta-desktop-${{ matrix.platform }}
+          path: sandbox/desktop/build/compose/binaries/main-release/app
+          archive: true
