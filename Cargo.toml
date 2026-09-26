@@ -1,0 +1,19 @@
+[workspace]
+members = ["app/src/main/rust/wekit-native/", "app/src/main/rust/wekit-llama/", "services/read-receipts", "wekit-zygisk/native/", "xtask"]
+resolver = "3"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+# NOTE: `panic = "abort"` was removed because maxminddb (used by
+# contrib/wekit-read-receipts-server) requires the unwind panic runtime.
+panic = "unwind"
+
+[profile.release.package.wekit-zygisk]
+strip = "none"
+
+# llama.cpp matmul perf; workspace "z"/LTO defaults stay
+[profile.release.package.wekit-llama]
+opt-level = 3
