@@ -164,66 +164,14 @@ for path in "$MODPATH" "$MODPATH/zygisk" "$MODPATH/zygisk/arm64-v8a.so" "$MODPAT
   chcon u:object_r:adb_data_file:s0 "$path" 2>/dev/null || true
 done
 
-# 旧版模块 ID（WeKit 品牌时期）：wekit_zygisk（zygisk 版）与 wekit（更早的非 zygisk 版）。
-# 仅用于安装时迁移注入目标并禁用旧模块，避免新旧两套模块同时载入。
-OLD_MODULE_DIR=/data/adb/modules/wekit
-OLD_MODULE_DIR_ZYGISK=/data/adb/modules/wekit_zygisk
-OLD_TARGETS_FILE=/data/adb/wekit/injection-targets.tsv
-OLD_TARGETS_FILE_ZYGISK=/data/adb/wekit_zygisk/injection-targets.tsv
+# 模块状态目录（注入目标表：首次安装默认启用微信，之后由 KernelSU WebUI 维护）。
 NEW_STATE_DIR=/data/adb/joker_zygisk
 NEW_TARGETS_FILE=$NEW_STATE_DIR/injection-targets.tsv
 
-if [ -f "$OLD_TARGETS_FILE" ] || [ -f "$OLD_TARGETS_FILE_ZYGISK" ] || \
-   [ -d "$OLD_MODULE_DIR" ] || [ -d "$OLD_MODULE_DIR_ZYGISK" ]; then
-  ui_print "*********************************************************"
-  ui_print "- Migrating from old module ID"
-
-  legacy_targets_file=
-  if [ -f "$OLD_TARGETS_FILE_ZYGISK" ]; then
-    legacy_targets_file=$OLD_TARGETS_FILE_ZYGISK
-  elif [ -f "$OLD_TARGETS_FILE" ]; then
-    legacy_targets_file=$OLD_TARGETS_FILE
-  fi
-  if [ -n "$legacy_targets_file" ]; then
-    if [ -e "$NEW_TARGETS_FILE" ]; then
-      ui_print "- Keeping existing injection targets"
-    else
-      migration_file=$NEW_STATE_DIR/.injection-targets.migrate.$$
-      umask 077
-      mkdir -p "$NEW_STATE_DIR" ||
-        abort "! Unable to create state directory: $NEW_STATE_DIR"
-      chmod 700 "$NEW_STATE_DIR" ||
-        abort "! Unable to set permissions on: $NEW_STATE_DIR"
-      cp "$legacy_targets_file" "$migration_file" || {
-        rm -f "$migration_file"
-        abort "! Unable to copy injection targets"
-      }
-      chmod 600 "$migration_file" || {
-        rm -f "$migration_file"
-        abort "! Unable to set permissions on migrated injection targets"
-      }
-      mv -f "$migration_file" "$NEW_TARGETS_FILE" || {
-        rm -f "$migration_file"
-        abort "! Unable to publish migrated injection targets"
-      }
-      ui_print "- Migrated injection targets"
-    fi
-  else
-    ui_print "- No injection targets to migrate"
-  fi
-
-  # 旧模块只禁用不删除：被禁用的模块不会载入，因此不会与新模块双载入。
-  for old_module in "$OLD_MODULE_DIR_ZYGISK" "$OLD_MODULE_DIR"; do
-    [ -d "$old_module" ] || continue
-    if touch "$old_module/disable" 2>/dev/null; then
-      ui_print "- Old module disabled: $old_module"
-    else
-      ui_print "! Unable to disable old module: $old_module"
-    fi
-  done
-  ui_print "- 请在 root 管理器中卸载旧的 wekit / wekit_zygisk 模块，然后彻底关机重启"
-  ui_print "*********************************************************"
-fi
+# 本模块只维护自己的模块 ID 与状态目录，不检测、不迁移、也不修改任何其它模块。
+# 如手机上仍装有本模块的早期版本（模块 ID 不同），两套模块会同时注入宿主、可能导致宿主异常，
+# 请先在 root 管理器中卸载早期版本，再彻底关机重启。
+ui_print "- 提示：如曾安装本模块的其它版本（模块 ID 不同），请先卸载它并彻底关机重启"
 
 # First install without any targets file: enable WeChat injection by default
 # so the module works right after reboot (same UX as the APK/LSPosed route).

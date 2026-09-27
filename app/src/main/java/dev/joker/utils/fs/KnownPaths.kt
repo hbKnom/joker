@@ -15,8 +15,6 @@ object KnownPaths {
 
     val moduleData by lazy {
         val hostPackageName = runCatching { HostInfo.packageName }.getOrDefault(PackageNames.WECHAT)
-        // 品牌改名后 TAG 变了：先把旧目录（WeKit/）数据搬过来，保留用户既有设置。
-        LegacyDataMigrator.migrateIfNeeded(hostPackageName)
         (internalStorage / "Android" / "data" / hostPackageName / BuildConfig.TAG).createDirsSafe()
     }
 
