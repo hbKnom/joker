@@ -4,6 +4,7 @@ import dev.joker.R
 import dev.joker.features.items.chat.jev.core.Mood
 import dev.joker.features.items.chat.jev.core.ContextMessage
 import dev.joker.features.items.chat.jev.core.MoodStore
+import kotlin.math.roundToInt
 
 /**
  * 潜语卡片「更强大」的那一半：**纯计算**的会话洞察。
@@ -16,12 +17,17 @@ import dev.joker.features.items.chat.jev.core.MoodStore
  *    取 —— 后台线程取资源既慢又不安全，而且这样三语文案天然一致。
  *  - 每条规则都要**说得出依据**（数值、条数、占比），不产生无法解释的结论。
  *
- * 五项扩展：
- *  1. [Balance]  互动均衡：本屏双方发言占比 + 连续发言（谁在等回应）；
- *  2. [Trend]    情绪趋势小结：近 N 条均值 / 波动 / 走向；
- *  3. [Topic]    话题标签：关键词字典命中，最多 4 个；
- *  4. [Level]    建议分级：推进 / 稳妥 / 观察 / 暂缓；
- *  5. [Risk]     风险提示：单向、负面、低置信度三类，带具体数字。
+ * 六项扩展：
+ *  1. [Balance]    互动均衡：本屏双方发言占比 + 连续发言（谁在等回应）；
+ *  2. [Trend]      情绪趋势小结：近 N 条均值 / 波动 / 走向；
+ *  3. [Topic]      话题标签：关键词字典命中，最多 4 个；
+ *  4. [Level]      建议分级：推进 / 稳妥 / 观察 / 暂缓；
+ *  5. [Risk]       风险提示：单向、负面、低置信度三类，带具体数字；
+ *  6. [Engagement] 对方投入度：对方最新一条的字数相对此前几条的变化（第 23 轮新增）。
+ *
+ * 第 23 轮新增 [Engagement] 的口径说明：它是**纯本地**统计（前文里的对方文本长度），
+ * 零网络、零数据库、零新的主线程开销 —— 全部输入都已经在 [Screen] 里，
+ * 且只在「卡片需要重排」时才被调用（有指纹 + 排版缓存兜着，见 [dev.joker.features.items.chat.jev.hook.YanwaiBubble]）。
  */
 object ChatInsights {
 
@@ -42,6 +48,26 @@ object ChatInsights {
     /** 情绪趋势小结。[direction]：1 转好、-1 转差、0 平稳。 */
     data class Trend(val samples: Int, val mean: Double, val swing: Double, val direction: Int)
 
+    /**
+     * 对方投入度：对方**最新一条**的字数相对此前几条平均字数的走向。
+     *
+     * 为什么值得单列：聊天里「字数」是最便宜、也最不容易被误读的投入度信号
+     * （「嗯」「哦」和「我跟你说，今天…」在决策上的含义完全不同），
+     * 而它完全不需要再问一次模型 —— 前文文本本来就在手上。
+     *
+     * [direction]：2 = 明显变长、1 = 持平、0 = 明显变短；阈值见 [ENGAGEMENT_RATIO] /
+     * [ENGAGEMENT_MIN_DELTA]，两条阈值都要求**绝对差**够大，避免把「3 字 → 5 字」这种噪声当信号。
+     */
+    data class Engagement(
+        /** 参与统计的对方消息条数（含最新一条）。 */
+        val samples: Int,
+        /** 最新一条对方消息的字数。 */
+        val latest: Int,
+        /** 此前几条的平均字数（四舍五入）。 */
+        val average: Int,
+        val direction: Int,
+    )
+
     /** 建议强度四档。 */
     enum class Level { ADVANCE, STEADY, WATCH, HOLD }
 
@@ -56,10 +82,12 @@ object ChatInsights {
         val level: Level? = null,
         val levelDesc: Int = 0,
         val risk: Risk? = null,
+        val engagement: Engagement? = null,
     ) {
         /** 没有任何一条洞察有内容时，卡片就少画一整块，不要留空白标题。 */
         val isEmpty: Boolean
-            get() = topics.isEmpty() && balance == null && trend == null && level == null
+            get() = topics.isEmpty() && balance == null && trend == null && level == null &&
+                engagement == null
     }
 
     /**
@@ -81,13 +109,55 @@ object ChatInsights {
          * 每次绑定都要多走一遍本屏 View。
          */
         val context: List<ContextMessage> = emptyList(),
-    )
+        /** 本条消息的正文（渲染侧不重新取文本；[Engagement] 拿它当「最新一条」）。 */
+        val targetText: String = "",
+        /** 本条消息是不是我自己发的（决定「最新一条对方消息」取哪一条）。 */
+        val targetIsSelf: Boolean = false,
+    ) {
+        /**
+         * **内容键**：只由「这段素材的内容」决定，不由对象身份决定。
+         *
+         * 卡片渲染指纹原来用它的是 `System.identityHashCode(screen)` —— 那是对象身份：
+         * 行被复用、重扫重建 [Screen] 之后，**内容一模一样也会被认为「画面变了」**，
+         * 于是每次都绕开排版缓存重跑一遍 StaticLayout（十几个 Layout + 若干 Path/Shader），
+         * 这正是滚动时掉帧的来源之一。改成内容键之后，内容相同就直接命中缓存。
+         *
+         * 用 [lazy] 算一次即复用（内容不可变）：只在第一次需要时付一次 O(行数) 的哈希。
+         */
+        val contentKey: Int by lazy(LazyThreadSafetyMode.PUBLICATION) {
+            var hash = 7
+            hash = hash * 31 + speakerFlags.size
+            for (flag in speakerFlags) hash = hash * 31 + if (flag) 1 else 0
+            hash = hash * 31 + texts.size
+            for (text in texts) hash = hash * 31 + text.hashCode()
+            hash = hash * 31 + context.size
+            for (item in context) {
+                hash = hash * 31 + item.speaker.hashCode()
+                hash = hash * 31 + item.text.hashCode()
+            }
+            hash = hash * 31 + targetText.hashCode()
+            hash = hash * 31 + if (targetIsSelf) 1 else 0
+            hash
+        }
+    }
 
     /** 卡片最多展示几个话题标签：再多就把一行挤爆了。 */
     const val MAX_TOPICS = 4
 
     /** 趋势小结最少要几条样本才给结论（少于这个数只能说「样本不足」，不如不说）。 */
     private const val MIN_TREND_SAMPLES = 3
+
+    /** 投入度至少要有两条对方消息才能比较（一条比不出「变长还是变短」）。 */
+    private const val MIN_ENGAGEMENT_SAMPLES = 2
+
+    /** 投入度判定的倍数阈值：最新一条要超过平均的这么多倍才算「明显变长/变短」。 */
+    private const val ENGAGEMENT_RATIO = 1.5
+
+    /** 投入度判定的绝对差阈值（字数）：短消息之间的小波动不算信号。 */
+    private const val ENGAGEMENT_MIN_DELTA = 4
+
+    /** 与 [dev.joker.features.items.chat.jev.core.MessageMetadata.speaker] 里的自称保持一致。 */
+    private const val SELF_SPEAKER = "我"
 
     /**
      * 生成一条消息的洞察。
@@ -108,6 +178,8 @@ object ChatInsights {
             level = level,
             levelDesc = levelDesc(level),
             risk = risk,
+            // 与 topics 一样是纯本地计算：输入全在 screen 里，不新增任何网络/磁盘访问。
+            engagement = engagement(screen),
         )
     }
 
@@ -218,6 +290,41 @@ object ChatInsights {
         Level.STEADY -> R.string.jev_level_steady
         Level.WATCH -> R.string.jev_level_watch
         Level.HOLD -> R.string.jev_level_hold
+    }
+
+    // ------------------------------------------------------------------ 投入度
+
+    /**
+     * 对方投入度：对方最新一条的字数相对此前几条平均字数的走向。
+     *
+     * 口径（刻意保持可解释，卡片上会把两个数字都写出来）：
+     *  - 样本 = 前文里对方说的话 +（本条若是对方发的就是它）；
+     *  - 最新一条的字数 vs 此前几条的平均字数；
+     *  - 明显变长（倍数 ≥ [ENGAGEMENT_RATIO] 且差 ≥ [ENGAGEMENT_MIN_DELTA]）→ 2；
+     *    对称地明显变短 → 0；否则 → 1（持平）。
+     *
+     * 样本不足（< [MIN_ENGAGEMENT_SAMPLES]）返回 null：宁可不说，也不要拿一句话的长度下结论。
+     * 全程只读 [Screen]（内存里已有的文本），没有网络、没有数据库、没有 View 访问。
+     */
+    fun engagement(screen: Screen): Engagement? {
+        val others = ArrayList<String>(8)
+        for (item in screen.context) {
+            if (item.speaker == SELF_SPEAKER) continue
+            if (item.text.isBlank()) continue
+            others += item.text
+        }
+        // 本条是对方发的 → 它就是「最新一条」；是我发的 → 最新一条只能是前文里最后那句对方的话。
+        if (!screen.targetIsSelf && screen.targetText.isNotBlank()) others += screen.targetText
+        if (others.size < MIN_ENGAGEMENT_SAMPLES) return null
+        val latest = others.last().trim().length
+        val average = others.dropLast(1).map { it.trim().length }.average().roundToInt()
+        val delta = latest - average
+        val direction = when {
+            delta >= ENGAGEMENT_MIN_DELTA && latest >= average * ENGAGEMENT_RATIO -> 2
+            -delta >= ENGAGEMENT_MIN_DELTA && average >= latest * ENGAGEMENT_RATIO -> 0
+            else -> 1
+        }
+        return Engagement(others.size, latest, average, direction)
     }
 
     // ------------------------------------------------------------------ 风险提示

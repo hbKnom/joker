@@ -15,6 +15,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.Layout
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -191,8 +192,31 @@ object YanwaiBubble {
     /** 连续多少帧「位置没就绪」后记一行诊断（约 1 秒；只记一行，不刷屏）。 */
     private const val MAX_NO_ROOM_FRAMES = 60
 
+    /** 滚动判定结果复用时长（约一帧）：一批绑定里会连续问十几次，不必每次都反射。 */
+    private const val SCROLL_STATE_TTL_MS = 16L
+
     /** 行已绑定但还没绘制出来（可重试）的卡片。 */
     private val cards = IdentityHashMap<View, Card>()
+
+    /**
+     * 「需要重新排版、但此刻列表正在滚动」的卡片（第 23 轮）。
+     *
+     * 滚动帧里做排版（十几份 StaticLayout + Path/Shader）或改宿主 padding（整行重新测量）
+     * 都是掉帧的直接来源；这里只记账，等滚动停下来由 [settle] 一次补齐 ——
+     * 也就是用户要的「滚动中暂停/降级装饰，滚动结束后补上」。
+     */
+    private val pendingLayout = HashSet<Card>()
+
+    /** 列表类 -> `getScrollState()`（null = 这个类没有，按「没在滚动」处理）。 */
+    private val scrollStateLookup = HashMap<Class<*>, java.lang.reflect.Method?>()
+
+    /** [isScrolling] 的小缓存：同一批绑定/绘制里重复问同一个列表时零反射。 */
+    private var scrollCheckedList: View? = null
+    private var scrollCheckedAt = 0L
+    private var scrollCheckedState = 0
+
+    /** 滚动结束后补齐排版的这条主线程消息只排一次。 */
+    private var settlePosted = false
 
     /**
      * 排版结果缓存：[Fingerprint]（身份 + 一切影响画面的输入）→ 排好版的指令表。
@@ -309,6 +333,8 @@ object YanwaiBubble {
      *     「一条消息出结论 → 全屏卡片重排」，本质上是第 1 条的翻版。
      *  3. **归属用 [identity]（会话 + 消息 id），不用结论键 `key`**：结论键把上下文一起
      *     哈希了，旁边一来新消息就整屏换键 —— 卡片会被误判成「换人」而拆掉重建。
+     *  4. **本屏素材用内容键（[ChatInsights.Screen.contentKey]）而不是对象身份**：身份每次
+     *     重建 Screen 都会变，于是「内容没变」也永远打不中排版缓存。
      */
     private data class Fingerprint(
         val identity: String,
@@ -322,7 +348,7 @@ object YanwaiBubble {
         val trend: Int,
         val queued: Int,
         val capacity: Boolean,
-        val screenId: Int,
+        val screenKey: Int,
         val uiRevision: Int,
         val paletteId: Int,
         val width: Int,
@@ -523,15 +549,19 @@ object YanwaiBubble {
     /** 卡片随行解绑/回收一起消失，并把宿主的 padding / 监听器还原。 */
     fun clear(row: View) {
         val card = cards.remove(row) ?: return
+        pendingLayout.remove(card)
         release(card)
     }
 
     fun clearAll() {
         for (card in cards.values) release(card)
         cards.clear()
+        pendingLayout.clear()
         detachStaleLayers()
         runCatching { main.removeCallbacks(repair) }
         repairPosted = false
+        runCatching { main.removeCallbacks(settle) }
+        settlePosted = false
         layouts.clear()
     }
 
@@ -590,6 +620,12 @@ object YanwaiBubble {
             if (prepare(card)) render(card, force = true)
             if (!card.ready) pending = true
         }
+        // 滚动中被推迟排版的卡片：滚动一停就补上。这里同时兜底 [settle]（主线程消息万一丢了，
+        // 也不会剩下一张永远不更新的卡），并如实告诉调用方「还得继续跑节拍」。
+        if (pendingLayout.isNotEmpty()) {
+            scheduleSettle()
+            pending = true
+        }
         return pending
     }
 
@@ -609,11 +645,25 @@ object YanwaiBubble {
     private val repair = Runnable {
         repairPosted = false
         try {
-            for (card in cards.values) {
+            for (card in cards.values.toList()) {
+                val row = card.row
+                // 归属已经不成立（宿主把这一行换绑了别的消息，却没派发解绑回调）：
+                // 当场摘掉，把预留借走的 padding 还给宿主。少了这一步，这一行会一直挂着
+                // 一块**无主的空白**（把下面的消息整体下推）—— 那也是「卡片串位」的一种样子。
+                if (card.messageId <= 0L || rowMessageId(row) != card.messageId) {
+                    clear(row)
+                    continue
+                }
                 val container = card.container ?: continue
                 val layout = card.layout ?: continue
-                if (!card.row.isAttachedToWindow || !container.isAttachedToWindow) continue
+                if (!row.isAttachedToWindow || !container.isAttachedToWindow) continue
                 if (card.wantPadding < 0 || container.paddingBottom >= card.wantPadding) continue
+                // 滚动中改宿主 padding 会在滚动帧里触发整行重新测量（掉帧的直接来源）：
+                // 记成「待补」，交给滚动结束后的 [settle] 一起处理。
+                if (isScrolling(card.list)) {
+                    pendingLayout.add(card)
+                    continue
+                }
                 reserve(card, layout.height)
                 if (card.hooked) hookClicks(card)
                 card.list?.let { runCatching { it.postInvalidateOnAnimation() } }
@@ -723,6 +773,80 @@ object YanwaiBubble {
     }
 
     private val recyclerLookup = HashMap<Class<*>, Boolean>()
+
+    // ------------------------------------------------------------------ 滚动感知（第 23 轮）
+
+    /**
+     * 列表当前的滚动状态（0 = 停着，1 = 手指拖，2 = 惯性滑）。
+     *
+     * 为什么不引 `androidx.recyclerview.widget.RecyclerView`：宿主自带的那个类与本进程能
+     * 引用的那一份**不是同一个类身份**（见 [findList]），只能用反射按签名找。
+     * 找不到（未知宿主列表实现）一律返回 0 —— 也就是**按「没在滚动」处理**：
+     * 于是行为与改之前完全一致，宁可多做活，也不会因为判定失败而让卡片不再更新。
+     */
+    private fun scrollStateOf(list: View?): Int {
+        if (list == null) return 0
+        val method = synchronized(scrollStateLookup) {
+            val cls = list.javaClass
+            if (scrollStateLookup.containsKey(cls)) {
+                scrollStateLookup[cls]
+            } else {
+                val found = generateSequence(cls as Class<*>) { it.superclass }
+                    .flatMap { it.declaredMethods.asSequence() }
+                    .firstOrNull { it.name == "getScrollState" && it.parameterCount == 0 }
+                scrollStateLookup[cls] = found
+                found
+            }
+        } ?: return 0
+        return runCatching {
+            method.isAccessible = true
+            (method.invoke(list) as? Int) ?: 0
+        }.getOrDefault(0)
+    }
+
+    /** 这个列表此刻在不在滚动。结果按帧缓存，避免一批绑定里反复反射。 */
+    private fun isScrolling(list: View?): Boolean {
+        if (list == null) return false
+        val now = SystemClock.uptimeMillis()
+        if (list === scrollCheckedList && now - scrollCheckedAt < SCROLL_STATE_TTL_MS) {
+            return scrollCheckedState != 0
+        }
+        val state = scrollStateOf(list)
+        scrollCheckedList = list
+        scrollCheckedAt = now
+        scrollCheckedState = state
+        return state != 0
+    }
+
+    /**
+     * 滚动停下来之后把 [pendingLayout] 里的卡片集中补一次。
+     *
+     * 只发一条主线程消息，绝不在宿主 draw/布局调用栈里改几何（[render] 内部会走
+     * 缓存 → 排版 → [reserve] 的正常路径，那才是「滚动结束后补上」）。
+     */
+    private fun scheduleSettle() {
+        if (settlePosted) return
+        settlePosted = true
+        main.post(settle)
+    }
+
+    private val settle = Runnable {
+        settlePosted = false
+        try {
+            for (card in pendingLayout.toList()) {
+                if (cards[card.row] !== card) {
+                    // 卡片已经被摘掉了（行被回收/换绑）：不用补
+                    pendingLayout.remove(card)
+                    continue
+                }
+                // 又滚起来了：留着，下一次滚动结束再补（drawCards 每帧都会盯着）
+                if (isScrolling(card.list)) continue
+                render(card, force = true)
+            }
+        } catch (t: Throwable) {
+            warnOnce("settle:${t.javaClass.simpleName}", "滚动结束补齐异常（已跳过）：${t.message}")
+        }
+    }
 
     /** 落点：改 padding 的那个容器 + 卡片纵向对齐用的锚（容器里直接装气泡的那个子 View）。 */
     private class Landing(val container: View, val anchor: View)
@@ -872,12 +996,28 @@ object YanwaiBubble {
             trend = MoodStore.trendVersionOf(input.talker),
             queued = if (state == 'p') queuedBucket() else 0,
             capacity = card.capacityPending,
-            screenId = System.identityHashCode(card.screen),
+            // 用**内容键**而不是对象身份：行被复用/重扫重建 Screen 之后内容常常一模一样，
+            // 用身份会让排版缓存永远打不中（每次都重跑一遍 StaticLayout）。
+            screenKey = card.screen.contentKey,
             uiRevision = ModulePrefs.uiRevision,
             paletteId = System.identityHashCode(MonetColors.applied.value),
             width = width,
         )
-        if (!force && fingerprint == card.fingerprint && card.layout != null) return
+        if (!force && fingerprint == card.fingerprint && card.layout != null) {
+            pendingLayout.remove(card)
+            return
+        }
+
+        // ---- 滚动降级（第 23 轮）----
+        // 滚动帧里两件重活全部推迟：① 排版（十几份 StaticLayout + Path/Shader）；
+        // ② [reserve] 改宿主容器 padding → requestLayout（在最不该触发布局的时刻让整行
+        // 重新测量，正是「上下滑动聊天记录卡顿」的主要来源之一）。已经排好版的卡照常画
+        // （[drawCards] 不依赖这里），滚动停下来后由 [settle] 一次补齐。
+        if (isScrolling(list)) {
+            pendingLayout.add(card)
+            return
+        }
+        pendingLayout.remove(card)
 
         // 指纹之后先查排版缓存：同样的身份 + 同样的指纹 = 同样的画面，直接复用，零成本。
         // 滚动来回、重绑、每拍重试都走这条路（缓存里没有才真正排版）。
@@ -1319,7 +1459,7 @@ object YanwaiBubble {
                 }
 
                 val insight = renderableInsight(card, mood)
-                val chips = ArrayList<Pair<String, Int>>(3)
+                val chips = ArrayList<Pair<String, Int>>(4)
                 if (ModulePrefs.showLevel) {
                     insight?.level?.let { level ->
                         chips += JevText.get(
@@ -1342,6 +1482,20 @@ object YanwaiBubble {
                             mood.score < -0.25 -> pal.negative
                             else -> pal.muted
                         }
+                }
+                // 对方投入度（第 23 轮）：对方这条是「变长了」还是「开始敷衍」——
+                // 纯本地统计（前文字数），与建议分级同属「怎么回」的判断依据，所以挂在 showLevel 下。
+                if (ModulePrefs.showLevel) {
+                    insight?.engagement?.let { engagement ->
+                        chips += JevText.get(
+                            R.string.jev_chip_engagement,
+                            JevText.get(engagementLabel(engagement.direction)),
+                        ) to when (engagement.direction) {
+                            2 -> pal.positive
+                            1 -> pal.muted
+                            else -> pal.warning
+                        }
+                    }
                 }
                 if (chips.isNotEmpty()) {
                     builder.gap(6f)
@@ -1615,6 +1769,20 @@ object YanwaiBubble {
             insight.level?.let {
                 lines += StyledLine(JevText.get(ChatInsights.levelDesc(it)), pal.body, pal.muted)
             }
+            // 投入度依据（第 23 轮）：把两个数字摆出来 —— 用户能自己判断这条结论怎么来的，
+            // 而不是只看到一个「高/中/低」。
+            insight.engagement?.let { engagement ->
+                lines += StyledLine(
+                    JevText.get(
+                        R.string.jev_ext_engagement,
+                        engagement.latest,
+                        engagement.average,
+                        engagement.samples,
+                    ),
+                    pal.muted,
+                    pal.muted,
+                )
+            }
         }
         if (ModulePrefs.showTopics && topicsAreEmpty) {
             lines += StyledLine(
@@ -1728,13 +1896,18 @@ object YanwaiBubble {
         val gap = BOTTOM_GAP_DP * density
         val x = list.paddingLeft + margin
         var staleReserve = false
+        var staleOwner = false
         for (card in cards.values) {
             val layout = card.layout ?: continue
             val container = card.container ?: continue
             if (card.list !== list) continue
             if (!container.isAttachedToWindow) continue
-            // 归属校验：行已经不是这条消息了就不画（等 handle/clear 把它收走）
-            if (card.messageId <= 0L || rowMessageId(card.row) != card.messageId) continue
+            // 归属校验：行已经不是这条消息了就不画（等 handle/clear 把它收走）。
+            // 同时记一笔交给 [repair] 清掉卡片与它向宿主预留的空白 —— 绘制栈里绝不动几何。
+            if (card.messageId <= 0L || rowMessageId(card.row) != card.messageId) {
+                staleOwner = true
+                continue
+            }
             // 预留校验：宿主把它自己那条内容器的 padding 改回去了（或这一帧还没按新 padding
             // 测量完）就先不画，交给 [repair] 下一帧补预留 —— **宁可晚一帧，也绝不把卡片
             // 画到「没有给它留位置」的地方**。用户看到的「卡片压在别的消息上、过一会儿才
@@ -1776,7 +1949,16 @@ object YanwaiBubble {
             paintLayout(canvas, layout)
             canvas.restoreToCount(save)
         }
-        if (staleReserve) scheduleRepair()
+        if (staleReserve || staleOwner) scheduleRepair()
+        // 滚动中被推迟排版的卡片：滚动一停就补齐。滚动中每帧都在这里续一帧，
+        // 保证「滚动停下来」之后**至少还有一帧**被画出来 —— 那一帧负责触发 [settle]。
+        if (pendingLayout.isNotEmpty()) {
+            if (scrollStateOf(list) != 0) {
+                list.postInvalidateOnAnimation()
+            } else {
+                scheduleSettle()
+            }
+        }
     }
 
     /**
@@ -2006,6 +2188,13 @@ object YanwaiBubble {
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
         )
         return builder
+    }
+
+    /** 投入度三档的文案（与 [ChatInsights.Engagement.direction] 一一对应：2 长 / 1 平 / 0 短）。 */
+    private fun engagementLabel(direction: Int): Int = when (direction) {
+        2 -> R.string.jev_engagement_high
+        1 -> R.string.jev_engagement_medium
+        else -> R.string.jev_engagement_low
     }
 
     /** 建议强度 → 语义色（推进=正向 / 稳步=中性 / 观察=告警 / 暂缓=负向）。 */

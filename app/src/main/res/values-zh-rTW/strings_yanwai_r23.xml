@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  潛語（聊天分析決策）第 23 輪新增文案。key 必須與 values/ 和 values-zh-rCN/ 完全一致。
+-->
+<resources>
+    <string name="jev_chip_engagement">投入 %1$s</string>
+    <string name="jev_engagement_high">高</string>
+    <string name="jev_engagement_medium">平</string>
+    <string name="jev_engagement_low">低</string>
+    <string name="jev_ext_engagement">投入度：對方最近一則 %1$d 字，此前平均 %2$d 字（共 %3$d 則）</string>
+</resources>

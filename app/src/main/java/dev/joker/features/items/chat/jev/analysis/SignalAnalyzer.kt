@@ -262,6 +262,29 @@ object SignalAnalyzer {
         if (!ModulePrefs.inScope(input.talker)) return null
         if (MessagePolicy.textOrNull(input.text) == null) return null
         val key = input.key
+
+        // ---------------- 复用短路（第 23 轮：同一句话绝不重复打模型） ----------------
+        // 显示用的结论键 [AnalysisInput.key] 把**上下文**一起哈希了，所以同一条消息在
+        // 「旁边来了新消息 / 滚动导致可见行变化」之后会得到一个全新的键。旧实现只按这个
+        // 键查结果，于是同一条消息被反复提交（两轮模型请求一次不落），队列很快被自己占满，
+        // 卡片则要等「属于它当前这个键」的那次请求回来才规范 —— 用户看到的就是
+        // 「加载不过来 + 卡片过一会才显示」。
+        //
+        // 这里先按**消息身份**（会话 + msgId）与**内容身份**查一次复用索引：命中就把结论
+        // 直接挂到当前键上（不排队、不发请求、不进冷却），渲染侧立刻就能读到。
+        if (MoodStore.get(key) == null) {
+            val reused = MoodStore.settledMood(input)
+            if (reused != null) {
+                MoodStore.complete(key, reused)
+                MoodStore.rememberReuse(input, reused)
+                MoodStore.markReused()
+                failures.remove(key)
+                failureMessages.remove(key)
+                notifySettled(input, reused, null)
+                return key
+            }
+        }
+
         if (System.currentTimeMillis() - (failures[key] ?: 0L) < FAIL_COOLDOWN_MS) return null
         if (!MoodStore.claim(key)) return key
         failureMessages.remove(key)
@@ -346,6 +369,13 @@ object SignalAnalyzer {
 
     private fun succeed(key: String, input: AnalysisInput, mood: Mood) {
         MoodStore.complete(key, mood)
+        // 第 23 轮：把结论同时记进「按消息身份 / 按内容身份」的复用索引。
+        //
+        // 少了这一步，[MoodStore.settledMood] 的两个索引**永远是空的**（写索引的地方压根不存在），
+        // 于是 [submit] 的复用短路不可能命中 —— 同一条消息在上下文一变（旁边来消息、
+        // 滚动重绑）就换了一个结论键，然后被**重新打一遍模型**：同一句话反复分析、
+        // 额度白烧、队列被自己占满，用户看到的就是「卡片加载不过来、过一会才规范」。
+        MoodStore.rememberReuse(input, mood)
         failures.remove(key)
         autoRetryAt.remove(key)
         autoRetries.remove(key)

@@ -109,6 +109,38 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
     private const val SCREEN_SNAPSHOT_TTL_MS = 250L
 
     /**
+     * 本屏快照最多保留这么久（超过就整体丢弃）。
+     *
+     * 快照里装的是**宿主行 View 的强引用**（还有它们的 [MessageInfo]）。以前的清理条件是
+     * 「写了 8 个会话以上」，也就是「只看过一两个会话」时那几个会话的行视图会被一直拎着 ——
+     * 那是一整棵聊天行视图树（连带它的 Context）。现在改成按时间淘汰：最多 2 秒。
+     */
+    private const val SCREEN_SNAPSHOT_KEEP_MS = 2_000L
+
+    /** 安装后第二次补扫的延迟（见 [install]）。 */
+    private const val INSTALL_RESCAN_DELAY_MS = 800L
+
+    /**
+     * [submitIfNeeded] 的结果。
+     *
+     * 必须是三态而不是布尔：**「队列已满」与其它「这次不提交」在补投路径上完全不同** ——
+     * 队列满要登记到 [capacityWaiting] 等空位；而冷却中 / 额度用尽只需要等下一轮重扫。
+     * 早先返回布尔时，补投循环里「移除等待登记 → 再次被拒」的那一行会同时从三个待办集合里
+     * 消失（不在 awaiting、不在 capacityWaiting、不在 deferred）—— 卡片永久停在
+     * 「正在分析…」，而且**这一条永远不会被分析**，正是用户说的「有的消息没有结果」。
+     */
+    private enum class SubmitOutcome {
+        /** 已经提交 / 已有结论 / 正在跑：这一行不需要再做什么。 */
+        DONE,
+
+        /** 队列满：这一条这次没排上，必须登记等空位（不能丢）。 */
+        QUEUE_FULL,
+
+        /** 其它原因这次不提交（失败冷却 / 自动重投额度用尽 / 未配置）：等下一轮重扫或手动重试。 */
+        BLOCKED,
+    }
+
+    /**
      * 失败消息自动重扫的延迟。
      *
      * 「每一条文本消息都要被分析」的兜底：失败（超时 / 网络抖 / 刚启动时还没配好 Key）
@@ -207,6 +239,9 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
     private val snapshotAt = HashMap<String, Long>()
     private val snapshotRows = HashMap<String, List<Pair<View, MessageInfo>>>()
 
+    /** 最近一次写入快照的时刻（用于按时间淘汰快照里强引用的宿主行 View）。 */
+    private var snapshotNewestAt = 0L
+
     /**
      * 取本屏快照（同一会话、按纵向顺序），250ms 内复用。
      *
@@ -215,6 +250,13 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
      */
     private fun screenSnapshot(talker: String): List<Pair<View, MessageInfo>> {
         val now = SystemClock.elapsedRealtime()
+        // 按时间淘汰：快照持的是宿主行 View 的强引用，长时间不清等于把整棵行视图树
+        // （连同 Activity 上下文）拎在手里 —— 这是「对宿主 View 的持有」最隐蔽的一处。
+        if (snapshotNewestAt != 0L && now - snapshotNewestAt > SCREEN_SNAPSHOT_KEEP_MS) {
+            snapshotAt.clear()
+            snapshotRows.clear()
+            snapshotNewestAt = 0L
+        }
         val at = snapshotAt[talker]
         if (at != null && now - at <= SCREEN_SNAPSHOT_TTL_MS) {
             snapshotRows[talker]?.let { return it }
@@ -227,12 +269,14 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
         }
         snapshotAt[talker] = now
         snapshotRows[talker] = fresh
+        snapshotNewestAt = now
         return fresh
     }
 
     private fun invalidateScreenSnapshot() {
         snapshotAt.clear()
         snapshotRows.clear()
+        snapshotNewestAt = 0L
     }
 
     private var tickCount = 0
@@ -243,7 +287,19 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
         override fun run() {
             tickScheduled = false
             if (!installed) return
-            if (!ModulePrefs.enabled) {
+            // 主线程 Handler 里漏出去的异常 = 进程闪退。这一拍里跑的东西最多（队列补投、
+            // 看门狗、周期重扫、气泡 prune、宿主 View 读取），任何一个意外都不许把宿主带走。
+            try {
+                tickBody()
+            } catch (t: Throwable) {
+                logOnce("tick:${t.javaClass.simpleName}", "兜底节拍异常（已忽略）：${t.message}")
+            }
+        }
+    }
+
+    /** 兜底节拍的实际逻辑；异常兜底在 [tick] 里。 */
+    private fun tickBody() {
+        if (!ModulePrefs.enabled) {
                 awaiting.clear()
                 capacityWaiting.clear()
                 deferred.clear()
@@ -261,7 +317,14 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
                         continue
                     }
                     capacityWaiting.remove(view)
-                    if (row.note == null) submitIfNeeded(row.input.key, row.input)
+                    // 补投又被拒（空位瞬间被别处占掉/又满了）→ 重新登记等下一拍。
+                    // 「移出等待集合之后就没人管」正是「有的消息永远停在正在分析、这一条
+                    // 再也不会被分析」的根因；队列满只代表「这次没排上」，不代表可以丢。
+                    if (row.note == null &&
+                        submitIfNeeded(row.input.key, row.input) == SubmitOutcome.QUEUE_FULL
+                    ) {
+                        capacityWaiting.add(view)
+                    }
                 }
             }
             for (view in awaiting.toList()) {
@@ -311,14 +374,16 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
                 keep = true
             }
             keep = retryDeferred() || keep
-            YanwaiBubble.prune()
+            // prune 的返回值必须接进 keep：它表示「还有卡片没画出来」（落点/宽度/滚动推迟）。
+            // 旧实现把返回值丢掉了 —— 于是「滚动中被推迟排版的那张卡」可能在节拍停下后
+            // 谁也不管，一直停在旧画面上。接进来就等于「没画完就一直重试」。
+            keep = YanwaiBubble.prune() || keep
             if (keep) {
                 scheduleTick()
                 tickCount++
                 // 有未结清的行时，顺手周期性补扫一次（抓没有绑定回调的漏网消息）
                 if (tickCount % RESCAN_EVERY_TICKS == 0) rescan()
             }
-        }
     }
 
     /** 重试「内容已就绪但行还没测量」的卡片；返回是否还需要继续跑节拍。 */
@@ -382,12 +447,32 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
         )
         // 装上钩子时屏幕上可能已经有绑好的消息，补扫一次
         onMain { rescan() }
+        // 再补一次：装钩子那一刻宿主可能正处在「布局/绑定进行中」（绑定表还没写完），
+        // 只扫一次容易漏掉「已经在屏幕上、但绑定回调早于我们安装」的那几条。
+        // 每次安装只多扫一遍，代价可忽略，却是「每条文本消息都要被分析」的一道保险。
+        main.removeCallbacks(rescanAgain)
+        main.postDelayed(rescanAgain, INSTALL_RESCAN_DELAY_MS)
+    }
+
+    /**
+     * 安装后的一次性补扫（见 [install]）。
+     *
+     * 兜底 try/catch：它跑在 Handler 消息里，漏异常出去就是进程闪退。
+     */
+    private val rescanAgain = Runnable {
+        if (!installed) return@Runnable
+        try {
+            rescan()
+        } catch (t: Throwable) {
+            logOnce("rescan-again:${t.javaClass.simpleName}", "安装后补扫异常（已忽略）：${t.message}")
+        }
     }
 
     fun uninstall() {
         installed = false
         main.removeCallbacks(tick)
         main.removeCallbacks(retrySweep)
+        main.removeCallbacks(rescanAgain)
         retrySweepScheduled = false
         tickScheduled = false
         awaiting.clear()
@@ -429,14 +514,20 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
     fun rescan() {
         if (!installed) return
         if (!ModulePrefs.enabled) return
-        invalidateScreenSnapshot()
-        var bound = 0
-        for ((view, message) in WeChatMessageViewApi.findBoundViews { true }) {
-            bound++
-            handle(view, message)
-        }
-        if (bound > 0 && (awaiting.isNotEmpty() || capacityWaiting.isNotEmpty() || deferred.isNotEmpty())) {
-            scheduleTick()
+        // 兜底：它会被 install / refresh（设置页主线程，直接调用）/ 节拍 / 重扫调用，
+        // 任何一处漏出异常都可能崩宿主 —— 只在 verbose 门闩下记一行。
+        try {
+            invalidateScreenSnapshot()
+            var bound = 0
+            for ((view, message) in WeChatMessageViewApi.findBoundViews { true }) {
+                bound++
+                handle(view, message)
+            }
+            if (bound > 0 && (awaiting.isNotEmpty() || capacityWaiting.isNotEmpty() || deferred.isNotEmpty())) {
+                scheduleTick()
+            }
+        } catch (t: Throwable) {
+            logOnce("rescan:${t.javaClass.simpleName}", "补扫异常（已忽略）：${t.message}")
         }
     }
 
@@ -471,10 +562,17 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
         if (!installed) return
         main.post {
             if (!installed) return@post
-            submittedAt.remove(input.key)
-            fill(input.key)
-            // 这一次没结论（失败/超时/未配置）：安排一次延迟重扫，让这一条有机会自动重来。
-            if (mood == null) scheduleRetrySweep()
+            // Handler 消息里漏出去的异常同样是闪退（这里要读宿主 View、要重排卡片）。
+            try {
+                submittedAt.remove(input.key)
+                fill(input.key)
+                // 同一条消息的其它键也一起填上（见 [fillIdentity]）。
+                if (mood != null) fillIdentity(input, mood)
+                // 这一次没结论（失败/超时/未配置）：安排一次延迟重扫，让这一条有机会自动重来。
+                if (mood == null) scheduleRetrySweep()
+            } catch (t: Throwable) {
+                logOnce("settled:${t.javaClass.simpleName}", "结论回填异常（已忽略）：${t.message}")
+            }
         }
     }
 
@@ -488,6 +586,15 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
     private val retrySweep = Runnable {
         retrySweepScheduled = false
         if (!installed || !ModulePrefs.enabled) return@Runnable
+        try {
+            retrySweepBody()
+        } catch (t: Throwable) {
+            logOnce("sweep:${t.javaClass.simpleName}", "自动重扫异常（已忽略）：${t.message}")
+        }
+    }
+
+    /** 失败后的自动重扫逻辑；异常兜底在 [retrySweep] 里。 */
+    private fun retrySweepBody() {
         retryBlockedRows = 0
         retryExhaustedRows = 0
         rescan()
@@ -510,7 +617,22 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
 
     // ------------------------------------------------------------------ 主逻辑
 
+    /**
+     * 行处理入口（宿主绑定回调 + 补扫都走这里）。
+     *
+     * **[onMain] 在主线程是「直接调用」而不是 post** —— 也就是说这里其实跑在宿主的
+     * `onBindView` / View 挂载派发调用栈里。漏一个异常出去，崩的是宿主自己。
+     * 所以最外层必须有兜底：异常只记一行（同一签名只记一次），绝不往外抛。
+     */
     private fun handle(view: View, message: MessageInfo) {
+        try {
+            handleBound(view, message)
+        } catch (t: Throwable) {
+            logOnce("handle:${t.javaClass.simpleName}", "行处理异常（已忽略）：${t.message}")
+        }
+    }
+
+    private fun handleBound(view: View, message: MessageInfo) {
         if (!ModulePrefs.enabled) {
             forget(view)
             return
@@ -536,7 +658,11 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
             return
         }
         val key = input.key
-        if (row.note == null) submitIfNeeded(key, input)
+        if (row.note == null) {
+            // 「队列满」必须登记等空位：否则这一行会同时从 awaiting / capacityWaiting /
+            // deferred 里消失，卡片永久停在「正在分析…」而这一条永远不会被分析。
+            if (submitIfNeeded(key, input) == SubmitOutcome.QUEUE_FULL) capacityWaiting.add(view)
+        }
         val settled = isSettled(key)
         if (!settled && (submittedAt.containsKey(key) || MoodStore.isPending(key))) awaiting.add(view)
         if (row.note == null && !settled && capacityWaiting.contains(view)) {
@@ -554,9 +680,9 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
      *
      * 队列满时**不提交也不放弃**：登记到 [capacityWaiting]，队列一有空位由节拍自动补投。
      */
-    private fun submitIfNeeded(key: String, input: AnalysisInput): Boolean {
-        if (submittedAt.containsKey(key) || MoodStore.isPending(key)) return true
-        if (MoodStore.get(key) != null) return true
+    private fun submitIfNeeded(key: String, input: AnalysisInput): SubmitOutcome {
+        if (submittedAt.containsKey(key) || MoodStore.isPending(key)) return SubmitOutcome.DONE
+        if (MoodStore.get(key) != null) return SubmitOutcome.DONE
         // 失败过的消息**允许**自动重投，但要有冷却与次数上限（都在 SignalAnalyzer 里）。
         // 旧实现这里无条件 return，等于「失败一次就永久不再分析这一条」，与用户要求的
         // 「被选定的聊天每一条文本消息都要被分析」直接冲突。
@@ -564,17 +690,17 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
             // 先看冷却：还在 30s 冷却里就不该消耗重投额度（否则额度被白等掉）
             if (SignalAnalyzer.coolingDown(key)) {
                 retryBlockedRows++
-                return false
+                return SubmitOutcome.BLOCKED
             }
             when (SignalAnalyzer.tryConsumeAutoRetry(key)) {
                 SignalAnalyzer.RetryVerdict.EXHAUSTED -> {
                     retryExhaustedRows++
-                    return false
+                    return SubmitOutcome.BLOCKED
                 }
 
                 SignalAnalyzer.RetryVerdict.COOLING -> {
                     retryBlockedRows++
-                    return false
+                    return SubmitOutcome.BLOCKED
                 }
 
                 SignalAnalyzer.RetryVerdict.READY -> Unit
@@ -582,15 +708,16 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
         }
         if (SignalAnalyzer.atCapacity()) {
             retryBlockedRows++
-            return false
+            // 队列满 ≠ 这一条没救：调用方必须把它登记到 capacityWaiting（见 SubmitOutcome 注释）。
+            return SubmitOutcome.QUEUE_FULL
         }
         if (SignalAnalyzer.submit(input) != null) {
             submittedAt.putIfAbsent(key, SystemClock.elapsedRealtime())
-            return true
+            return SubmitOutcome.DONE
         }
         // submit 被拒（仍在冷却/未配置/超限）：还算「有活可干」，让重扫多排一轮
         if (SignalAnalyzer.failure(key) != null) retryBlockedRows++
-        return false
+        return SubmitOutcome.BLOCKED
     }
 
     private fun isSettled(key: String): Boolean =
@@ -635,6 +762,30 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
         capacityWaiting.removeAll(targets.keys)
         deferred.removeAll(targets.keys)
         for ((view, row) in targets) {
+            if (!showCard(view, row)) deferred.add(view)
+        }
+    }
+
+    /**
+     * 把一份结论广播给**同一条消息**的其它结论键。
+     *
+     * 为什么需要：显示用的结论键 [AnalysisInput.key] 把上下文一起哈希了，所以同一条消息在
+     * 「旁边来了新消息 / 滚动导致可见行变化」之后会得到一个全新的键，而排队中的那次请求
+     * 是**旧键**。旧实现只回填落地那个键，卡片（此刻挂在新键上）就一直等一个永远不会有人
+     * 回答的键 —— 用户看到的就是「分析好了却还显示正在分析，过一会才规范」。
+     * 按消息身份（会话 + msgId）广播一次，两个键同时有结论，卡片当场就是最终样子。
+     */
+    private fun fillIdentity(settled: AnalysisInput, mood: Mood) {
+        val targets = LinkedHashMap<View, Row>()
+        for ((view, row) in allRows()) {
+            if (row.input.key == settled.key) continue
+            if (row.input.identity != settled.identity) continue
+            targets[view] = row
+        }
+        if (targets.isEmpty()) return
+        for ((view, row) in targets) {
+            MoodStore.complete(row.input.key, mood)
+            awaiting.remove(view)
             if (!showCard(view, row)) deferred.add(view)
         }
     }
@@ -769,6 +920,7 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
      */
     private fun screenOf(target: View, message: MessageInfo, selfText: String): ChatInsights.Screen {
         val limit = ModulePrefs.contextLimit
+        val isSelf = message.isSend == 1
         val ordered = screenSnapshot(message.talker)
         val flags = ArrayList<Boolean>(ordered.size)
         var targetIndex = -1
@@ -777,7 +929,7 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
             if (entry.first === target) targetIndex = index
         }
         if (limit <= 0 || targetIndex <= 0) {
-            return ChatInsights.Screen(flags, listOf(selfText))
+            return ChatInsights.Screen(flags, listOf(selfText), emptyList(), selfText, isSelf)
         }
         val context = ordered.subList(maxOf(0, targetIndex - limit), targetIndex)
             .mapNotNull { (_, previous) ->
@@ -786,7 +938,7 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
             }
         // 话题素材 = 前文 + 本条正文（从旧到新）。刻意不含目标行之后的消息：
         // 那些是「还没发生」的话，拿它们给这一条贴标签是错的。
-        return ChatInsights.Screen(flags, context.map { it.text } + selfText, context)
+        return ChatInsights.Screen(flags, context.map { it.text } + selfText, context, selfText, isSelf)
     }
 
     /**
@@ -798,17 +950,22 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
     fun retryRow(view: View) {
         if (!installed) return
         main.post {
-            val message = WeChatMessageViewApi.getBoundMessage(view) ?: return@post
-            val row = rowOf(view, message) ?: return@post
-            if (row.note != null) return@post
-            SignalAnalyzer.retryFailure(row.input.key)
-            MoodStore.release(row.input.key)
-            submittedAt.remove(row.input.key)
-            capacityWaiting.remove(view)
-            deferred.remove(view)
-            deferredAttempts.remove(view)
-            // 失败/超时的行重新真的提交一次：结果要么回填，要么再给一条可见失败。
-            handle(view, message)
+            // 卡片点击进来的主线程消息：这里的任何异常都是闪退，兜住。
+            try {
+                val message = WeChatMessageViewApi.getBoundMessage(view) ?: return@post
+                val row = rowOf(view, message) ?: return@post
+                if (row.note != null) return@post
+                SignalAnalyzer.retryFailure(row.input.key)
+                MoodStore.release(row.input.key)
+                submittedAt.remove(row.input.key)
+                capacityWaiting.remove(view)
+                deferred.remove(view)
+                deferredAttempts.remove(view)
+                // 失败/超时的行重新真的提交一次：结果要么回填，要么再给一条可见失败。
+                handle(view, message)
+            } catch (t: Throwable) {
+                logOnce("retry:${t.javaClass.simpleName}", "手动重试异常（已忽略）：${t.message}")
+            }
         }
     }
 

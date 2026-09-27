@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  潜语（聊天分析决策）第 23 轮新增文案。
+
+  key 必须与 values-zh-rCN / values-zh-rTW 完全一致（每个 key 三语都要有）。
+  这一轮只加了「对方投入度」一个洞察维度相关的 5 条：
+    jev_chip_engagement     卡片上的小标签（chip），三个方向共用一条带占位符的文案
+    jev_engagement_high/medium/low  三档方向文案
+    jev_ext_engagement      展开后的依据行（把两个数字摆出来，结论可自查）
+-->
+<resources>
+    <string name="jev_chip_engagement">Engagement %1$s</string>
+    <string name="jev_engagement_high">High</string>
+    <string name="jev_engagement_medium">Steady</string>
+    <string name="jev_engagement_low">Low</string>
+    <string name="jev_ext_engagement">Engagement: latest message %1$d chars vs %2$d average (of %3$d messages)</string>
+</resources>
