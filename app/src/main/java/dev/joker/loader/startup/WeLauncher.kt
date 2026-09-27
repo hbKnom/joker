@@ -45,10 +45,29 @@ object WeLauncher {
         step("DexCacheManager.init")
 
         val appContext = context.applicationContext ?: context
-        ResourcesInjector.injectModuleRes(appContext.resources)
-        step("ResourcesInjector.injectModuleRes")
+        // 【2026-09-27 启动卡顿根治（第一刀：并行化）】
+        // 实机预热启动的 prelude 是这样排的（全部**主线程同步**、全在微信首帧之前）：
+        //   ParcelableFixer.init 3099ms → DexCacheManager.init 761ms →
+        //   ResourcesInjector.injectModuleRes 1990ms → JokerLocaleController 337ms →
+        //   FeaturesLoader.loadFeatures 1356~10117ms       累计 5306~11821ms
+        // 前三步里，资源注入（25 MB 载荷的 `ResourcesProvider.loadFromApk`）与另外两步**互不依赖**：
+        // ParcelableFixer 只挂 Intent 的 8 个方法、DexCacheManager 只碰 dex 缓存文件，
+        // 两者都不读模块资源；而资源注入不装任何 hook（纯 `ResourcesProvider` + `addLoaders`），
+        // 所以也不会与「Hook 后端初始化」抢同一份状态。
+        // 于是把它丢到一个后台线程与主线程那两步并行，并在真正需要它的
+        // JokerLocaleController / FeaturesLoader **之前** join ——
+        // 顺序保证完全不变（任何用到模块资源的代码都还在注入完成之后），
+        // 但墙钟时间从「相加」变成「取最大」，实机可省约 2s。
+        val resourceInjection = Thread(
+            { ResourcesInjector.injectModuleRes(appContext.resources) },
+            "joker-module-res-inject",
+        ).apply {
+            isDaemon = true
+            start()
+        }
 
         JokerLocaleController.initializeInjectedHost(HostInfo.application)
+        resourceInjection.join(10_000L)
         step("JokerLocaleController.initializeInjectedHost")
 
         if (TargetProcesses.isInMain) {

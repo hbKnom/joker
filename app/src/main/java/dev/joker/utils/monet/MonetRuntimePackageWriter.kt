@@ -370,6 +370,8 @@ object MonetRuntimePackageWriter {
             WeLogger.e(TAG, "runtime package rejected: $mismatch")
             return null
         }
+        aligned.verifyNames()
+
         freezeCanonicalTable(apk, table, requiredRanges)
         output.parentFile?.mkdirs()
         apk.writeApk(output)
@@ -642,7 +644,23 @@ object MonetRuntimePackageWriter {
             pkg.getOrCreateSpecTypePair(typeId, binding.type)
             val entry = pkg.getOrCreateEntry(typeId.toByte(), entryId.toShort(), qualifiers)
                 ?: return skip(binding, "ARSCLib 未能创建条目")
-            if (entry.name != binding.name) entry.setName(binding.name)
+            // 【2026-09-27 根治「解析成功但取色/圆角/角标全不生效」】这里原来调的是
+            // `entry.setName(binding.name)` —— 那是**空操作**。ARSCLib 的 `Entry.setName(name)`
+            // 内部第一件事就是 `if (!holdIfNull && isNull()) return null;`，而此刻条目刚刚
+            // `getOrCreateEntry` 出来、值还没写（`isNull()` 为真），于是名字被静默丢弃。
+            //
+            // 实测（真 ARSCLib 1.4.0，完全镜像本函数的建包路径，回读字节看 key 池）：
+            //   先 setName 再写值            → entry.key = -1、keyPool 大小 0 → 条目**没有名字**
+            //   先写值再 setName             → entry.key = 0  name='wj'
+            //   setName(name, true) 再写值   → entry.key = 0  name='wj'   ← 用这条，与顺序无关
+            //
+            // 后果不是「少了一点辅助信息」，而是致命的：AOSP 的 `getResourceName` 拿不到 key，
+            // 宿主对**我们覆盖过的每一个 id** 调 `getResourceTypeName()` 都会抛 NotFoundException。
+            // 实机日志（joker-2026-09-27.6.log，406 条覆盖）：
+            //   `0 条能按名字解析 … 另有 406 条查不到资源名（?/0x7f0607d3, ?/0x7f060a02, …）`
+            // 于是冒烟校验把整个包判死 → 莫奈彻底不生效，而且缓存包每轮都被判「不可用」，
+            // 每次启动都要重新解析 1~2 分钟（这就是用户实机感受到的莫奈卡顿）。
+            if (entry.name != binding.name) entry.setName(binding.name, true)
             if (entryId + 1 > createdCounts.getOrDefault(typeId, 0)) createdCounts[typeId] = entryId + 1
             written++
             writtenIds += id
@@ -677,16 +695,39 @@ object MonetRuntimePackageWriter {
                 }
                 val entryTypeId = (id ushr 16) and 0xff
                 val expectedType = typeNames[entryTypeId]
-                if (expectedType != null && !entry.name.isNullOrBlank()) {
-                    // 名字只是 overlay 校验用的辅助信息：查不到名字不能当作「包写错了」而整包放弃
-                    //（新建包里 typeId→类型名 的映射在 refreshFull() 后不保证可查），
-                    // 真正必须严格的是下面这条 —— id 不能被挪位。
-                    if (pkg.getResource(expectedType, entry.name) == null) {
-                        WeLogger.w(TAG, "entry ${entry.name} not reachable by name in $expectedType")
-                    }
+                if (expectedType != null && entry.name.isNullOrBlank()) {
+                    // 【2026-09-27 改判】以前这里写的是「名字查不到不算包写错了」—— 那是错的。
+                    // ARSCLib 的 `setName(name)` 在条目还没值的时候是**空操作**（见 [entry] 里的实测），
+                    // 于是 406 条覆盖全都没有 key，宿主 `getResourceTypeName(id)` 一律抛异常、
+                    // 冒烟校验把整包判死、莫奈彻底不生效。名字现在是**硬要求**：
+                    // 这里点名报出来，[verifyNames] 汇总计数。仍然不整包放弃（放弃 = 永久关掉莫奈），
+                    // 放行与否交给运行期冒烟校验按真实效果裁决。
+                    WeLogger.e(TAG, "entry 0x${id.toUInt().toString(16)} in $expectedType has no name (key)")
                 }
             }
             return null
+        }
+
+        /**
+         * 产物级自检：写出来的每个条目都必须**带资源名（key）**。
+         *
+         * 没有 key 的条目会让宿主 `getResourceTypeName(id)` 抛 NotFoundException，冒烟校验
+         * 进而把整包判死（2026-09-27 实机：`0 条能按名字解析 … 406 条查不到资源名`）。
+         * 这类失败以前只会以「日志说解析成功、实测取色全不生效」的形式暴露，查起来极贵，
+         * 所以在这里当场计数告警。**不整包放弃**：条目 id 已经对齐，放弃等于把莫奈关掉；
+         * 真正决定放不放行的是运行期冒烟校验。
+         */
+        fun verifyNames(): Int {
+            val unnamed = created.count { it.first.name.isNullOrBlank() }
+            if (unnamed > 0) {
+                WeLogger.e(
+                    TAG,
+                    "写出的运行时包有 $unnamed/${created.size} 个条目没有资源名（key）——" +
+                        "宿主对这些 id 调 getResourceTypeName 会抛异常、冒烟校验会判死整包；" +
+                        "检查 Entry.setName 是否带了 holdIfNull=true（值写入前调用会被静默丢弃）",
+                )
+            }
+            return unnamed
         }
 
         /** 真写进包里的覆盖 id（写完后回读自检 / 冒烟校验都用它）。 */
