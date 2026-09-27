@@ -4217,4 +4217,7 @@
     <string name="monet_status_running">正在分析…</string>
     <string name="monet_status_summary">当前微信版本已解析 %1$d/%2$d 个角色</string>
     <string name="monet_unsupported">需要 Android 11 或更高版本。</string>
+    <string name="agent_panel_environment">运行环境</string>
+    <string name="home_side_panel_lunar_separator">，\u0020</string>
+    <string name="loader_libxposed_api_name">libxposed API %1$d</string>
 </resources>
