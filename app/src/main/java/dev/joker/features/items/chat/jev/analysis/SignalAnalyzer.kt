@@ -210,9 +210,13 @@ object SignalAnalyzer {
         failures.remove(key)
         startTimes.remove(key)
         val input = pendingInputs.remove(key)
+        // 身份认领也要放开：否则这条消息在身份索引过期（100s）之前再也提交不上，
+        // 「超时后点重试还是没反应」多半就是这么来的。
+        input?.let { MoodStore.endInFlight(it.identity) }
         val reason = if (wasPending) "分析超时（模型无响应），点击此卡重试" else "分析已中断，点击此卡重试"
         failureMessages[key] = reason
         MoodStore.markFailed()
+        input?.let { MoodStore.markSettled(it.talker) }
         ModulePrefs.report("看门狗结清：${key.take(8)} pending=$wasPending")
         if (input != null) notifySettled(input, null, reason)
     }
@@ -247,6 +251,31 @@ object SignalAnalyzer {
     }
 
     /**
+     * 「这一条已经有结论了」的**复用入口**（不排队、不发请求、不进冷却）。
+     *
+     * 为什么必须独立出来：复用判断原来埋在 [submit] 里，而 [submit] 的**前面**还有几道闸门
+     * （队列满、失败冷却、自动重投额度）。于是「同一条消息换个上下文键」时，只要队列恰好满着，
+     * 复用短路就根本走不到 —— 卡片停在「正在分析…」，用户看到的正是「加载不过来，过一会才规范」。
+     * 现在调用方（扫描器）在**闸门之前**先来试一次复用，命中就直接出结论。
+     *
+     * 命中时会把结论挂到 [AnalysisInput.key] 当前这个键上（[MoodStore.complete]），
+     * 之后同一行的渲染就不用再查复用索引了。
+     *
+     * @return 命中的结论；没有可复用的返回 null（表示「还得照常走提交流程」）。
+     */
+    fun reuseExisting(input: AnalysisInput): Mood? {
+        if (MoodStore.get(input.key) != null) return null
+        val reused = MoodStore.settledMood(input) ?: return null
+        MoodStore.complete(input.key, reused)
+        MoodStore.rememberReuse(input, reused)
+        MoodStore.markReused()
+        failures.remove(input.key)
+        failureMessages.remove(input.key)
+        notifySettled(input, reused, null)
+        return reused
+    }
+
+    /**
      * 提交一条分析。
      *
      * 返回值语义（调用方据此决定要不要挂「正在分析」状态）：
@@ -269,26 +298,26 @@ object SignalAnalyzer {
         // 键查结果，于是同一条消息被反复提交（两轮模型请求一次不落），队列很快被自己占满，
         // 卡片则要等「属于它当前这个键」的那次请求回来才规范 —— 用户看到的就是
         // 「加载不过来 + 卡片过一会才显示」。
-        //
-        // 这里先按**消息身份**（会话 + msgId）与**内容身份**查一次复用索引：命中就把结论
-        // 直接挂到当前键上（不排队、不发请求、不进冷却），渲染侧立刻就能读到。
-        if (MoodStore.get(key) == null) {
-            val reused = MoodStore.settledMood(input)
-            if (reused != null) {
-                MoodStore.complete(key, reused)
-                MoodStore.rememberReuse(input, reused)
-                MoodStore.markReused()
-                failures.remove(key)
-                failureMessages.remove(key)
-                notifySettled(input, reused, null)
-                return key
-            }
-        }
+        reuseExisting(input)?.let { return key }
 
         if (System.currentTimeMillis() - (failures[key] ?: 0L) < FAIL_COOLDOWN_MS) return null
-        if (!MoodStore.claim(key)) return key
+
+        // ---------------- 身份级去重（第 27 轮：同一条消息同一时间只允许一个请求） ----------------
+        // 上面那条复用短路只在「已经有结论」时才生效；**正在跑**的那段时间里两个键都不命中
+        // （复用索引是成功之后才写的），于是同一条消息会再发一份请求：额度白烧、队列被自己
+        // 占满、用户看到「总也加载不过来」。这里按消息身份（与上下文无关）认领，
+        // 后到的同一句话直接算「已在分析」返回，不再入队。
+        if (!MoodStore.beginInFlight(input.identity)) return key
+
+        if (!MoodStore.claim(key)) {
+            // 极少数并发窗口：这个键已经被别处认领了。放开身份认领，避免这一条被永久卡住。
+            MoodStore.endInFlight(input.identity)
+            return key
+        }
         failureMessages.remove(key)
         pendingInputs[key] = input
+        // 覆盖度记账：真正新发出的一条请求（同一条消息不会重复记账，身份去重在上面）
+        MoodStore.markSubmitted(input.talker)
         ensureWorkers()
         queue.offer(input)
         return key
@@ -361,9 +390,11 @@ object SignalAnalyzer {
         autoRetries.remove(key)
         failureMessages[key] = reason
         MoodStore.release(key)
+        MoodStore.endInFlight(input.identity)
         startTimes.remove(key)
         pendingInputs.remove(key)
         MoodStore.markFailed()
+        MoodStore.markSettled(input.talker)
         notifySettled(input, null, reason)
     }
 
@@ -376,6 +407,10 @@ object SignalAnalyzer {
         // 滚动重绑）就换了一个结论键，然后被**重新打一遍模型**：同一句话反复分析、
         // 额度白烧、队列被自己占满，用户看到的就是「卡片加载不过来、过一会才规范」。
         MoodStore.rememberReuse(input, mood)
+        // 顺序要紧：先把结论写进复用索引，再放开身份认领。反过来会出现一个窗口 ——
+        // 旁边的行在这一瞬间重新提交，索引里还没有结论、身份又已经空闲，于是又打一次模型。
+        MoodStore.endInFlight(input.identity)
+        MoodStore.markSettled(input.talker)
         failures.remove(key)
         autoRetryAt.remove(key)
         autoRetries.remove(key)
@@ -414,7 +449,9 @@ object SignalAnalyzer {
         autoRetryAt[key] = System.currentTimeMillis()
         failureMessages[key] = reason
         MoodStore.release(key)
+        MoodStore.endInFlight(input.identity)
         MoodStore.markFailed()
+        MoodStore.markSettled(input.talker)
         startTimes.remove(key)
         pendingInputs.remove(key)
         MoodStore.record(

@@ -800,6 +800,8 @@
     <string name="feature_hide_contacts_notifications_description">在 push 进程内抑制被隐藏联系人的新消息通知 (随「隐藏联系人」开关自动生效)</string>
     <string name="feature_copy_we_chat_debug_info_name">复制调试信息</string>
     <string name="feature_copy_we_chat_debug_info_description">在报告模块问题时, 请附上本功能的结果</string>
+    <string name="feature_list_view_notify_guard_name">列表数据同步防护</string>
+    <string name="feature_list_view_notify_guard_description">当列表数据已变、宿主却还没收到通知时，避免微信抛「The content of the adapter has changed but ListView did not receive a notification」而闪退。只把框架自己缓存的条目数拉回一致，不碰任何子 View，正常滑动无额外开销。</string>
     <string name="feature_crash_interceptor_name">崩溃拦截</string>
     <string name="feature_crash_interceptor_description">拦截 Java 层崩溃并记录详细信息, 支持查看和导出日志</string>
     <string name="feature_experiments_name">测试</string>

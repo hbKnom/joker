@@ -88,7 +88,11 @@ object MonetResourceResolver {
                     if (!node.acceptsColorValue()) {
                         // 类型身份撞车：这个 id 的默认值不是颜色（文件/文本），把颜色写进去就是改坏
                         // 宿主的别的资源 —— 2026-09-25 实机闪退正是这一类（anim 被写成 COLOR_RGB8）。
-                        skippedIdentity.add(rule.id)
+                        // 日志带上「实际落到的 id/类型」：只看角色名没法判断这个角色到底被谁占了，
+                        // 而排查「某个界面没取色」时需要的就是这条对应关系。
+                        skippedIdentity.add(
+                            "${rule.id}(落在 0x${node.id.toString(16)} ${node.key.type}/${node.key.name})",
+                        )
                         return@mapNotNull null
                     }
                     val (light, night) = paletteFor(rule.id, resources)

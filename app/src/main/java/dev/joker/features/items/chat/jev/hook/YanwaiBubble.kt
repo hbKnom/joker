@@ -971,7 +971,10 @@ object YanwaiBubble {
         val input = card.input ?: return
         val key = input.key
         prepare(card)
-        val mood = MoodStore.get(key)
+        // 渲染走「结论键 → 消息身份」的无锁索引（[MoodStore.moodFor]）：同一条消息即使因为
+        // 上下文变化换了结论键，也能立刻拿到已有结论，不会先画成「正在分析…」再过一会才规范。
+        // 这里刻意不回退到内容身份（SHA-256 整段上下文 + 抢锁），那种查法本身就是滑动卡顿源。
+        val mood = MoodStore.moodFor(input)
         val failure = SignalAnalyzer.failure(key)
         val night = isNight(row)
         val state = when {
@@ -2096,10 +2099,13 @@ object YanwaiBubble {
     private fun onClick(row: View) {
         val card = cards[row] ?: return
         val key = card.key
+        // 与绘制同一口径（结论键 → 消息身份）：绘制已经用 [MoodStore.moodFor]，
+        // 这里若只查结论键，就会出现「卡片明明显示着解读，点上去却没反应」。
+        val mood = card.input?.let { MoodStore.moodFor(it) }
         runCatching {
             when {
                 SignalAnalyzer.failure(key) != null -> YanwaiScanner.retryRow(row)
-                MoodStore.get(key) != null -> {
+                mood != null -> {
                     card.expanded = !card.expanded
                     render(card)
                 }
@@ -2110,7 +2116,7 @@ object YanwaiBubble {
     /** 长按：把整份解读（含情绪概率与建议）复制成纯文本。 */
     private fun onLongClick(row: View): Boolean {
         val card = cards[row] ?: return false
-        val mood = MoodStore.get(card.key) ?: return false
+        val mood = card.input?.let { MoodStore.moodFor(it) } ?: return false
         val text = MoodMessageChannel.format(mood)
         val copied = runCatching {
             val manager = row.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

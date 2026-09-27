@@ -503,6 +503,17 @@ object ChatAnalysisPng {
     private const val FS_KPI_VALUE = 62f
     private const val FS_KPI_UNIT = 34f
 
+    // ── 块内二级标题（第 26 轮维度凝练）──────────────────────────────
+    /** 二级标题前缀：必须与引擎 `ChatAnalysisEngine.SUB_HEAD_PREFIX` 逐字一致 */
+    private const val SUB_HEAD_PREFIX = "▸ "
+    /** 二级标题行高：比正文行（TEXT_LINE_H=74）略高，留出上下的呼吸感 */
+    private const val SUB_H = 78
+    /** 二级标题字号：介于 FS_ROW(38) 与 FS_BODY(40) 之间，加粗后与正文区分得开 */
+    private const val FS_SUB = 40f
+    /** 左侧竖条尺寸（圆角矩形，颜色取卡片归属色的半透明） */
+    private const val SUB_BAR_W = 8f
+    private const val SUB_BAR_H = 32f
+
     // ---- 配色（集中常量：主色 / 强调色 / 成功 / 警示 / 危险 / 文本主次 / 分隔线）----
     private const val COLOR_BG_TOP = 0xFFEEF5FC.toInt()
     private const val COLOR_BG_MID = 0xFFF7FAFE.toInt()
@@ -602,7 +613,7 @@ object ChatAnalysisPng {
                 KPI_UNIT_ROW_H > FS_KPI_UNIT && SECTION_BADGE_BOX > FS_SECTION_NO &&
                 RANK_BOX > FS_RANK && BADGE_H > FS_BADGE && GROUP_PILL_H > FS_GROUP &&
                 FOOTER_TEXT_H > FS_SMALL && AVATAR_SIZE > FS_AVATAR && CHIP_H > FS_ROW &&
-                DONUT_LEGEND_ROW_H > FS_ROW,
+                DONUT_LEGEND_ROW_H > FS_ROW && SUB_H > FS_SUB,
         ) { "PNG 行高与字号不匹配，文字会溢出" }
 
         // ---- 章节头部 / 徽章 / 分组 pill ----
@@ -694,6 +705,9 @@ object ChatAnalysisPng {
     /** 报告文本切分出的最小单元 */
     private sealed class Block {
         data class Section(val title: String) : Block()
+
+        /** 块内二级标题（第 26 轮）：引擎 `▸ ` 行首的段位名，不计入维度数 */
+        data class SubSection(val title: String) : Block()
         data class BarLine(
             val label: String,
             val value: String,
@@ -870,6 +884,10 @@ object ChatAnalysisPng {
                 t.isEmpty() -> out.add(Block.Gap)
                 t.startsWith("【") && t.endsWith("】") ->
                     out.add(Block.Section(t.removeSurrounding("【", "】")))
+                t.startsWith(SUB_HEAD_PREFIX) -> {
+                    val name = t.removePrefix(SUB_HEAD_PREFIX).trim()
+                    if (name.isNotEmpty()) out.add(Block.SubSection(name))
+                }
                 t.contains("█") -> out.add(parseBarLine(t))
                 else -> {
                     val plain = parsePlainCount(t)
@@ -1211,6 +1229,10 @@ object ChatAnalysisPng {
                 }
                 // 章节标题由卡片头部承担，正文里不会再出现 Section
                 is Block.Section -> Unit
+                is Block.SubSection -> {
+                    rows.add(Row(u, y, SUB_H))
+                    y += SUB_H
+                }
                 is Block.KpiGrid -> {
                     // 高度必须与 drawKpiGrid 的分行方式完全一致（含"单位另起一行""份额条"两档）
                     val h = kpiGridHeight(u.items)
@@ -2269,11 +2291,42 @@ object ChatAnalysisPng {
                     cv, row.lines, CONTENT_LEFT.toFloat(), rowTop,
                     TEXT_LINE_H, bodyP, CONTENT_RIGHT.toFloat(), innerBottom,
                 )
+                is Block.SubSection -> drawSubSection(cv, u.title, rowTop, card, innerBottom)
                 is Block.Section -> Unit
                 is Block.Gap -> Unit
             }
         }
 
+        cv.restore()
+    }
+
+    /**
+     * 块内二级标题（第 26 轮）：左侧短竖条 + 半粗小字，颜色取卡片归属色。
+     *
+     * 与卡片头 [drawCardHeader]（带序号徽章 + 渐变下划线）刻意拉开档次：
+     * 一张 1440px 宽的卡片里，二级标题必须一眼看出"这是同一维度内的分组"，
+     * 而不是又一个维度 —— 否则凝练到 10 块的意义就被排版抵消了。
+     */
+    private fun drawSubSection(
+        cv: Canvas,
+        title: String,
+        top: Float,
+        card: Item.Card,
+        innerBottom: Float,
+    ) {
+        val left = CONTENT_LEFT.toFloat()
+        val barTop = top + (SUB_H - SUB_BAR_H) / 2f
+        cv.drawRoundRect(
+            RectF(left, barTop, left + SUB_BAR_W, barTop + SUB_BAR_H),
+            SUB_BAR_W / 2f, SUB_BAR_W / 2f,
+            shapePaint(withAlpha(card.accent, 0x8C)),
+        )
+        val p = paint(FS_SUB, withAlpha(card.accent, 0xEB), bold = true)
+        val baseline = top + SUB_H / 2f - (p.descent() + p.ascent()) / 2f
+        cv.save()
+        // 文本栏在内容区之内，竖条在左，文字从竖条右侧 14px 起 —— 永不越界
+        cv.clipRect(left, top, CONTENT_RIGHT.toFloat(), innerBottom)
+        cv.drawText(title, left + SUB_BAR_W + 14f, baseline, p)
         cv.restore()
     }
 

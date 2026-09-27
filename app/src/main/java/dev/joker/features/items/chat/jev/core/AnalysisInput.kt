@@ -10,6 +10,14 @@ data class AnalysisInput(
     val speaker: String = "对方",
     /** 消息本身的创建时间（毫秒）。0 表示读不到；「回插会话」通道用它跳过历史消息。 */
     val createdAt: Long = 0,
+    /**
+     * 消息的**原始内容**（含群聊前缀；未经过可分析性清洗）。
+     *
+     * 只给归属键（[identity]）在拿不到 msgId 时用：清洗后的 [text] 会把超长正文判成空、
+     * 把不同类型的图片/表情消息压成同一个串，于是两条**不同**的消息算出同一个归属键、
+     * 共用一张卡片。为空时退回 [text]（老调用点的行为不变）。
+     */
+    val rawContent: String = "",
 ) {
     /**
      * 分析身份键（SHA-256，内容 + 上下文 + 消息身份一起哈希）。
@@ -39,9 +47,14 @@ data class AnalysisInput(
      * 就判定「换人」，把卡片整张拆掉重建** —— 每次重扫（10s 一拍）都会把全屏卡片
      * 拆一遍再排一遍，用户看到的就是「滚动时一卡一卡的、卡片还会闪一下重新出现」。
      * 归属用 [identity]、结论用 [key]，这两个问题一起消失。
+     *
+     * 键的构造统一交给 [MessageKey]（单一来源）：msgId 可用时是 `会话#消息id`，
+     * 不可用（本地暂态消息）时是「会话 + 时间 + 发送者 + **原始内容**哈希」的内容键 ——
+     * 内容键必须用 [rawContent] 而不是清洗后的 [text]，否则超长消息（[MessagePolicy.textOrNull]
+     * 判成 null）与各种图片/表情消息会被压成同一个键、共用一张卡片。
      */
     val identity: String by lazy(LazyThreadSafetyMode.PUBLICATION) {
-        if (messageId > 0L) "$talker#$messageId" else "$talker#t${text.hashCode()}"
+        MessageKey.of(talker, messageId, speaker, createdAt, rawContent.ifEmpty { text })
     }
 
     /** 是否是我方发出的消息（回插通道要跳过自己的话，否则等于自己刷自己的屏）。 */

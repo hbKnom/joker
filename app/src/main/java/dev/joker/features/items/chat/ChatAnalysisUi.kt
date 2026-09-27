@@ -505,6 +505,40 @@ internal object ChatAnalysisUi {
     }
 
     /**
+     * 块内二级标题（第 26 轮维度凝练的产物）。
+     *
+     * 视觉上刻意比 [SectionHeaderRow] 轻得多：没有序号徽章、没有下划线、字号更小、
+     * 竖条更矮更淡。理由 —— 10 个维度块里若二级标题也做成"标题样"，31 个段位会被
+     * 重新读成 31 个维度，那正是用户反馈"项目太多"要消掉的观感。
+     */
+    @Composable
+    private fun SubSectionRow(title: String, accent: Color) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = Space10, bottom = Space2),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .width(2.dp)
+                    .height(11.dp)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(accent.copy(alpha = 0.55f))
+            )
+            Spacer(Modifier.width(Space6))
+            Text(
+                title,
+                style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 0.2f),
+                fontWeight = FontWeight.SemiBold,
+                color = accent.copy(alpha = 0.9f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+
+    /**
      * 分节标题的实际渲染：3dp 竖条（accent）+ 序号徽章 + titleSmall/Bold + 可选计数徽章。
      * 竖条先 clip 再 background，保证圆角外不会溢出颜色。
      *
@@ -1830,6 +1864,13 @@ internal object ChatAnalysisUi {
 
     sealed class ReportUnit {
         data class Section(val title: String) : ReportUnit()
+
+        /**
+         * 块内二级标题（第 26 轮）：引擎里 `▸ ` 行首的那些段位名。
+         *
+         * 不计入对外维度数（维度数 = 【】条数 = 10），只是同一维度卡内的分组小标题。
+         */
+        data class SubSection(val title: String) : ReportUnit()
         data class BarRow(val label: String, val value: String, val ratio: Float) : ReportUnit()
         data class KeyValue(val key: String, val value: String) : ReportUnit()
         data class TextLine(val text: String) : ReportUnit()
@@ -1863,6 +1904,12 @@ internal object ChatAnalysisUi {
     private const val HeatColumns = 24
 
 
+    /**
+     * 块内二级标题前缀：必须与引擎 以 `▸ ` 开头的段位名 逐字一致。
+     * 第 26 轮起引擎把 31 个原子段位降级成这个前缀的小标题，弹窗/PNG 两侧各自识别。
+     */
+    private const val SUB_HEAD_PREFIX = "▸ "
+
     /** 键值行的判定阈值：与 PNG 导出（ChatAnalysisPng）同一套规则，弹窗与导图观感一致 */
     private const val KvMaxLineLen = 40
 
@@ -1882,6 +1929,10 @@ internal object ChatAnalysisUi {
             val t = line.trim()
             when {
                 t.isEmpty() -> out.add(ReportUnit.Gap)
+                t.startsWith(SUB_HEAD_PREFIX) -> {
+                    val name = t.removePrefix(SUB_HEAD_PREFIX).trim()
+                    if (name.isNotEmpty()) out.add(ReportUnit.SubSection(name))
+                }
                 t.startsWith("【") && t.endsWith("】") -> {
                     // 引擎每个段前已有一个空行（Gap），此处不再额外插 Gap，
                     // 分节间距统一由 SectionHeader / 分节卡片承担。
@@ -2138,9 +2189,15 @@ internal object ChatAnalysisUi {
      * 留在普通键值行里则两列对齐、完整可读。数字类指标（消息总数/百分比）才是网格的适用场景。
      */
     private val ReportBlock.isKpiLike: Boolean
-        get() = units.size >= 2 &&
-            units.all { it is ReportUnit.KeyValue } &&
-            units.count { it is ReportUnit.KeyValue && isNumericValue(it.value) } >= 2
+        get() {
+            // 第 26 轮：块内二级标题（SubSection）是排版标记、不是数据行，必须排除在
+            // 「整段是否纯键值」的判定之外 —— 否则【基础画像】这种"一个小标题 + 一排指标"
+            // 的块会从 KPI 大数字网格退化成两列散行，观感比凝练前更差。
+            val body = units.filter { it !is ReportUnit.SubSection }
+            return body.size >= 2 &&
+                body.all { it is ReportUnit.KeyValue } &&
+                body.count { it is ReportUnit.KeyValue && isNumericValue(it.value) } >= 2
+        }
 
     /**
      * 分节右侧计数徽章：KPI 段说"几项指标"，其余说"几行数据"（无内容则不显示徽章）。
@@ -2151,8 +2208,14 @@ internal object ChatAnalysisUi {
     @Composable
     private fun sectionBadge(block: ReportBlock): String? = when {
         block.units.isEmpty() -> null
-        block.isKpiLike -> stringResource(R.string.chat_analysis_badge_metrics, block.units.size)
-        else -> stringResource(R.string.chat_analysis_badge_rows, block.units.size)
+        block.isKpiLike -> stringResource(
+            R.string.chat_analysis_badge_metrics,
+            block.units.count { it !is ReportUnit.SubSection },
+        )
+        else -> stringResource(
+            R.string.chat_analysis_badge_rows,
+            block.units.count { it !is ReportUnit.SubSection },
+        )
     }
 
     /**
@@ -2243,7 +2306,9 @@ internal object ChatAnalysisUi {
             var n = 0
             blocks.map { b -> if (b.title != null) ++n else null }
         }
-        val rowCount = remember(units) { units.count { it !is ReportUnit.Gap } }
+        val rowCount = remember(units) {
+            units.count { it !is ReportUnit.Gap && it !is ReportUnit.SubSection }
+        }
 
         // 目录（快速跳转）：分节 ≥ 2 才值得给，1 节的报告加目录纯属噪音。
         val toc = remember(blocks) {
@@ -2308,6 +2373,11 @@ internal object ChatAnalysisUi {
                     // 判据与 PNG 导出（groupKpis / shapeBody）逐条对齐：弹窗里看到的图形，
                     // 保存出来的图片里就是同一张。
                     if (block.isKpiLike) {
+                        // 第 26 轮：KPI 网格只吃 KeyValue，块内二级标题必须单独先画出来，
+                        // 否则【基础画像】的「核心指标」小标题会在 KPI 分支里静默消失。
+                        for (unit in block.units) {
+                            if (unit is ReportUnit.SubSection) ReportUnitView(unit, blockAccent)
+                        }
                         KpiGrid(block.units.filterIsInstance<ReportUnit.KeyValue>(), blockAccent)
                     } else {
                         val runs = reportRuns(block.units)
@@ -2942,6 +3012,7 @@ internal object ChatAnalysisUi {
         when (unit) {
             is ReportUnit.Gap -> Unit
             is ReportUnit.Section -> SectionHeaderRow(title = unit.title, accent = accent)
+            is ReportUnit.SubSection -> SubSectionRow(title = unit.title, accent = accent)
             is ReportUnit.BarRow -> BarRowView(unit, accent)
             is ReportUnit.KeyValue -> KeyValueView(unit)
             is ReportUnit.WordChips -> WordChipsView(unit.words)

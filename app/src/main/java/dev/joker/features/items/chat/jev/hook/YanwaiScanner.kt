@@ -683,6 +683,14 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
     private fun submitIfNeeded(key: String, input: AnalysisInput): SubmitOutcome {
         if (submittedAt.containsKey(key) || MoodStore.isPending(key)) return SubmitOutcome.DONE
         if (MoodStore.get(key) != null) return SubmitOutcome.DONE
+        // 闸门（失败冷却 / 自动重投额度 / 队列容量）之前先试一次复用：
+        // SignalAnalyzer.submit() 里的复用短路排在这些闸门**之后**，只要队列恰好满着就永远
+        // 走不到 —— 表现就是「同一条消息换个上下文键后卡片一直加载不过来」。复用命中时
+        // 不发请求、不排队，直接算这一条已结清。
+        if (SignalAnalyzer.reuseExisting(input) != null) {
+            submittedAt.putIfAbsent(key, SystemClock.elapsedRealtime())
+            return SubmitOutcome.DONE
+        }
         // 失败过的消息**允许**自动重投，但要有冷却与次数上限（都在 SignalAnalyzer 里）。
         // 旧实现这里无条件 return，等于「失败一次就永久不再分析这一条」，与用户要求的
         // 「被选定的聊天每一条文本消息都要被分析」直接冲突。
@@ -890,6 +898,8 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
             messageId = messageIdOf(message),
             speaker = MessageMetadata.speaker(message),
             createdAt = runCatching { message.createTime }.getOrDefault(0L),
+            // 归属键在拿不到 msgId 时要靠原始内容区分消息（清洗后的 text 会把超长/图片消息压成同串）
+            rawContent = runCatching { message.content }.getOrDefault(""),
         )
         val note = if (MessagePolicy.textOrNull(text) == null) {
             JevText.get(R.string.jev_note_too_long, MessagePolicy.maxCharacters)

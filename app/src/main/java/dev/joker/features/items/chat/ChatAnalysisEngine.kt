@@ -726,9 +726,21 @@ object ChatAnalysisEngine {
                         // ---- 第 15 轮：@ 拆成两种口径（@ 了谁 / 其中 @ 的是不是我）----
                         // 判定条件与原来逐字等价，只是把「有没有 @」这一层单独记下来。
                         ex.atAny++
+                        // ---- 第 26 轮：【@与引用】维度需要的两个归因 ----
+                        // 都挂在已经判定为 @ 消息的这个分支里，全是 O(1) 计数 / map 自增，
+                        // 不新增一遍消息扫描、不查库；@所有人 复用这里必然要做的 contains 结果
+                        // （原来它只在"我"没被 @ 到时才会被求值，单独提出来只为让计数不依赖短路顺序）。
+                        val atAll = body.contains("所有人")
+                        if (atAll) ex.atAll++
+                        val senderAt = ex.atBySender[senderKey]
+                        if (senderAt != null) {
+                            ex.atBySender[senderKey] = senderAt + 1
+                        } else if (ex.atBySender.size < HABIT_MAX_SENDERS) {
+                            ex.atBySender[senderKey] = 1
+                        }
                         if ((myWxid.isNotEmpty() && body.contains(myWxid)) ||
                             (myNick.isNotEmpty() && body.contains(myNick)) ||
-                            body.contains("所有人")
+                            atAll
                         ) {
                             atMe++
                             ex.atMeEx++
@@ -1083,6 +1095,19 @@ object ChatAnalysisEngine {
         var atAny = 0
         var atMeEx = 0
 
+        // ---- 第 26 轮：【@与引用】维度（替代凝练掉的弱维度）----
+
+        /**
+         * 其中「@所有人」的次数。
+         *
+         * 为什么单独数：@所有人 与 @某个人 是两种完全不同的社交动作
+         * （一个是对着全群喊话，一个是点名），而老报告的「@ 提及次数」把两者混成一个数。
+         */
+        var atAll = 0
+
+        /** @ 人的归因计数（谁最常在群里点名别人）；键数上限 [HABIT_MAX_SENDERS] */
+        val atBySender = mutableMapOf<String, Int>()
+
         /** 引用回复（type 49 且含 refermsg 节点）条数 */
         var quoteMsgs = 0
 
@@ -1281,7 +1306,37 @@ object ChatAnalysisEngine {
     }
 
     // ==================================================================
-    // 本地统计报告（第 23 轮：25 个维度 / 25 个分节标题，一一对应）
+    // 维度凝练（第 26 轮）：25 个段位 → 10 个维度块
+    //
+    // 分两层标题，靠**字形**区分（两侧排版器都按行首识别，不走资源、不解析标题文本）：
+    //  - 一级：`【维度块名】` —— 一张卡片 = 一个维度，报告里的【】行数就是对外展示的维度数；
+    //  - 二级：`▸ 原子段位名` —— 块内的段位小标题，只分层、不计数（用户要的是"少而强"的维度，
+    //    原段位的读数一条都没删，只是收进了所属维度块里做二级标题）。
+    //
+    // 为什么用 `▸ `（U+25B8 + 半角空格）：它既不是 `【】`（不会被算成新维度），
+    // 也不含空格+纯数字（不会撞上 `^(\S+)\s+(\d+)$` 的分布行判据）、不含全角冒号
+    // （不会被当成指标行）、更不是 `█`（U+2588，条形行判据），所以在弹窗与 PNG 两侧
+    // 都会被稳稳地当成一行正文，再由我们主动按行首前缀给"小标题"样式。
+    // ==================================================================
+
+    /** 块内二级小标题的行首标记（引擎与两个排版器共用这一份约定） */
+    const val SUB_HEAD_PREFIX = "▸ "
+
+    /**
+     * 追加一行块头：一级用【】（计入维度数），二级用 [SUB_HEAD_PREFIX]（不计入）。
+     *
+     * 参数是块名与段位名两个字符串，而不是一个"模式"枚举：块名是凝练后的新名字、
+     * 段位名是凝练前的老名字，两个名字都要出现在报告里（老报告/AI 提示词里引用的还是老名字）。
+     */
+    private fun blockHead(r: StringBuilder, block: String): StringBuilder =
+        r.append("\n【").append(block).append("】\n")
+
+    /** 段位小标题：块内的一层（不带【】，不影响维度计数） */
+    private fun subHead(r: StringBuilder, name: String): StringBuilder =
+        r.append("\n").append(SUB_HEAD_PREFIX).append(name).append("\n")
+
+    // ==================================================================
+    // 本地统计报告数据来源
     //
     // 第 20 轮先把第 13~18 轮的 41 个段位整合成 25 个维度；第 23 轮按用户反馈再收一遍
     // （"分析项目太多"），并补两个新维度。这一版的关键性质是**分节标题数 = 维度数 = 25**：
@@ -1294,14 +1349,21 @@ object ChatAnalysisEngine {
     //     · 冷场与重启（冷场统计 + 谁先打破沉默 + 平均话题持续度，从【节奏与沉默】独立）。
     //
     //   核心 13 个（始终输出）：
-    //     1 核心指标 / 2 内容载体与表情（含分享物与链接密度）/ 3 活跃时段与热力 /
-    //     4 作息与昼夜（含每日开场与收尾）/ 5 回复时延热力 / 6 节奏与沉默 / 7 冷场与重启 /
-    //     8 消息长度画像 / 9 情绪与语气 / 10 高频词与口头禅 / 11 话题雷达与时段 /
-    //     12 发言排行与互动均衡度 / 13 特殊消息与互动
-    //   进阶 12 个（三个开关各管 4 个，默认全开）：
-    //     时间包：14 活跃日历与趋势 / 15 回应速度 / 16 活跃密度与连续 / 17 连击与轮次
-    //     关系包：18 接话·提问·默契 / 19 复读与重复 / 20 回复速度榜 / 21 个人作息雷达
-    //     语言包：22 情绪词雷达 / 23 打字习惯 / 24 约定与提醒 / 25 时段话量画像
+    // 【第 26 轮最终口径】对外展示 **10 个维度块**（用户要求"25 项太多，收敛到 10 项"）：
+    //   核心 7 块（始终输出）：
+    //     1 基础画像          ← 核心指标
+    //     2 内容与载体        ← 内容载体与分享 / 表情包（贴图）/ 表情符号（码点）/ 颜文字与通道对照
+    //     3 互动与点名        ← @与点名 / 引用与互动
+    //     4 时间节律          ← 活跃时段与热力 / 作息与昼夜 / 回复时延热力
+    //     5 节奏与冷场        ← 节奏与沉默 / 冷场与重启
+    //     6 语言与表达        ← 消息长度画像 / 情绪与语气 / 高频词与口头禅 / 话题雷达与时段
+    //     7 发言与互动        ← 发言排行与互动均衡度 / 互动均衡度 / 特殊消息与互动
+    //   进阶 3 块（三个开关各管 1 块，默认全开）：
+    //     8 进阶·时间与趋势   ← 活跃日历与趋势 / 回应速度 / 活跃密度与连续 / 连击与轮次
+    //     9 进阶·关系与习惯   ← 接话·提问·默契 / 复读与重复 / 回复速度榜 / 个人作息雷达
+    //    10 进阶·语言与习惯   ← 打字习惯 / 约定与提醒 / 时段话量画像 / 用词广度
+    //   原子段位一条没删，全部降为块内二级标题（[SUB_HEAD_PREFIX] 行首），
+    //   所以"对外维度数 = 报告里【】行数 = 10"在文本层、弹窗层、PNG 层同时成立。
     //
     // 排版铁律（弹窗 UI 与 PNG 导出各有一个**通用**解析器，两边的判据必须同时满足；
     // 这一段与第 14~18 轮逐字相同，整合时一行没改）：
@@ -1480,14 +1542,19 @@ object ChatAnalysisEngine {
         speakerCount: Int,
         nickCache: MutableMap<String, String>,
     ) {
-        r.append("【核心指标】\n")
+        blockHead(r, "基础画像")
+        subHead(r, "核心指标")
         r.append("消息总数：").append(totalAll).append(" 条（纯文本 ").append(textN).append(" 条）\n")
         if (isGroup) r.append("文本发言人数：").append(speakerCount).append("\n")
         else r.append("会话类型：私聊（我 / 对方）\n")
-        if (atMe > 0) r.append("被 @ 次数：").append(atMe).append("\n")
+        // 「被 @ 次数」第 26 轮搬到【@与引用】块：同一份读数只在它自己的维度里出现一次
+        // （atMe 参数保留，因为 @ 画像需要它）。
 
-        // ── 2) 内容载体与表情 ────────────────────────────────────────
-        r.append("\n【内容载体与表情】\n")
+        // ── 2) 内容载体与分享（小块内的二级标题）──────────────────────
+        // 老标题是【内容载体与表情】，第 26 轮改叫「内容载体与分享」：
+        // 表情符号那部分读数已经独立成【表情包画像】维度，留在本段的只剩"消息形态构成"。
+        blockHead(r, "内容与载体")
+        subHead(r, "内容载体与分享")
         val tk = topKeys(typeCount, 6)
         if (tk.isNotEmpty()) {
             val tMax = typeCount[tk[0]] ?: 1
@@ -1503,7 +1570,7 @@ object ChatAnalysisEngine {
             val mediaCount = picCount + (typeCount["语音"] ?: 0) + (typeCount["视频"] ?: 0) + emojiCount
             r.append("文字消息占比：").append(pct(textCount, totalAll)).append("%\n")
             r.append("媒体消息占比：").append(pct(mediaCount, totalAll)).append("%\n")
-            r.append("表情占比：").append(pct(emojiCount, totalAll)).append("%\n")
+            // 「表情占比」第 26 轮搬进【表情包画像】：表情是该维度的主角，不在载体段里再报一次
             r.append("图片占比：").append(pct(picCount, totalAll)).append("%\n")
             r.append("媒体与文字比 ").append(ratioText(mediaCount, textCount)).append("\n")
             r.append("载体鉴定 ").append(
@@ -1518,10 +1585,40 @@ object ChatAnalysisEngine {
             r.append("统计口径 该时段没有可统计的消息\n")
         }
         // ── 2B) 分享物与链接密度（第 22 轮维度，第 23 轮并入本段）──────────
-        // 与上面的载体分布读的是同一批 typeCount，合并后这张卡片就是完整的"用什么在说话"，
-        // 报告里的分节标题数也随之收敛到 25 个（= 对外展示的分析维度数）。
+        // 与上面的载体分布读的是同一批 typeCount，合并后这张卡片就是完整的"用什么在说话"。
         appendShareDensity(r, typeCount, totalAll)
-        // 表情符号排行（第 18 轮的口径原样保留：只统计正文里的 Unicode 表情码点）
+    }
+
+    /**
+     * 【表情包画像】正文（第 26 轮新增维度，替代被凝练掉的那批弱维度）。
+     *
+     * 为什么能算"独立维度"而不是重复读数：老报告把"表情"拆在两个地方各报一次 ——
+     * 【内容载体与表情】里报占比、【情绪与语气】里报颜文字率，谁也没把"贴图（表情包消息）、
+     * Unicode 表情符号、颜文字"当成同一条"表达通道"来对照。这一段把三种通道放在一起，
+     * 回答的问题变成"这段关系里，情绪是靠什么表情系统传递的"。
+     *
+     * 数据来源全部是主循环里就地累出来的既有数据（typeCount / ex.emoji* / ex.kaoMsgs），
+     * **不查库、不二次扫描消息**；这几条读数原本散落在两段里，第 26 轮只是搬过来并加了口径对照。
+     */
+    private fun appendEmojiPortrait(
+        r: StringBuilder,
+        ex: ExtraStats,
+        typeCount: Map<String, Int>,
+        totalAll: Int,
+        textN: Int,
+    ) {
+        val stickerMsgs = typeCount["表情"] ?: 0
+        if (totalAll <= 0) {
+            r.append("统计口径 该时段没有可统计的消息\n")
+            return
+        }
+        // 通道一：贴图 / 表情包消息（typeCount["表情"]，即消息类型表里的表情消息）
+        subHead(r, "表情包（贴图）")
+        r.append("表情消息：").append(stickerMsgs).append(" 条\n")
+        r.append("表情占比：").append(pct(stickerMsgs, totalAll)).append("%\n")
+        r.append("表情密度：").append(perThousand(stickerMsgs, totalAll)).append(" 次/千条\n")
+        // 通道二：正文里的 Unicode 表情符号（第 18 轮口径原样保留：只统计正文码点）
+        subHead(r, "表情符号（码点）")
         if (textN > 0) {
             r.append("表情总个数：").append(ex.emojiTotal).append(" 个\n")
             r.append("表情消息率：").append(pct(ex.emojiMsgsEx, textN)).append("%\n")
@@ -1538,18 +1635,93 @@ object ChatAnalysisEngine {
                     if (v <= 0) continue
                     r.append(k).append(' ').append(v).append(' ').append(bar(v, eMax, 16)).append("\n")
                 }
-                r.append("表情点评 ").append(
-                    when {
-                        ex.emojiTotal == 0 -> "纯文字聊天 一个表情都没用过"
-                        pct(ex.emojiMsgsEx, textN) >= 50 -> "表情是第二语言 一半以上的消息都带表情"
-                        ex.emojiTotal >= textN -> "表情比字还多 平均一条消息不止一个"
-                        else -> "表情点缀 该用的时候才用"
-                    }
-                ).append("\n")
             } else {
                 r.append("表情排行 没有出现 Unicode 表情符号\n")
             }
         }
+        // 通道三：颜文字（从【情绪与语气】整段搬来，那边只剩"文字情绪"的读法）
+        subHead(r, "颜文字与通道对照")
+        val kaoRate = if (textN > 0) pct(ex.kaoMsgs, textN) else 0
+        r.append("颜文字消息：").append(ex.kaoMsgs).append(" 条\n")
+        r.append("颜文字率：").append(kaoRate).append("%\n")
+        // 三通道对照：谁在用、用得多不多，一句总账
+        r.append("表达通道 贴图 ").append(stickerMsgs).append(" 条 / 表情符号 ")
+            .append(ex.emojiTotal).append(" 个 / 颜文字 ").append(ex.kaoMsgs).append(" 条\n")
+        r.append("表情点评 ").append(
+            when {
+                stickerMsgs + ex.emojiTotal + ex.kaoMsgs == 0 -> "纯文字聊天 一个表情都没用过"
+                ex.emojiTotal == 0 && stickerMsgs == 0 -> "只靠颜文字表达情绪"
+                pct(ex.emojiMsgsEx, textN.coerceAtLeast(1)) >= 50 -> "表情是第二语言 一半以上的消息都带表情"
+                stickerMsgs >= textN.coerceAtLeast(1) -> "表情包比字还多 能发表情绝不打字"
+                ex.emojiTotal >= textN.coerceAtLeast(1) -> "表情比字还多 平均一条消息不止一个"
+                else -> "表情点缀 该用的时候才用"
+            }
+        ).append("\n")
+    }
+
+    /**
+     * 【@与引用】正文（第 26 轮新增的第二个独立维度）。
+     *
+     * 为什么独立：@ 与引用是**点名型互动**，社交含义与"转账红包撤回"完全不同 ——
+     * 前者回答"谁在主动把话递到某个人手上"，后者回答"发生过哪些事件"。老报告把两者
+     * 塞在同一段里，于是"@ 提及次数"这种读数被系统消息淹没。
+     *
+     * 数据来源：全部是主循环已经就地累出来的读数（ex.atAny / ex.atMeEx / ex.atAll /
+     * ex.quoteMsgs / 新增的 ex.atBySender），**不查库、不二次扫描**。其中 atBySender 是
+     * 主循环里那个"是不是 @ 消息"的分支里顺手做的 O(1) 归因，不是新的一轮遍历。
+     */
+    private fun appendAtPortrait(
+        r: StringBuilder,
+        ex: ExtraStats,
+        talker: String,
+        isGroup: Boolean,
+        textN: Int,
+        totalAll: Int,
+        atMe: Int,
+        nickCache: MutableMap<String, String>,
+    ) {
+        if (totalAll <= 0) {
+            r.append("统计口径 该时段没有可统计的消息\n")
+            return
+        }
+        blockHead(r, "互动与点名")
+        subHead(r, "@与点名")
+        r.append("@提及次数：").append(ex.atAny).append(" 次\n")
+        // 被 @ 到：@ 消息里点到"我"（我的 wxid / 昵称，或全体）的条数
+        r.append("被 @ 到：").append(atMe).append(" 次\n")
+        r.append("喊全体：").append(ex.atAll).append(" 次\n")
+        r.append("@密度：").append(perThousand(ex.atAny, totalAll)).append(" 次/千条\n")
+        if (textN > 0 && ex.atAny > 0) {
+            r.append("点名占文本：").append(pct(ex.atAny, textN)).append("%\n")
+        }
+        val askers = topKeys(ex.atBySender, 8)
+        if (isGroup && askers.isNotEmpty()) {
+            r.append("点名榜 谁最常 @ 人\n")
+            val aMax = (ex.atBySender[askers[0]] ?: 1).coerceAtLeast(1)
+            for ((i, k) in askers.withIndex()) {
+                val v = ex.atBySender[k] ?: 0
+                if (v <= 0) continue
+                val dn = textSafe(speakerDisplayName(k, talker, isGroup, nickCache))
+                r.append(i + 1).append(". ").append(dn).append("：").append(v).append(" 次 ")
+                    .append(bar(v, aMax, 16)).append("\n")
+            }
+        }
+        subHead(r, "引用与互动")
+        r.append("引用回复：").append(ex.quoteMsgs).append(" 条\n")
+        // 分母用纯文本条数：@ 和引用都只能发生在文字消息上，拿全部消息当分母会低估
+        if (textN > 0) {
+            r.append("互动消息占比：").append(pct(ex.atAny + ex.quoteMsgs, textN)).append("%\n")
+            r.append("互动消息：").append(ex.atAny + ex.quoteMsgs).append(" 条\n")
+        }
+        r.append("点名点评 ").append(
+            when {
+                ex.atAny + ex.quoteMsgs == 0 -> "既不 @ 人也不引用 全靠正文接话"
+                ex.atAny > 0 && ex.atAny == ex.atAll -> "只会喊全体 从不单独点名"
+                atMe > 0 && pct(atMe, ex.atAny) >= 50 -> "常被点名 群里的话题中心"
+                pct(ex.atAny + ex.quoteMsgs, textN.coerceAtLeast(1)) >= 10 -> "@ 与引用用得很勤 点名型选手"
+                else -> "@ 与引用不多 自然接话型"
+            }
+        ).append("\n")
     }
 
     // ---------------- 核心 3~4：活跃时段与热力 / 作息与昼夜 ----------------
@@ -1626,7 +1798,8 @@ object ChatAnalysisEngine {
         // 这样"分节标题数 = 对外展示的分析维度数 = 25"在报告文本层就成立。
 
         // ── 3) 活跃时段分布 ─────────────────────────────────────────
-        r.append("\n【活跃时段与热力】\n")
+        blockHead(r, "时间节律")
+        subHead(r, "活跃时段与热力")
         if (totalAll > 0) {
             r.append("最活跃时段：").append(hPeak).append(" 点（").append(hMax).append(" 条）\n")
             r.append("活跃小时数：").append(ex.activeHours).append(" 个\n")
@@ -1682,7 +1855,7 @@ object ChatAnalysisEngine {
         r.append("\n")
 
         // ── 5) 作息与昼夜 ───────────────────────────────────────────
-        r.append("\n【作息与昼夜】\n")
+        subHead(r, "作息与昼夜")
         if (totalAll > 0) {
             r.append("深夜 0-5 点：").append(pct(deepNight, totalAll)).append("%\n")
             r.append("白天 6-17 点：").append(pct(daytime, totalAll)).append("%\n")
@@ -1837,7 +2010,7 @@ object ChatAnalysisEngine {
      * 也就是用户要的"回复时延热力 / 昼夜节律"。
      */
     private fun appendCoreLatency(r: StringBuilder, ex: ExtraStats) {
-        r.append("\n【回复时延热力】\n")
+        subHead(r, "回复时延热力")
         var covered = 0
         var fastH = -1
         var slowH = -1
@@ -1959,7 +2132,8 @@ object ChatAnalysisEngine {
         longestFromKey: String,
         nickCache: MutableMap<String, String>,
     ) {
-        r.append("\n【节奏与沉默】\n")
+        blockHead(r, "节奏与冷场")
+        subHead(r, "节奏与沉默")
         if (gapCount > 0) {
             r.append("平均间隔：").append(humanDuration(gapSum / gapCount)).append("\n")
         }
@@ -2014,7 +2188,7 @@ object ChatAnalysisEngine {
         maxGapMs: Long,
         nickCache: MutableMap<String, String>,
     ) {
-        r.append("\n【冷场与重启】\n")
+        subHead(r, "冷场与重启")
         val topicCount = ex.silentBreaks + 1
         if (maxGapMs > 0L) {
             r.append("最长冷场：").append(humanDuration(maxGapMs)).append("\n")
@@ -2143,7 +2317,8 @@ object ChatAnalysisEngine {
         nickCache: MutableMap<String, String>,
     ) {
         // ── 7) 消息长度画像 ─────────────────────────────────────────
-        r.append("\n【消息长度画像】\n")
+        blockHead(r, "语言与表达")
+        subHead(r, "消息长度画像")
         if (textN > 0) {
             r.append("平均字数：").append((ex.lenSum.toDouble() / textN).roundToInt()).append(" 字\n")
             r.append("短句占比：").append(pct(lenShort, textN)).append("%\n")
@@ -2210,7 +2385,7 @@ object ChatAnalysisEngine {
         }
 
         // ── 8) 情绪与语气（消息级命中 + 每百字密度，两种口径互补）──
-        r.append("\n【情绪与语气】\n")
+        subHead(r, "情绪与语气")
         if (textN > 0) {
             r.append("哈哈哈浓度：").append(pct(laugh, textN)).append("%\n")
             r.append("疑问句比例：").append(pct(question, textN)).append("%\n")
@@ -2229,7 +2404,8 @@ object ChatAnalysisEngine {
             r.append("波浪号密度：").append(oneDecimal(wD)).append(" /百字\n")
             r.append("字母占比：").append(pct(ex.letterChars, ex.charTotal)).append("%\n")
             r.append("表情符号率：").append(pct(ex.emojiMsgs, textN)).append("%\n")
-            r.append("颜文字率：").append(pct(ex.kaoMsgs, textN)).append("%\n")
+            // 「颜文字率」第 26 轮搬进【表情包画像】（三条表达通道要在同一处对照才有意义），
+            // 本段保留的是"文字情绪"的读法：标点密度 + 情绪词命中率。
             r.append("语气倾向：").append(toneTrend(qD, eD, lD, wD, ex, textN)).append("\n")
         } else if (textN == 0) {
             r.append("标点统计：无可用正文\n")
@@ -2271,7 +2447,7 @@ object ChatAnalysisEngine {
         }
 
         // ── 9) 高频词与口头禅 ───────────────────────────────────────
-        r.append("\n【高频词与口头禅】\n")
+        subHead(r, "高频词与口头禅")
         if (wordMap.isNotEmpty()) {
             val wk = topKeys(wordMap, 12)
             // 词频行：整行只允许 `词×次数`（两侧解析器靠这一点认出标签云）
@@ -2326,7 +2502,7 @@ object ChatAnalysisEngine {
         showRank: Boolean,
     ) {
         // ── 10) 话题雷达与时段 ──────────────────────────────────────
-        r.append("\n【话题雷达与时段】\n")
+        subHead(r, "话题雷达与时段")
         if (textN > 0) {
             r.append("话题浓度：").append(pct(ex.topicMsgs, textN)).append("%\n")
             val top = topKeys(ex.topic, 12)
@@ -2385,13 +2561,14 @@ object ChatAnalysisEngine {
             r.append("统计口径 该时段没有文字消息\n")
         }
 
+        blockHead(r, "发言与互动")
+
         // ── 11) 发言排行与互动均衡度 ────────────────────────────────
         // 第 23 轮：原【发言排行】与【互动均衡度】两张卡片合成一张 —— 排行是绝对量、
         // 均衡度是占比，读的是同一份 rank 数据，分开列只会重复（也是"分析项目太多"的来源之一）。
         if (showRank) {
-            r.append("\n").append(
-                if (isGroup) "【发言排行与互动均衡度】" else "【发言对比与均衡度】"
-            ).append("\n")
+            // 第 26 轮起这只是块内二级标题：维度块叫【话题与互动】，本段是它的"谁在说话"一层
+            subHead(r, if (isGroup) "发言排行与互动均衡度" else "发言对比与均衡度")
             val rk = topKeys(rank, 10)
             if (rk.isNotEmpty()) {
                 val rMax = rank[rk[0]] ?: 1
@@ -2404,9 +2581,9 @@ object ChatAnalysisEngine {
             }
         }
         if (!showRank) {
-            // showRank = false 时排行整段不输出，均衡度必须自己带标题，
-            // 否则会被并进上一张卡片（【话题雷达与时段】），标题与内容就对不上了。
-            r.append("\n【互动均衡度】\n")
+            // 排行整段不输出时，均衡度必须自己带一行小标题，
+            // 否则这批示数会直接接在上一段（话题雷达）后面，读不出换了一层。
+            subHead(r, "互动均衡度")
         }
         // 第 22 轮：把原【互动平衡】收敛进【互动均衡度】—— 原有的占比/条数比/平衡度全部保留，
         // 另外补一个**基尼系数**（纯由 rank 推导，不额外扫描）来回答"话量到底有多集中"。
@@ -2453,20 +2630,10 @@ object ChatAnalysisEngine {
         }
 
         // ── 12) 特殊消息与互动 ──────────────────────────────────────
-        r.append("\n【特殊消息与互动】\n")
-        if (textN > 0) {
-            r.append("@提及次数：").append(ex.atAny).append(" 次\n")
-            r.append("其中@我：").append(ex.atMeEx).append(" 次\n")
-            r.append("引用回复：").append(ex.quoteMsgs).append(" 条\n")
-            r.append("互动消息占比：").append(pct(ex.atAny + ex.quoteMsgs, textN)).append("%\n")
-            r.append("互动点评 ").append(
-                when {
-                    ex.atAny + ex.quoteMsgs == 0 -> "既不 @ 人也不引用，全靠正文接话"
-                    pct(ex.atAny + ex.quoteMsgs, textN) >= 10 -> "@ 与引用用得很勤，点名型选手"
-                    else -> "@ 与引用不多，自然接话型"
-                }
-            ).append("\n")
-        }
+        // 第 26 轮：原属本段的 @ / 引用那几条读数（@提及次数 / 引用回复 / 互动消息占比 / 互动点评）
+        // 整块搬进新增的【@与引用】维度块 —— 它们是"点名与引用"这件事的读数，
+        // 与"转账红包撤回"不是一回事，混在一段里正是原来"维度虚多"的原因。
+        subHead(r, "特殊消息与互动")
         if (totalAll > 0) {
             val transfer = typeCount["转账"] ?: 0
             val redPacket = typeCount["红包"] ?: 0
@@ -2532,9 +2699,11 @@ object ChatAnalysisEngine {
         weekday: IntArray,
         nickCache: MutableMap<String, String>,
     ) {
+        blockHead(r, "进阶·时间与趋势")
+
         // ── 14) 活跃日历与趋势 ──────────────────────────────────────
         if (weekday.sum() > 0) {
-            r.append("\n【活跃日历与趋势】\n")
+            subHead(r, "活跃日历与趋势")
             val wMax = weekday.max()
             for (i in 0 until 7) {
                 r.append(DAY_NAMES[i]).append(" ").append(weekday[i]).append(" ")
@@ -2582,7 +2751,7 @@ object ChatAnalysisEngine {
         }
 
         // ── 15) 回应速度 ────────────────────────────────────────────
-        r.append("\n【回应速度】\n")
+        subHead(r, "回应速度")
         if (ex.replyGapCount > 0) {
             val half = (ex.replyGapCount + 1) / 2
             var acc = 0
@@ -2630,7 +2799,7 @@ object ChatAnalysisEngine {
         }
 
         // ── 16) 活跃密度与连续 ──────────────────────────────────────
-        r.append("\n【活跃密度与连续】\n")
+        subHead(r, "活跃密度与连续")
         if (ex.activeDays > 0) {
             val perDay = if (ex.activeDays > 0) totalAll / ex.activeDays else 0
             r.append("日均条数：").append(perDay).append(" 条\n")
@@ -2666,7 +2835,7 @@ object ChatAnalysisEngine {
         }
 
         // ── 17) 连击与轮次 ──────────────────────────────────────────
-        r.append("\n【连击与轮次】\n")
+        subHead(r, "连击与轮次")
         if (textN > 0) {
             val turns = if (ex.turns > 0) ex.turns else 1
             r.append("最长连击：").append(ex.streakMax).append(" 条\n")
@@ -2725,8 +2894,10 @@ object ChatAnalysisEngine {
         textN: Int,
         nickCache: MutableMap<String, String>,
     ) {
+        blockHead(r, "进阶·关系与习惯")
+
         // ── 18) 接话·提问·默契 ──────────────────────────────────────
-        r.append("\n【接话·提问·默契】\n")
+        subHead(r, "接话·提问·默契")
         if (ex.turnsAttributed > 0) {
             r.append("接话次数：").append(ex.turnsAttributed).append(" 次\n")
             r.append("我的被接话：").append(ex.myFetched).append(" 次\n")
@@ -2812,7 +2983,7 @@ object ChatAnalysisEngine {
         }
 
         // ── 19) 复读与重复 ──────────────────────────────────────────
-        r.append("\n【复读与重复】\n")
+        subHead(r, "复读与重复")
         if (textN > 0) {
             r.append("复读次数：").append(ex.repeatMsgs).append(" 次\n")
             r.append("复读率：").append(pct(ex.repeatMsgs, textN)).append("%\n")
@@ -2833,7 +3004,7 @@ object ChatAnalysisEngine {
         }
 
         // ── 20) 回复速度榜（新）────────────────────────────────────
-        r.append("\n【回复速度榜】\n")
+        subHead(r, "回复速度榜")
         if (ex.replyMsCntBySender.size >= 2 && ex.replyGapCount > 0) {
             val avgSec = mutableMapOf<String, Int>()
             for ((k, c) in ex.replyMsCntBySender) {
@@ -2884,7 +3055,7 @@ object ChatAnalysisEngine {
         }
 
         // ── 21) 个人作息雷达（新）──────────────────────────────────
-        r.append("\n【个人作息雷达】\n")
+        subHead(r, "个人作息雷达")
         if (ex.hourBySender.isNotEmpty() && textN > 0) {
             val people = topKeys(ex.rankTexts, 12).filter { ex.hourBySender.containsKey(it) }.take(6)
             r.append("统计人数：").append(people.size).append(" 人\n")
@@ -2957,8 +3128,10 @@ object ChatAnalysisEngine {
         textN: Int,
         wordMap: Map<String, Int>,
     ) {
+        blockHead(r, "进阶·语言与习惯")
+
         // ── 22) 打字习惯 ──────────────────────────────────────────
-        r.append("\n【打字习惯】\n")
+        subHead(r, "打字习惯")
         if (textN > 0) {
             r.append("无标点消息：").append(pct(ex.typNoPunct, textN)).append("%\n")
             r.append("全角标点率：").append(pct(ex.typFullPunct, textN)).append("%\n")
@@ -2979,7 +3152,7 @@ object ChatAnalysisEngine {
         }
 
         // ── 23) 约定与提醒 ────────────────────────────────────────
-        r.append("\n【约定与提醒】\n")
+        subHead(r, "约定与提醒")
         if (textN > 0) {
             r.append("约定词命中率：").append(pct(ex.apptMsgs, textN)).append("%\n")
             r.append("命中消息数：").append(ex.apptMsgs).append(" 条\n")
@@ -3010,7 +3183,7 @@ object ChatAnalysisEngine {
         }
 
         // ── 24) 时段话量画像 ──────────────────────────────────────
-        r.append("\n【时段话量画像】\n")
+        subHead(r, "时段话量画像")
         if (textN > 0) {
             val avg = IntArray(24)
             var peakH = 0
@@ -3052,7 +3225,7 @@ object ChatAnalysisEngine {
         // 与核心【高频词与口头禅】用的是同一份全量词频表，但回答的是另一个问题：
         // 那边给"最常说的是哪几个词"（TopN 词表），这里给"用词到底散不散"
         // （独立词种 / 总词次 / 集中度）。同一份统计的两种读法，信息不重复。
-        r.append("\n【用词广度】\n")
+        subHead(r, "用词广度")
         if (textN > 0 && wordMap.isNotEmpty()) {
             var wordTotal = 0
             for (v in wordMap.values) wordTotal += v
@@ -3338,6 +3511,15 @@ object ChatAnalysisEngine {
         val t = (v * 10.0).roundToInt()
         return (t / 10).toString() + "." + (t % 10)
     }
+
+    /**
+     * 每千条密度（第 26 轮新增）：`@提及密度`、`表情密度` 这类稀疏事件的读数。
+     *
+     * 为什么不用百分比：群里 12 条 @ 摊到 1 万条消息上是 0.1%，四种不同活跃度的群
+     * 全都显示 0.1%，比不出差别；换成"每千条多少次"才有分辨率。
+     */
+    private fun perThousand(part: Int, total: Int): String =
+        if (total <= 0) "0" else oneDecimal(part.toDouble() * 1000.0 / total.toDouble())
 
     /** 比值文本：以较小的一方为 1；任一方为 0 时直接给整数比 */
     private fun ratioText(a: Int, b: Int): String {

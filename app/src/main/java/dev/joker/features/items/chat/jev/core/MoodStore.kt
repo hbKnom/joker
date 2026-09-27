@@ -134,6 +134,66 @@ object MoodStore {
     }
     private val reused = AtomicInteger()
 
+    /**
+     * 「消息身份 → 结论」的**无锁索引**，只服务渲染热路径（[moodFor]）。
+     *
+     * 为什么不用上面的 [reuse]：它是 `LinkedHashMap` + `synchronized`，而且查它之前
+     * 还要先算一遍**内容身份**（SHA-256 整段上下文）。渲染路径是「每屏十几张卡、每秒
+     * 几十次 bind，外加每帧绘制」，在那里做哈希 + 抢锁会直接把绘制帧拖长。
+     * 这里是一次 `ConcurrentHashMap` 取值，命中成本与一次普通 map 查一样。
+     *
+     * 容量：只服务「当前这几段会话的反复绑定」，超过上限整体清一次即可（丢弃的只是
+     * 复用线索，结论本体仍在 [cache] 里，最坏情况是一次多余的复用查询）。
+     */
+    private val identityIndex = ConcurrentHashMap<String, Mood>()
+    private const val IDENTITY_INDEX_LIMIT = 1024
+
+    /**
+     * 已经在跑的**消息身份**（`identity` → 开始时刻）。
+     *
+     * 第 27 轮修的「同一条消息被分析两次」：结论键带上下文，所以一条消息在重绑之后会
+     * 得到一个新键；在旧键的请求**还没回来**的时候，新键查不到任何结论（复用索引只在
+     * 成功之后才写入），于是被当成「没人分析过」重新提交 —— 同一条消息两份请求、
+     * 队列被自己占满、用户看到「总也加载不过来」。
+     *
+     * 这里按身份（与上下文无关）认领：同一条消息同一时间只允许一个请求在跑。
+     * 带时间戳是为了兜底：万一某条请求的收尾路径没跑到（进程里的极端情况），
+     * 超过 [IN_FLIGHT_STALE_MS] 之后这条身份会被视为空闲，不会永久卡住。
+     */
+    private val inFlight = ConcurrentHashMap<String, Long>()
+
+    /** 单条分析的硬上限是 70s（[dev.joker.features.items.chat.jev.analysis.SignalAnalyzer.TIMEOUT_MS]），
+     *  超时后再留一点余量，之后这个身份就允许重新提交。 */
+    private const val IN_FLIGHT_STALE_MS = 100_000L
+
+    /** 尝试按消息身份认领一次分析；返回 false 表示这条消息已经有一个请求在跑。 */
+    fun beginInFlight(identity: String, now: Long = System.currentTimeMillis()): Boolean {
+        if (identity.isEmpty()) return true
+        sweepInFlight(now)
+        return inFlight.putIfAbsent(identity, now) == null
+    }
+
+    /** 收尾（成功/失败/中止/清空）时释放身份认领，否则这条消息再也提交不上。 */
+    fun endInFlight(identity: String) {
+        if (identity.isEmpty()) return
+        inFlight.remove(identity)
+    }
+
+    /** 是否有一条同身份的请求在跑（设置页/诊断用，不产生副作用）。 */
+    fun isInFlight(identity: String, now: Long = System.currentTimeMillis()): Boolean {
+        val at = inFlight[identity] ?: return false
+        if (now - at > IN_FLIGHT_STALE_MS) {
+            inFlight.remove(identity, at)
+            return false
+        }
+        return true
+    }
+
+    private fun sweepInFlight(now: Long) {
+        if (inFlight.isEmpty()) return
+        inFlight.forEach { (key, at) -> if (now - at > IN_FLIGHT_STALE_MS) inFlight.remove(key, at) }
+    }
+
     /** 记下一次复用命中（设置页/诊断用）。 */
     fun markReused() { reused.incrementAndGet() }
 
@@ -142,24 +202,45 @@ object MoodStore {
 
     /** 记下一条结论的两种身份，供后续同消息/同文本直接复用。 */
     fun rememberReuse(input: AnalysisInput, mood: Mood) {
+        // 无锁索引先写：渲染路径只读它，写早于读才能让「结论刚到就重绑」的一帧也命中
+        val identity = input.identity
+        if (identity.isNotEmpty()) {
+            if (identityIndex.size >= IDENTITY_INDEX_LIMIT) identityIndex.clear()
+            identityIndex[identity] = mood
+        }
         runCatching {
             synchronized(reuse) {
-                reuse["i:${input.identity}"] = mood
+                reuse["i:$identity"] = mood
                 reuse["c:${contentIdentity(input)}"] = mood
             }
         }
     }
 
     /**
+     * 渲染路径的结论查询：**先查结论键（O(1)、无哈希），再查消息身份（无锁索引）**。
+     *
+     * 绝不能在内层再退回「内容身份」那一路（SHA-256 整段上下文 + 抢锁）：那正是
+     * 「卡片按上下文换人、每次重绑都重排一遍」的老毛病。内容身份只在 [settledMood]
+     * （提交路径，低频）里用。
+     */
+    fun moodFor(input: AnalysisInput): Mood? =
+        cache[input.key] ?: if (input.identity.isEmpty()) null else identityIndex[input.identity]
+
+    /**
      * 已经有结论时直接返回（不再打模型），没有则 null。
      *
      * 顺序：结论键 → 同一条消息 → 相同文本（相同上下文）。
+     *
+     * 注意「同一条消息」那一步**不要**先算内容身份：内容身份的哈希是整段上下文，
+     * 属于提交路径（每秒最多几条），但能省则省 —— 身份索引命中时直接返回。
      */
     fun settledMood(input: AnalysisInput): Mood? {
         cache[input.key]?.let { return it }
+        val identity = input.identity
+        identityIndex[identity]?.let { return it }
         return runCatching {
             synchronized(reuse) {
-                reuse["i:${input.identity}"] ?: reuse["c:${contentIdentity(input)}"]
+                reuse["i:$identity"] ?: reuse["c:${contentIdentity(input)}"]
             }
         }.getOrNull()
     }
@@ -211,6 +292,76 @@ object MoodStore {
 
     /** 成功数 / 失败数（自本次进程启动起算），设置页用它显示运行状态。 */
     fun stats(): Pair<Int, Int> = completed.get() to failed.get()
+
+    // ------------------------------------------------------------------ 本次运行覆盖度（第 27 轮扩展）
+
+    /**
+     * 一个会话在**本次运行**里的覆盖度。
+     *
+     * [submitted] = 真正发出去的请求条数（按消息身份去重后的近似值）；
+     * [settled] = 已经结清的条数（成功、可见失败、看门狗结清都算）。
+     * `submitted - settled` 就是「还在路上」的条数。
+     *
+     * 这是用户要求「确保被选定的聊天每一条文本消息都被正常分析」的**可核对依据**：
+     * 打开会话翻到底 → 回到设置页看这一段，如果 [submitted] 远少于你看到的文本消息数，
+     * 那就是采集端漏了（而不是模型慢）。
+     *
+     * 只做近似记账（不保存每条消息的身份集合）：目的是给用户一个量级判断，
+     * 而不是审计账本；因此内存占用与会话数×2 个 Int 同级。
+     */
+    data class Coverage(val talker: String, val submitted: Int, val settled: Int)
+
+    private class Counter {
+        @Volatile var submitted: Int = 0
+        @Volatile var settled: Int = 0
+    }
+
+    private val coverage = ConcurrentHashMap<String, Counter>()
+
+    /** 同时统计的会话数上限：超过整体清一次（覆盖度是「最近这段运行」的观察窗口）。 */
+    private const val COVERAGE_TALKER_LIMIT = 64
+
+    /** 记一条「已提交分析」（调用点必须保证同一条消息不会重复记账）。 */
+    fun markSubmitted(talker: String) {
+        if (talker.isBlank()) return
+        counterOf(talker).submitted++
+    }
+
+    /** 记一条「已结清」（成功 / 可见失败 / 看门狗结清）。 */
+    fun markSettled(talker: String) {
+        if (talker.isBlank()) return
+        counterOf(talker).settled++
+    }
+
+    private fun counterOf(talker: String): Counter {
+        coverage[talker]?.let { return it }
+        if (coverage.size >= COVERAGE_TALKER_LIMIT) coverage.clear()
+        return coverage.getOrPut(talker) { Counter() }
+    }
+
+    /** 某个会话的覆盖度（没记过就返回 null）。 */
+    fun coverageOf(talker: String): Coverage? =
+        coverage[talker]?.let { Coverage(talker, it.submitted, it.settled) }
+
+    /** 覆盖度快照：按「结清条数」降序，供设置页展示。 */
+    fun coverageSnapshot(limit: Int = 10): List<Coverage> =
+        coverage.map { (talker, c) -> Coverage(talker, c.submitted, c.settled) }
+            .filter { it.submitted > 0 }
+            .sortedByDescending { it.submitted }
+            .take(limit)
+
+    /** 总提交 / 总结清（设置页一行总览用）。 */
+    fun coverageTotal(): Pair<Int, Int> {
+        var submitted = 0
+        var settled = 0
+        coverage.values.forEach { submitted += it.submitted; settled += it.settled }
+        return submitted to settled
+    }
+
+    /** 清空覆盖度记账（设置页的「清空结果」与模块重置一起走）。 */
+    fun clearCoverage() {
+        coverage.clear()
+    }
 
     // ------------------------------------------------------------------ 走势
 
@@ -300,6 +451,9 @@ object MoodStore {
         trendVersions.clear()
         inserted.clear()
         synchronized(reuse) { reuse.clear() }
+        identityIndex.clear()
+        inFlight.clear()
+        clearCoverage()
         reused.set(0)
         completed.set(0)
         failed.set(0)
@@ -310,6 +464,11 @@ object MoodStore {
         cache.clear()
         pending.clear()
         synchronized(reuse) { reuse.clear() }
+        identityIndex.clear()
+        // 正在跑的身份认领也要放开：用户点「清空结果，重新分析」的意图就是「重来一遍」，
+        // 留着认领会让那几条消息在 100 秒内再也提交不上（看起来就是「清空了还是不分析」）。
+        inFlight.clear()
+        clearCoverage()
     }
 }
 
