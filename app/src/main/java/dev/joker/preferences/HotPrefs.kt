@@ -60,6 +60,32 @@ object HotPrefs {
         return value
     }
 
+    fun float(key: String, defaultValue: Float): Float {
+        val now = System.currentTimeMillis()
+        cache[key]?.let { if (now < it.expiresAtMillis) return it.value as? Float ?: defaultValue }
+
+        val value = try {
+            WePrefs.getFloatOrDef(key, defaultValue)
+        } catch (_: Throwable) {
+            defaultValue
+        }
+        put(key, value, now)
+        return value
+    }
+
+    fun stringSet(key: String, defaultValue: Set<String>): Set<String> {
+        val now = System.currentTimeMillis()
+        cache[key]?.let { if (now < it.expiresAtMillis) return it.value as? Set<String> ?: defaultValue }
+
+        val value = try {
+            WePrefs.getStringSetOrDef(key, defaultValue)
+        } catch (_: Throwable) {
+            defaultValue
+        }
+        put(key, value, now)
+        return value
+    }
+
     fun string(key: String, defaultValue: String): String {
         val now = System.currentTimeMillis()
         cache[key]?.let { if (now < it.expiresAtMillis) return it.value as? String ?: defaultValue }
@@ -108,6 +134,16 @@ fun hotPrefOption(key: String, defValue: Int): ReadWriteProperty<Any?, Int> =
 
         override fun setValue(thisRef: Any?, property: KProperty<*>, value: Int) {
             WePrefs.putInt(key, value)
+            HotPrefs.invalidate(key)
+        }
+    }
+
+fun hotPrefOption(key: String, defValue: Float): ReadWriteProperty<Any?, Float> =
+    object : ReadWriteProperty<Any?, Float> {
+        override fun getValue(thisRef: Any?, property: KProperty<*>): Float = HotPrefs.float(key, defValue)
+
+        override fun setValue(thisRef: Any?, property: KProperty<*>, value: Float) {
+            WePrefs.putFloat(key, value)
             HotPrefs.invalidate(key)
         }
     }

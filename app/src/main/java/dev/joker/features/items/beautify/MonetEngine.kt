@@ -15,6 +15,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.os.Process
+import android.os.SystemClock
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
@@ -58,6 +59,7 @@ import dev.joker.utils.HostInfo
 import dev.joker.utils.WeLogger
 import dev.joker.utils.fs.KnownPaths
 import dev.joker.utils.monet.MonetApkResourceGraphLoader
+import dev.joker.utils.monet.MonetArscScanner
 import dev.joker.utils.monet.MonetBindings
 import dev.joker.utils.monet.MonetBubbleStyle
 import dev.joker.utils.monet.MonetColors
@@ -300,7 +302,7 @@ object MonetEngine : ClickableFeature() {
         //    实机反馈「解析正常、包 applied、取色/圆角/角标一律原生」的最可疑点就在这里：
         //    loader 只挂在 application.resources 上，而真正渲染界面的那批 Resources 未必
         //    与之共享同一个 ResourcesImpl（宿主的 Activity 会按自己的 config/主题另建 impl）。
-        ActivityResourceHooks.register { attachRuntimeLoader(it) }
+        ActivityResourceHooks.register(activityResourceCallback)
         // ① 先把色板发给「Joker 自己注入进微信界面」的组件。这一步只读系统的 Material You
         //    token（android.R.color.system_*），**不依赖宿主资源解析**，所以即使解析失败、
         //    被熔断跳过、或用户在解析期间还在用微信，注入界面也能拿到莫奈色 ——
@@ -329,11 +331,28 @@ object MonetEngine : ClickableFeature() {
     }
 
     override fun onDisable() {
+        // 【2026-09-27】关掉莫奈必须**真的摘干净**：旧实现只清状态字段，覆盖包还挂在
+        // application/各个 Activity 的 Resources 上，用户得重启微信才回得去。
+        ActivityResourceHooks.unregister(activityResourceCallback)
+        detachLastApplied()
         _progress.value = null
         _result.value = null
-        _runtimePackage.value = null
         // 注入界面的配色跟着一起熄火，避免「原生已经回到旧配色、Joker 组件还是莫奈色」的反向割裂
         MonetColors.applied.value = null
+    }
+
+    /**
+     * 注册给 [ActivityResourceHooks] 的具名回调。
+     *
+     * 必须是**稳定的单个引用**（不能每次 `register { }` 传新 lambda），否则 `onDisable()`
+     * 里的反注册摘不掉它 —— 用户每关开一次莫奈就会多留一个永久回调。
+     */
+    private val activityResourceCallback: (Activity) -> Unit = { activity ->
+        val resources = activity.resources
+        if (resources != null) {
+            runCatching { attachRuntimeLoader(resources, activity.javaClass.name) }
+                .onFailure { WeLogger.w(TAG, "attach on activity create failed", it) }
+        }
     }
 
     override fun onClick(context: ComponentActivity) {
@@ -417,40 +436,64 @@ object MonetEngine : ClickableFeature() {
                     // 微信自己的资源表里，包残缺时也照样「通过」。同时把残缺包直接判死：实机上
                     // 黑名单吃掉 402/406 个槽位后包内只剩 4 条覆盖，注入也没意义（取色/圆角/角标全不生效），
                     // 这种包必须删掉重新解析，而不是抱着「applied 成功」继续用。
+                    // 【2026-09-27 修】校验对象必须是「包这个文件里**真的**有多少条覆盖」。
+                    // 旧实现是 `recorded.ifEmpty { cached.roles.values }`：记录为空时回退到语义角色表，
+                    // 而角色 id 本来就存在于微信自己的资源表里 —— 于是一个 **510 字节的空包**照样
+                    // 「冒烟校验通过 231 条」，还被当成健康包一直复用下去。实机日志：
+                    //   `复用已有运行时包（覆盖 0 条）` + `applied runtime-….apk (510 bytes)`
+                    // 用户看到的就是「解析成功、包 applied，但取色 / 圆角 PRO / 角标全都不生效」。
+                    // 现在先回读包自身（[MonetArscScanner.inspectPackage]，只认写出来的字节）：
+                    //   * 一条覆盖都没有 / 结构读不出来 → 判死：摘 loader、删包、重新解析；
+                    //   * 有覆盖 → 用「包里真实的 id」当冒烟校验集，并与角色数比覆盖率。
                     val recorded = readRuntimeState().appliedOverlayIds
+                    val inspected = MonetArscScanner.inspectPackage(packageFile)
+                    val packageIds = inspected?.resourceIds()
+                        ?.filter { ((it ushr 24) and 0xff) == 0x7f }
+                        ?: emptyList()
+                    val overlayIds = if (recorded.isNotEmpty()) recorded else packageIds
                     val expectedRoles = cached?.roles?.size ?: 0
-                    val crippled = recorded.isNotEmpty() && expectedRoles > 0 &&
-                        recorded.size * 100 / expectedRoles < MIN_OVERLAY_COVERAGE_PERCENT
+                    val crippled = overlayIds.isEmpty() ||
+                        (expectedRoles > 0 &&
+                            overlayIds.size * 100 / expectedRoles < MIN_OVERLAY_COVERAGE_PERCENT)
                     if (crippled) {
                         WeLogger.w(
                             TAG,
-                            "缓存的运行时包只有 ${recorded.size} 条覆盖（角色 $expectedRoles 个），" +
-                                "判定为残缺包：删除并重新解析，避免「解析成功但取色/圆角/角标全不生效」",
+                            "缓存的运行时包不可用（包内覆盖 ${packageIds.size} 条、状态记录 ${recorded.size} 条、" +
+                                "角色 $expectedRoles 个）：判定为空包/残缺包，删除并重新解析，" +
+                                "避免「解析成功但取色/圆角/角标全不生效」",
                         )
                         detachLastApplied()
                         runCatching { if (packageFile.exists()) packageFile.delete() }
                     } else {
                         val reused = applyRuntimePackage(
                             packageFile,
-                            recorded.ifEmpty { cached?.roles?.values?.toList() ?: emptyList() },
+                            overlayIds,
+                            controlIdsFor(overlayIds),
                         )
-                        if (reused.isNotEmpty()) {
-                            detachLastApplied()
-                            persistBlacklist(fingerprint, loadBlacklist(fingerprint) + reused)
+                        if (reused.hostBroken) {
                             runCatching { if (packageFile.exists()) packageFile.delete() }
                             error(
-                                "复用的运行时资源包冒烟校验未通过（${reused.size} 条覆盖资源不可用），" +
+                                "复用的运行时资源包会打断宿主的资源查找（没被覆盖的宿主资源也取不到资源名）：" +
+                                    "已摘除 loader 并删除该包，本次不注入以免影响微信运行；可在设置里重新解析",
+                            )
+                        }
+                        if (reused.unhealthy.isNotEmpty()) {
+                            detachLastApplied()
+                            persistBlacklist(fingerprint, loadBlacklist(fingerprint) + reused.unhealthy)
+                            runCatching { if (packageFile.exists()) packageFile.delete() }
+                            error(
+                                "复用的运行时资源包冒烟校验未通过（${reused.unhealthy.size} 条覆盖资源不可用），" +
                                     "已回滚、拉黑并删除该包；下次启动会重新解析",
                             )
                         }
-                        recordRuntimeApplied(packageFile, recorded)
+                        recordRuntimeApplied(packageFile, overlayIds)
                         publishPalette()
                         if (cached != null) {
                             _result.value = MonetResolveResult.Success(cached, packageFile)
                         }
                         WeLogger.i(
                             TAG,
-                            "复用已有运行时包（覆盖 ${recorded.size} 条），本次启动未做资源解析，" +
+                            "复用已有运行时包（覆盖 ${overlayIds.size} 条），本次启动未做资源解析，" +
                                 "用时 ${(System.nanoTime() - startedAt) / 1_000_000} ms",
                         )
                         return@thread
@@ -582,6 +625,10 @@ object MonetEngine : ClickableFeature() {
                             "（不再直接沿用，避免整批覆盖被吃掉导致莫奈不生效）",
                     )
                 }
+                // 写包之前先量宿主每个 typeId 声明的 entryCount（见 [MonetArscScanner]）：
+                // 我们写出的覆盖包必须为每个写到的 typeId 声明**至少这么大**的 TypeSpec 范围，
+                // 否则宿主的资源查找会被我们的包整体打断（= 用户看到的「解析成功但全不生效」+ 闪退）。
+                val hostTypeEntryCounts = MonetArscScanner.hostTypeEntryCounts(paths)
                 val excluded = LinkedHashSet<Int>()
                 var attempt = 0
                 var appliedIds: List<Int> = emptyList()
@@ -594,12 +641,24 @@ object MonetEngine : ClickableFeature() {
                         hostReference,
                         hostDrawableIsRealFile,
                         excluded,
+                        hostTypeEntryCounts = hostTypeEntryCounts,
                     )
                     if (!outcome.ok) {
                         // 条目 id 校验没过 = 覆盖会落到别的资源上，写了就是闪退，宁可这次不注入。
                         error(
                             "运行时资源包构建失败（${outcome.reason ?: "资源 id 校验未通过"}），" +
                                 "已中止本次注入以免影响微信运行（可在设置里重新解析）",
+                        )
+                    }
+                    // 【2026-09-27 修】零覆盖 = 本轮白干，绝不能记成成功。
+                    // 实机证据：写包轮次打印过 `写入率 0%（0/406）`，随后照样
+                    // `applied runtime-….apk (510 bytes)` + `解析并注入完成`，
+                    // 于是用户每次冷启动都重跑一遍 58 s 全量解析、却一直「取色不生效」。
+                    // 这里直接判失败（走 catch → Failure），让 UI 说真话，也不再记录成功状态。
+                    if (outcome.writtenIds.isEmpty()) {
+                        error(
+                            "本轮没有写出任何覆盖资源（${outcome.summary}）：判定为失败，不注入、不记录为成功" +
+                                "（可在设置里重新解析）",
                         )
                     }
                     if (outcome.coveragePercent < MIN_OVERLAY_COVERAGE_PERCENT) {
@@ -615,11 +674,38 @@ object MonetEngine : ClickableFeature() {
                                 "（${outcome.writtenIds.size}/${outcome.plannedCount}）",
                         )
                     }
-                    val unhealthy = applyRuntimePackage(packageFile, outcome.writtenIds)
-                    if (unhealthy.isEmpty()) {
+                    val smoke = applyRuntimePackage(
+                        packageFile,
+                        outcome.writtenIds,
+                        controlIdsFor(outcome.writtenIds),
+                    )
+                    if (smoke.hostBroken) {
+                        // 对照组（没被覆盖的宿主资源）也取不到名字 = 问题在包结构上，不在个别条目上。
+                        // 这时把 writtenIds 全拉黑等于永久关掉莫奈（实机 2026-09-27 就是这么走到
+                        // 「只剩 0 条覆盖的 510 字节空包」的），所以：摘干净、不拉黑、写坏包直接删。
+                        runCatching { if (packageFile.exists()) packageFile.delete() }
+                        error(
+                            "运行时资源包会打断宿主的资源查找（${outcome.writtenIds.size} 条覆盖写入后，" +
+                                "连没被覆盖的宿主资源都取不到资源名）：已摘除 loader、删除该包，" +
+                                "本次不注入也不拉黑，以免影响微信运行；可在设置里重新解析",
+                        )
+                    }
+                    if (smoke.unhealthy.isEmpty()) {
                         appliedIds = outcome.writtenIds
                         break
                     }
+                    // 系统性失败保护：一轮里几乎整包都不健康时，拉黑它们 = 把莫奈永久关掉。
+                    if (outcome.writtenIds.isNotEmpty() &&
+                        smoke.unhealthy.size * 100 / outcome.writtenIds.size >= SYSTEMIC_FAIL_PERCENT
+                    ) {
+                        runCatching { if (packageFile.exists()) packageFile.delete() }
+                        error(
+                            "运行时资源包 ${smoke.unhealthy.size}/${outcome.writtenIds.size} 条校验不通过" +
+                                "（疑似整包结构问题，而非个别坏 id）：本次不注入、不拉黑任何 id，" +
+                                "以免把莫奈永久关掉；可在设置里重新解析",
+                        )
+                    }
+                    val unhealthy = smoke.unhealthy
                     detachLastApplied()
                     excluded += unhealthy
                     runCatching { if (packageFile.exists()) packageFile.delete() }
@@ -728,21 +814,35 @@ object MonetEngine : ClickableFeature() {
     private var lastAppliedLoader: Pair<Resources, android.content.res.loader.ResourcesLoader>? = null
 
     private fun detachLastApplied() {
-        val applied = lastAppliedLoader ?: return
+        val applied = lastAppliedLoader
         lastAppliedLoader = null
         _runtimePackage.value = null
-        runCatching { applied.first.removeLoaders(applied.second) }
-            .onFailure { WeLogger.w(TAG, "cannot detach runtime loader", it) }
+        if (applied != null) {
+            runCatching { applied.first.removeLoaders(applied.second) }
+                .onFailure { WeLogger.w(TAG, "cannot detach runtime loader", it) }
+        }
+        // 同时摘掉挂在各个 Activity 的 Resources 上的 loader（重新解析前也必须先摘干净：
+        // 同一个 Resources 上叠两个覆盖包时，其中一个声明范围盖不住宿主 entryId 就会打断查找）。
+        detachAttachedLoaders()
     }
 
     /**
      * 注入运行时包并做冒烟校验。
      *
-     * @return 校验**不通过**的覆盖资源 id；空集 = 包健康、已生效。拿到非空集合时调用方必须
-     *   [detachLastApplied]，把这些 id 拉黑后重写包（见 [startResolve]）。
+     * @param overlayIds 这个包里**真的写进去**的覆盖 id（不是语义角色表）。
+     * @param controlIds 对照组：与覆盖 id 同类型、但**没被我们覆盖**的宿主 id。用来区分
+     *   「个别条目坏」和「整个包把宿主的资源查找打断了」——后者绝不能拉黑（见 [SmokeResult]）。
+     * @return [SmokeResult]；不健康时调用方必须 [detachLastApplied] 并按情况处理。
      */
-    private fun applyRuntimePackage(file: File, overlayIds: Collection<Int>): Set<Int> {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return emptySet()
+    private fun applyRuntimePackage(
+        file: File,
+        overlayIds: Collection<Int>,
+        controlIds: Collection<Int> = emptyList(),
+    ): SmokeResult {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return SmokeResult()
+        // 换新包之前先把上一轮的 loader 摘干净：同一个 Resources 上叠两个覆盖包时，
+        // 只要有一个包的 TypeSpec 声明范围盖不住宿主 entryId，宿主对该类型的查找就会整体失败。
+        detachLastApplied()
         val resources = HostInfo.application.resources
         val loader = android.content.res.loader.ResourcesLoader()
         ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
@@ -754,80 +854,109 @@ object MonetEngine : ClickableFeature() {
         resources.addLoaders(loader)
         // 冒烟校验：注入之后宿主资源必须还能正常取用。不通过就立刻摘掉 loader 并把**具体哪些
         // id**交回调用方 —— 宁可不莫奈化，也不把一个坏包留在微信进程里（实机教训：坏包 = 取资源就崩）。
-        val unhealthy = runCatching { smokeTestRuntimePackage(resources, overlayIds) }
+        val smoke = runCatching { smokeTestRuntimePackage(resources, overlayIds, controlIds) }
             .onFailure { WeLogger.w(TAG, "smoke test failed to run", it) }
-            .getOrDefault(emptySet())
-        if (unhealthy.isNotEmpty()) {
+            .getOrDefault(SmokeResult())
+        if (!smoke.healthy) {
             runCatching { resources.removeLoaders(loader) }
                 .onFailure { WeLogger.e(TAG, "cannot roll back runtime loader", it) }
             _runtimePackage.value = null
-            return unhealthy
+            return smoke
         }
         lastAppliedLoader = resources to loader
         _runtimePackage.value = file
         WeLogger.i(TAG, "applied ${file.name} (${file.length()} bytes)")
-        return emptySet()
+        // 【2026-09-27 修「首屏不生效、必须去设置里关掉再打开」】事件式回调只对**订阅之后
+        // 创建**的 Activity 有效，而首屏（LauncherUI / 会话列表）在我们 applied 之前就建好了，
+        // 它们的 Resources 永远收不到回调 → 取色/圆角 PRO/角标在首屏一律原生。
+        // 这里把当前还活着的 Activity 一次性补挂回来。
+        ActivityResourceHooks.forEachLiveResources { activity ->
+            val liveResources = activity.resources ?: return@forEachLiveResources
+            runCatching { attachRuntimeLoader(liveResources, activity.javaClass.name) }
+                .onFailure { WeLogger.w(TAG, "replay attach failed", it) }
+        }
+        return SmokeResult()
     }
 
-    /** 已经挂过运行时包的 `Resources`（弱引用，避免把宿主的 Resources 钉在内存里）。 */
-    private val runtimeLoaderAttached: MutableSet<Resources> =
-        Collections.newSetFromMap(WeakHashMap<Resources, Boolean>())
+    /**
+     * 「系统性失败」阈值：一轮里被判不健康的覆盖比例 ≥ 这么多，就认定问题出在**包结构**上，
+     * 而不是个别坏条目 —— 这时**绝不拉黑**（拉黑整包 = 把莫奈永久关掉）。
+     */
+    private const val SYSTEMIC_FAIL_PERCENT = 80
 
-    private var activityResourceProbeLogged = false
+    /** 对照组探测的取样上限（每次注入只探这么多个没被覆盖的宿主 id）。 */
+    private const val CONTROL_PROBE_LIMIT = 24
+
+    /**
+     * 已经挂过运行时包的 `Resources` → 挂上去的那个 loader（弱引用键，避免把宿主的
+     * `Resources` 钉在内存里）。存 loader 是为了 `onDisable()` / 重新解析时能**真的摘干净**：
+     * 旧实现只清状态字段，用户关掉莫奈后覆盖还在生效，得重启微信才回得去。
+     */
+    private val runtimeLoaderAttached:
+        MutableMap<Resources, android.content.res.loader.ResourcesLoader> =
+        Collections.synchronizedMap(
+            WeakHashMap<Resources, android.content.res.loader.ResourcesLoader>(),
+        )
+
+    /** 已经打过「运行时包已挂上」日志的 Activity 标签，避免同一个 Activity 反复刷。 */
+    private val attachedActivityLabels: MutableSet<String> =
+        Collections.synchronizedSet(HashSet<String>())
 
     /**
      * 把运行时资源包挂到**任意一个** `Resources` 实例上（幂等、失败只降级）。
      *
-     * 由 [ActivityResourceHooks] 在每个 Activity 创建时调用。原因见 [onEnable] ③：
+     * 由 [ActivityResourceHooks] 在每个 Activity 创建时调用，也会在包就绪后对**已经错过**
+     * 的存活 Activity 补挂一次（[ActivityResourceHooks.forEachLiveResources]）。原因见 [onEnable] ③：
      * loader 之前只挂在 `application.resources` 上，而实机反馈「解析正常、包 applied、
      * 取色/圆角/角标一律没生效」，最可疑的就是宿主 UI 真正使用的那批 `Resources`
      * 并没有拿到这个 loader（`Resources.addLoaders` 只作用于调用它的那个实例/impl）。
      */
-    private fun attachRuntimeLoader(resources: Resources) {
+    private fun attachRuntimeLoader(resources: Resources, label: String = "?") {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         val file = _runtimePackage.value ?: return
         if (!file.isFile) return
-        if (!runtimeLoaderAttached.add(resources)) return
+        if (runtimeLoaderAttached.containsKey(resources)) return
+        val startedAt = SystemClock.uptimeMillis()
         try {
             val loader = android.content.res.loader.ResourcesLoader()
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
                 loader.addProvider(ResourcesProvider.loadFromApk(descriptor))
             }
             resources.addLoaders(loader)
+            runtimeLoaderAttached[resources] = loader
         } catch (error: Throwable) {
             runtimeLoaderAttached.remove(resources)
             WeLogger.w(TAG, "cannot attach runtime package to activity resources", error)
             return
         }
-        probeActivityResources(resources)
+        // 【2026-09-27】这里原来调的是 probeActivityResources()，它拿**语义角色 id** 去
+        // `getResourceTypeName` —— 那些 id 本来就存在于微信自己的资源表里，无论 loader 有没有
+        // 挂上都是 100% 可解析（实机 4 次全是「231 个里 231 个可解析」），零信息量。
+        // 真正有用的信号是「哪个 Activity 的 Resources 挂上了、花了多久（loadFromApk 解析覆盖包）」。
+        val elapsed = SystemClock.uptimeMillis() - startedAt
+        if (attachedActivityLabels.add(label)) {
+            WeLogger.i(TAG, "运行时包已挂到 Activity 的 Resources：$label（本次 ${elapsed}ms）")
+        } else if (elapsed >= SLOW_ATTACH_MS) {
+            WeLogger.w(TAG, "挂运行时包偏慢：$label 用了 ${elapsed}ms（loadFromApk 解析覆盖包）")
+        }
     }
 
-    /**
-     * 一次性诊断：宿主 Activity 自己的 `Resources` 上，我们写进包里的角色 id 到底能解析出几个。
-     *
-     * 与 `applyRuntimePackage` 里那次冒烟校验的计数对比，就能判定「loader 到底有没有挂到
-     * 宿主界面真正用的 Resources 上」：两边数字接近 = 挂上了；这里为 0 而 application 那边
-     * 非 0 = 之前根本没挂上（本轮修的正是这个）。只打一次日志，不在热路径刷。
-     */
-    private fun probeActivityResources(resources: Resources) {
-        if (activityResourceProbeLogged) return
-        activityResourceProbeLogged = true
-        runCatching {
-            val ids = cachedBindings()?.roles?.values?.toList() ?: return@runCatching
-            if (ids.isEmpty()) return@runCatching
-            var resolvable = 0
-            for (id in ids) {
-                if (runCatching { resources.getResourceTypeName(id) }.getOrNull() != null) {
-                    resolvable++
-                }
-            }
-            WeLogger.i(
-                TAG,
-                "Activity Resources 可见性探测：${ids.size} 个角色 id 中有 $resolvable 个可解析" +
-                    "（与冒烟校验的计数对比可判定运行时包是否作用在宿主界面上）",
-            )
-        }.onFailure { WeLogger.d(TAG, "activity resources probe failed", it) }
+    /** 摘掉所有已挂的运行时 loader，并清空存活表（`onDisable()`／重新解析前用）。 */
+    private fun detachAttachedLoaders() {
+        val entries = synchronized(runtimeLoaderAttached) {
+            val copy = runtimeLoaderAttached.entries.toList()
+            runtimeLoaderAttached.clear()
+            copy
+        }
+        attachedActivityLabels.clear()
+        entries.forEach { (resources, loader) ->
+            runCatching { resources.removeLoaders(loader) }
+                .onFailure { WeLogger.w(TAG, "cannot detach runtime loader", it) }
+        }
     }
+
+    /** 单次「把覆盖包挂到某个 Resources」超过这个耗时就打一条 warn（loadFromApk 解析成本）。 */
+    private const val SLOW_ATTACH_MS = 120L
 
     /**
      * 冒烟校验：把**写进包的每一条**覆盖资源都按它的真实类型取一次，全部成功才算健康。
@@ -840,15 +969,43 @@ object MonetEngine : ClickableFeature() {
      * 类型分流按 `Resources.getResourceTypeName`：drawable/mipmap 走 `getDrawable`（这条正是
      * 崩溃路径），color 走 `getColor`，string 走 `getString`；其它类型本轮不写入，取不到不算我们写坏。
      *
-     * 返回「不健康的 id 集合」而不是 Boolean：调用方要拿这批 id 去拉黑 + 重写包。只知道
-     * 「包坏了」是不够的 —— 坏 id 不带回来，下一轮写包还会原样写回去，等于每次开机崩一遍。
+     * 返回 [SmokeResult] 而不是 Boolean：调用方既要拿「不健康的 id」去重写包，也要知道
+     * 「是不是整个包把宿主的资源查找打断了」（后者绝不能拉黑，见 [SmokeResult.hostBroken]）。
      */
-    private fun smokeTestRuntimePackage(resources: Resources, overlayIds: Collection<Int>): Set<Int> {
+    private fun smokeTestRuntimePackage(
+        resources: Resources,
+        overlayIds: Collection<Int>,
+        controlIds: Collection<Int> = emptyList(),
+    ): SmokeResult {
         // 校验对象 = **真的写进包里的覆盖 id**（2026-09-27 事故后被调用方明确传入）。
         // 以前这里取的是语义角色表 `bindings.roles`，那些 id 本来就存在于微信自己的资源表里 ——
         // 包里一条覆盖都没有时也照样「通过」，于是黑名单只涨不缩、残缺包永远检测不出来。
         val ids = overlayIds.toList()
-        if (ids.isEmpty()) return emptySet()
+        // 【2026-09-27 修】零覆盖**不是健康**。旧写法 `return SmokeResult()`（healthy=true）让
+        // 「一条覆盖都没写进去」的空包一路被当成成功包应用，实机结果就是
+        // `applied runtime-….apk (510 bytes)` + UI 报「解析成功」，而取色/圆角/角标全不生效。
+        // 现在把「零覆盖」显式判成 hostBroken（调用方语义=这个包不可用、不要写成功记录），
+        // 调用方（写包轮次）另有更早的门禁直接拦截，这里是第二道保险。
+        if (ids.isEmpty()) {
+            WeLogger.w(TAG, "冒烟校验集为空（零覆盖包）：直接判定不可用")
+            return SmokeResult(hostBroken = true)
+        }
+        // 对照组先探：这些 id 我们**没有**覆盖，它们必须永远可解析。若有任何一个取不到名字，
+        // 说明这个包破坏了宿主整个类型的资源查找（AOSP `FindEntryInternal` 在
+        // `GetFlagsForEntryIndex` 返回 nullopt 时是 return 而不是 continue），必须整包摘掉。
+        val brokenControls = controlIds.filter { controlId ->
+            runCatching { resources.getResourceTypeName(controlId) }.getOrNull() == null
+        }
+        if (brokenControls.isNotEmpty()) {
+            WeLogger.e(
+                TAG,
+                "运行时资源包打断了宿主的资源查找：对照组（没被覆盖的宿主资源）" +
+                    "${controlIds.size} 个里就有 ${brokenControls.size} 个取不到资源名 " +
+                    brokenControls.take(6).joinToString { "0x" + it.toUInt().toString(16) } +
+                    " —— 判定为包结构问题，整包摘除（不拉黑任何 id）",
+            )
+            return SmokeResult(hostBroken = true)
+        }
         var named = 0
         var valueOk = 0
         var unnamed = 0
@@ -910,12 +1067,51 @@ object MonetEngine : ClickableFeature() {
                 TAG,
                 "冒烟校验不通过：$named 条能按名字解析、其中 $failed 条取用异常（$failedSamples）；" +
                     "另有 $unnamed 条查不到资源名（$unnamedSamples）；" +
-                    "合计 ${unhealthy.size}/${ids.size} 条将被拉黑并重写包",
+                    "合计 ${unhealthy.size}/${ids.size} 条" +
+                    "（对照组 ${controlIds.size} 个宿主资源全部正常，说明是这些条目自身的问题）",
             )
-            return unhealthy
+            return SmokeResult(unhealthy = unhealthy)
         }
-        WeLogger.i(TAG, "冒烟校验通过：$valueOk 条覆盖资源全部可取用、且都能按名字解析")
-        return emptySet()
+        WeLogger.i(
+            TAG,
+            "冒烟校验通过：$valueOk 条覆盖资源全部可取用、且都能按名字解析" +
+                "（对照组 ${controlIds.size} 个宿主资源同样正常）",
+        )
+        return SmokeResult()
+    }
+
+    /**
+     * 冒烟校验结果。
+     *
+     * @property unhealthy 我们写进去、但宿主取不到的 id（个别的坏条目）—— 拉黑这些 id 后重写包。
+     * @property hostBroken 对照组（**没被我们覆盖**的宿主 id）也取不到资源名了 —— 说明这个包
+     *   把宿主整个类型的资源查找打断了。这种情况**绝不能拉黑**：拉黑全部 id 等于把莫奈永久关掉。
+     *   实机 2026-09-27 的 `0 条能按名字解析 … 另有 406 条查不到资源名` 就是这种状态，
+     *   旧代码把 213 条 id 拉黑、重写出一个只有 0 条覆盖的 510 字节空包，
+     *   用户看到的就是「解析成功、包 applied，但取色 / 圆角 PRO / 角标全都不生效」。
+     */
+    private data class SmokeResult(
+        val unhealthy: Set<Int> = emptySet(),
+        val hostBroken: Boolean = false,
+    ) {
+        val healthy: Boolean get() = unhealthy.isEmpty() && !hostBroken
+    }
+
+    /**
+     * 对照组取样：当前绑定缓存里**没被这次覆盖**、且与覆盖 id 同类型的宿主 id。
+     *
+     * 用它们判断「坏的是个别条目」还是「整个包把宿主的资源查找打断了」。
+     */
+    private fun controlIdsFor(overlayIds: Collection<Int>): List<Int> {
+        val roles = cachedBindings()?.roles?.values?.toList() ?: return emptyList()
+        if (roles.isEmpty()) return emptyList()
+        val written = overlayIds.toHashSet()
+        val types = written.mapTo(HashSet()) { (it ushr 16) and 0xff }
+        return roles.asSequence()
+            .filter { it !in written && ((it ushr 16) and 0xff) in types }
+            .distinct()
+            .take(CONTROL_PROBE_LIMIT)
+            .toList()
     }
 
     /**

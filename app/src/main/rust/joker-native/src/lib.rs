@@ -28,7 +28,7 @@ use libc::c_void;
 use crate::utils::with_jstring;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_agent_environment_OwnedProcess_00024Native_start(
+pub extern "C" fn Java_dev_joker_agent_environment_OwnedProcess_00024Native_start(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     argv: jobjectArray,
@@ -81,7 +81,7 @@ pub extern "C" fn Java_dev_joker_joker_agent_environment_OwnedProcess_00024Nativ
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_agent_environment_OwnedProcess_00024Native_pollExit(
+pub extern "C" fn Java_dev_joker_agent_environment_OwnedProcess_00024Native_pollExit(
     _env: *mut RawJNIEnv,
     _thiz: jobject,
     handle: jlong,
@@ -100,7 +100,7 @@ pub extern "C" fn Java_dev_joker_joker_agent_environment_OwnedProcess_00024Nativ
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_agent_environment_OwnedProcess_00024Native_terminateGroup(
+pub extern "C" fn Java_dev_joker_agent_environment_OwnedProcess_00024Native_terminateGroup(
     _env: *mut RawJNIEnv,
     _thiz: jobject,
     handle: jlong,
@@ -118,7 +118,7 @@ pub extern "C" fn Java_dev_joker_joker_agent_environment_OwnedProcess_00024Nativ
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_agent_environment_OwnedProcess_00024Native_close(
+pub extern "C" fn Java_dev_joker_agent_environment_OwnedProcess_00024Native_close(
     _env: *mut RawJNIEnv,
     _thiz: jobject,
     handle: jlong,
@@ -170,7 +170,7 @@ fn string_array(env: *mut RawJNIEnv, array: jobjectArray) -> Result<Vec<String>,
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_00024NativePty_start(
+pub extern "C" fn Java_dev_joker_agent_terminal_NativeTerminalBackend_00024NativePty_start(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     argv: jobjectArray,
@@ -197,7 +197,7 @@ pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_0002
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_00024NativePty_write(
+pub extern "C" fn Java_dev_joker_agent_terminal_NativeTerminalBackend_00024NativePty_write(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     handle: jlong,
@@ -229,7 +229,7 @@ pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_0002
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_00024NativePty_read(
+pub extern "C" fn Java_dev_joker_agent_terminal_NativeTerminalBackend_00024NativePty_read(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     handle: jlong,
@@ -266,7 +266,7 @@ pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_0002
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_00024NativePty_resize(
+pub extern "C" fn Java_dev_joker_agent_terminal_NativeTerminalBackend_00024NativePty_resize(
     _env: *mut RawJNIEnv,
     _thiz: jobject,
     handle: jlong,
@@ -280,7 +280,7 @@ pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_0002
     }
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_00024NativePty_waitForExit(
+pub extern "C" fn Java_dev_joker_agent_terminal_NativeTerminalBackend_00024NativePty_waitForExit(
     _env: *mut RawJNIEnv,
     _thiz: jobject,
     handle: jlong,
@@ -294,7 +294,7 @@ pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_0002
     })
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_00024NativePty_kill(
+pub extern "C" fn Java_dev_joker_agent_terminal_NativeTerminalBackend_00024NativePty_kill(
     _env: *mut RawJNIEnv,
     _thiz: jobject,
     handle: jlong,
@@ -306,7 +306,7 @@ pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_0002
     }
 }
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_00024NativePty_close(
+pub extern "C" fn Java_dev_joker_agent_terminal_NativeTerminalBackend_00024NativePty_close(
     _env: *mut RawJNIEnv,
     _thiz: jobject,
     handle: jlong,
@@ -327,7 +327,7 @@ pub extern "C" fn Java_dev_joker_joker_agent_terminal_NativeTerminalBackend_0002
 ///
 /// Java signature: `(Ljava/lang/String;Ljava/lang/String;)Z`
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_utils_crash_NativeCrashHandler_installNative(
+pub extern "C" fn Java_dev_joker_utils_crash_NativeCrashHandler_installNative(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     crash_log_dir: jstring,
@@ -353,7 +353,7 @@ pub extern "C" fn Java_dev_joker_joker_utils_crash_NativeCrashHandler_installNat
 ///
 /// Java signature: `()V`
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_utils_crash_NativeCrashHandler_uninstallNative(
+pub extern "C" fn Java_dev_joker_utils_crash_NativeCrashHandler_uninstallNative(
     _env: *mut RawJNIEnv,
     _thiz: jobject,
 ) {
@@ -364,7 +364,7 @@ pub extern "C" fn Java_dev_joker_joker_utils_crash_NativeCrashHandler_uninstallN
 ///
 /// Java signature: `(I)V`
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_utils_crash_NativeCrashHandler_triggerTestCrashNative(
+pub extern "C" fn Java_dev_joker_utils_crash_NativeCrashHandler_triggerTestCrashNative(
     _env: *mut RawJNIEnv,
     _thiz: jobject,
     crash_type: jint,
@@ -376,7 +376,7 @@ pub extern "C" fn Java_dev_joker_joker_utils_crash_NativeCrashHandler_triggerTes
 ///
 /// Java signature: `(Ljava/lang/String;)Ljava/lang/String;`
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Java_dev_joker_joker_features_items_chat_MarkdownRendering_convertMarkdownToHtmlNative(
+pub unsafe extern "C" fn Java_dev_joker_features_items_chat_MarkdownRendering_convertMarkdownToHtmlNative(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     markdown_string: jstring,
@@ -397,7 +397,7 @@ pub unsafe extern "C" fn Java_dev_joker_joker_features_items_chat_MarkdownRender
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_utils_AudioUtils_nativeAnyToSilk(
+pub extern "C" fn Java_dev_joker_utils_AudioUtils_nativeAnyToSilk(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     any_path: jstring,
@@ -427,7 +427,7 @@ pub extern "C" fn Java_dev_joker_joker_utils_AudioUtils_nativeAnyToSilk(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_utils_AudioUtils_pcmToSilk(
+pub extern "C" fn Java_dev_joker_utils_AudioUtils_pcmToSilk(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     pcm_path: jstring,
@@ -468,7 +468,7 @@ pub extern "C" fn Java_dev_joker_joker_utils_AudioUtils_pcmToSilk(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_utils_AudioUtils_silkToPcm(
+pub extern "C" fn Java_dev_joker_utils_AudioUtils_silkToPcm(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     silk_path: jstring,
@@ -498,7 +498,7 @@ pub extern "C" fn Java_dev_joker_joker_utils_AudioUtils_silkToPcm(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_utils_AudioUtils_pcmToMp3(
+pub extern "C" fn Java_dev_joker_utils_AudioUtils_pcmToMp3(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     pcm_path: jstring,
@@ -525,7 +525,7 @@ pub extern "C" fn Java_dev_joker_joker_utils_AudioUtils_pcmToMp3(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_utils_AudioUtils_getDurationMs(
+pub extern "C" fn Java_dev_joker_utils_AudioUtils_getDurationMs(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     path: jstring,
@@ -548,7 +548,7 @@ pub extern "C" fn Java_dev_joker_joker_utils_AudioUtils_getDurationMs(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_utils_TelegramStickerConverter_tgsToGifNative(
+pub extern "C" fn Java_dev_joker_utils_TelegramStickerConverter_tgsToGifNative(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     input_path: jstring,
@@ -566,7 +566,7 @@ pub extern "C" fn Java_dev_joker_joker_utils_TelegramStickerConverter_tgsToGifNa
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Java_dev_joker_joker_utils_TelegramStickerConverter_webmToGifNative(
+pub extern "C" fn Java_dev_joker_utils_TelegramStickerConverter_webmToGifNative(
     env: *mut RawJNIEnv,
     _thiz: jobject,
     input_path: jstring,

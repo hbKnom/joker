@@ -165,7 +165,7 @@ mod jni_surface {
     ///
     /// Java signature: `(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;)Ljava/lang/String;`
     #[unsafe(no_mangle)]
-    pub extern "C" fn Java_dev_joker_joker_agent_model_local_LlamaServerNative_startServer(
+    pub extern "C" fn Java_dev_joker_agent_model_local_LlamaServerNative_startServer(
         env: *mut RawJNIEnv,
         _thiz: jobject,
         bootstrap_apk: jstring,
@@ -211,7 +211,7 @@ mod jni_surface {
     ///
     /// Java signature: `(Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;I)I`
     #[unsafe(no_mangle)]
-    pub extern "C" fn Java_dev_joker_joker_agent_model_local_LlamaServerNative_runServerProcess(
+    pub extern "C" fn Java_dev_joker_agent_model_local_LlamaServerNative_runServerProcess(
         env: *mut RawJNIEnv,
         _thiz: jobject,
         model_path: jstring,
@@ -260,7 +260,7 @@ mod jni_surface {
     ///
     /// Java signature: `()Ljava/lang/String;`
     #[unsafe(no_mangle)]
-    pub extern "C" fn Java_dev_joker_joker_agent_model_local_LlamaServerNative_stopServer(
+    pub extern "C" fn Java_dev_joker_agent_model_local_LlamaServerNative_stopServer(
         env: *mut RawJNIEnv,
         _thiz: jobject,
     ) -> jstring {
@@ -272,7 +272,7 @@ mod jni_surface {
     ///
     /// Java signature: `()Ljava/lang/String;`
     #[unsafe(no_mangle)]
-    pub extern "C" fn Java_dev_joker_joker_agent_model_local_LlamaServerNative_serverStatus(
+    pub extern "C" fn Java_dev_joker_agent_model_local_LlamaServerNative_serverStatus(
         env: *mut RawJNIEnv,
         _thiz: jobject,
     ) -> jstring {

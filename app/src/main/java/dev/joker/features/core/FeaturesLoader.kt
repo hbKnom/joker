@@ -37,7 +37,6 @@ object FeaturesLoader {
 
     fun loadFeatures() {
         val allFeatures = FeaturesProvider.ALL_FEATURES
-        allFeatures.filterIsInstance<SwitchFeature>().forEach(SwitchFeature::loadPersistedState)
 
         val safeMode = SafeMode.isEnabled
         val featuresToStart = if (safeMode) {
@@ -65,6 +64,13 @@ object FeaturesLoader {
                 feature is ApiFeature || currentProcess in feature.targetProcesses
             }
         }
+
+        // 【2026-09-27 修启动卡顿】读持久化开关原本在**进程过滤之前**、对全部 ~238 个
+        // SwitchFeature 各做一次 SQLite 查询（每进程、且 28 个进程里有 21 个是非主进程，
+        // 它们只用得上极少数功能）。挪到进程过滤之后，只读本进程真正会用的那些功能。
+        // 顺序安全性：进程过滤只看 targetProcesses，不看 isEnabled；DexCache 相关的几行
+        // （getOutdatedItems / loadDescriptorsFromCache）也不读开关，所以挪动不改变语义。
+        processScopedFeatures.filterIsInstance<SwitchFeature>().forEach(SwitchFeature::loadPersistedState)
 
         val allDexItems = processScopedFeatures.filterIsInstance<IResolveDex>()
 
@@ -126,10 +132,14 @@ object FeaturesLoader {
         // 主线程空闲（首帧画完）后再用「切片 + 让出」的方式装延后批次，不再阻塞启动关键路径。
         if (deferredFeatures.isNotEmpty()) {
             scheduleDeferredStartup(deferredFeatures, allBrokenItems)
-        } else {
-            // 没有延后批次时同步批次就是全部：立刻做一次自愈重挂兜底（失败会自动重试）。
-            rearmDeadFeatures(1)
         }
+        // 【2026-09-27 修「开关开着却没生效、得去设置里关掉再打开」】以前这行只在**没有延后
+        // 批次**时才执行（else 分支里），而实机日志里 7 次「20 feature(s)」批次**0 次**跑到
+        // `deferred feature startup finished` —— 延后批次没跑完 → rearmDeadFeatures 从未执行 →
+        // 启动期 onEnable 抛过异常、被 unhookAll() 摘干净的功能永远自愈不了。
+        // 现在无条件兜一次；正在延后队列里排队的会被 deferredPending 跳过，
+        // 因此不会把延后批次拉回同步阶段（那会重新变成启动卡顿）。
+        rearmDeadFeatures(1)
 
         if (TargetProcesses.isInMain && Preferences.showStartupToast) {
             val context = LocalizedContextFactory.create(
@@ -211,8 +221,31 @@ object FeaturesLoader {
     /** 自愈重挂的最大尝试次数（之后只留一行日志，绝不无限重试）。 */
     private const val REARM_MAX_ATTEMPTS = 3
 
+    /**
+     * 延后批次的「无论如何也要开始装」兜底时限。
+     *
+     * IdleHandler 只在主线程空闲时触发，而微信启动前后主线程长期不空闲 →
+     * 实机上 7 次 20 功能的延后批次一次都没跑到收尾日志（相当于这 20 个功能没装）。
+     */
+    private const val DEFERRED_START_TIMEOUT_MS = 3_000L
+
+    /** 延后批次超过这个时长仍未装完就打一条 warn，暴露「到底装没装上」。 */
+    private const val DEFERRED_STALL_WARN_MS = 30_000L
+
+    /** 延后批次是否已经开始（IdleHandler 与超时兜底两条路只允许一条真正启动）。 */
+    private val deferredDrainStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+
     /** 最近一次解析里「缓存不完整、正等 DexKit 重新解析」的功能（自愈重挂必须跳过它们）。 */
     private var brokenDexItems: List<IResolveDex> = emptyList()
+
+    /**
+     * 还在延后批次里排队、尚未执行 `startup()` 的功能 id。
+     *
+     * [rearmDeadFeatures] 必须跳过它们：这些功能「开关是开的、但还没轮到装」，
+     * 不跳过就会被自愈重挂当成「开关开着却没装」而立刻同步装上 —— 延后批次就白排了。
+     */
+    private val deferredPending: MutableSet<String> =
+        java.util.Collections.synchronizedSet(HashSet<String>())
 
     /**
      * 自愈重挂：把「开关是开的、但钩子实际没装上」的功能重新挂一遍。
@@ -235,6 +268,7 @@ object FeaturesLoader {
                 current in feature.targetProcesses &&
                 !feature.isActive &&
                 (feature.isEnabled || (feature as? ClickableFeature)?.alwaysEnabled == true) &&
+                feature.technicalId !in deferredPending &&
                 brokenDexItems.none { it === feature }
         }
         if (dead.isEmpty()) return
@@ -274,6 +308,7 @@ object FeaturesLoader {
         features: List<BaseFeature>,
         allBrokenItems: List<IResolveDex>,
     ) {
+        features.forEach { deferredPending.add(it.technicalId) }
         if (Looper.myLooper() != Looper.getMainLooper()) {
             // 不在主线程（理论上不会发生）就直接跑完，保持行为可预期。
             val queue = features.toMutableList()
@@ -284,16 +319,48 @@ object FeaturesLoader {
         val handler = Handler(Looper.getMainLooper())
         val pending = features.toMutableList()
         val totalStartedAt = SystemClock.uptimeMillis()
+        deferredDrainStarted.set(false)
         Looper.myQueue().addIdleHandler {
-            handler.post {
-                drainDeferredStartup(pending, allBrokenItems, totalStartedAt)
-            }
+            startDeferredDrain(handler, pending, allBrokenItems, totalStartedAt)
             false
         }
+        // 【2026-09-27 修】超时兜底。原来的延后批次**只**挂在 IdleHandler 上，主线程一旦长期
+        // 不空闲就永远不开始 —— 实机证据：18 次 `deferred startup scheduled`，只有 1 次
+        // 走到 `deferred feature startup finished`；7 次「20 feature(s)」批次全部没跑完，
+        // 于是那 20 个功能的 hook 到底装没装、日志完全答不上来。3 秒后无论如何开始装。
+        handler.postDelayed(
+            { startDeferredDrain(handler, pending, allBrokenItems, totalStartedAt) },
+            DEFERRED_START_TIMEOUT_MS,
+        )
+        // 兜底观测：30 秒还没装完就点名剩下的功能，避免「静默丢失」。
+        handler.postDelayed(
+            {
+                val left = synchronized(pending) { pending.map { it.technicalId } }
+                if (left.isNotEmpty()) {
+                    WeLogger.w(
+                        TAG,
+                        "延后批次 30s 仍未装完，剩余 ${left.size} 个：$left" +
+                            "（若持续出现，说明主线程长期不空闲）",
+                    )
+                }
+            },
+            DEFERRED_STALL_WARN_MS,
+        )
         WeLogger.i(
             TAG,
             "deferred startup scheduled: ${features.size} feature(s) — ${features.joinToString { it.technicalId }}",
         )
+    }
+
+    /** IdleHandler 与超时兜底两条路都汇到这里，用 CAS 保证只真正开始一次。 */
+    private fun startDeferredDrain(
+        handler: Handler,
+        pending: MutableList<BaseFeature>,
+        allBrokenItems: List<IResolveDex>,
+        totalStartedAt: Long,
+    ) {
+        if (!deferredDrainStarted.compareAndSet(false, true)) return
+        handler.post { drainDeferredStartup(pending, allBrokenItems, totalStartedAt) }
     }
 
     private fun drainDeferredStartup(
@@ -303,7 +370,12 @@ object FeaturesLoader {
     ) {
         val sliceStartedAt = SystemClock.uptimeMillis()
         while (pending.isNotEmpty()) {
-            runFeatureStartup(pending.removeAt(0), allBrokenItems)
+            val feature = pending.removeAt(0)
+            // 【2026-09-27 修】逐个功能兜异常：以前这里没有 try/catch，任何一个功能抛出来都会
+            // 让**剩余所有**功能静默丢失（而且连收尾日志都打不出来）。
+            runCatching { runFeatureStartup(feature, allBrokenItems) }
+                .onFailure { WeLogger.w(TAG, "延后启用失败（已跳过）：${feature.technicalId}", it) }
+            deferredPending.remove(feature.technicalId)
             if (SystemClock.uptimeMillis() - sliceStartedAt >= DEFERRED_SLICE_BUDGET_MS) {
                 Handler(Looper.getMainLooper()).postDelayed({
                     drainDeferredStartup(pending, allBrokenItems, totalStartedAt)

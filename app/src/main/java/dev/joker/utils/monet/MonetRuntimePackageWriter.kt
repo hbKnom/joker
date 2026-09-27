@@ -73,6 +73,8 @@ object MonetRuntimePackageWriter {
         val plannedCount: Int = 0,
         /** 因为黑名单/别名等原因被跳过的条数（按原因分组）。 */
         val skipped: Map<String, Int> = emptyMap(),
+        /** 每个写到的 typeId 实际声明的 TypeSpec 范围（= max(宿主同类型范围, 本包最大 entryId+1)）。 */
+        val specRanges: Map<Int, Int> = emptyMap(),
         val summary: String = "",
     ) {
         /** 写入率（%）：黑名单把覆盖吃掉多少一眼可见。 */
@@ -80,10 +82,17 @@ object MonetRuntimePackageWriter {
             get() = if (plannedCount <= 0) 100 else writtenIds.size * 100 / plannedCount
     }
 
+    /** 写包过程中判定「这个包绝对不能交给宿主」时抛出；调用方转成 [WriteOutcome.ok] = false。 */
+    private class PackageRejected(reason: String) : Exception(reason)
+
     /**
      * Creates the runtime package at [output]. Existing files are replaced atomically.
      *
      * @param packageName must be the host package (`com.tencent.mm`) for the provider to bind.
+     * @param hostTypeEntryCounts 宿主每个 typeId 声明的 entryCount（见 [MonetArscScanner]）。
+     *   **不在这里面的 typeId 一律不写**：TypeSpec 盖不住宿主 entryId 的包会让宿主的资源查找
+     *   整体失败（AOSP `FindEntryInternal` 在 `GetFlagsForEntryIndex` 返回 nullopt 时是
+     *   `return` 而不是 `continue`），那是「取色不生效 + 闪退」的同一根因。
      */
     fun write(
         output: File,
@@ -92,7 +101,14 @@ object MonetRuntimePackageWriter {
         hostReference: ((type: String, name: String) -> Int?)? = null,
         hostDrawableIsRealFile: ((path: String) -> Boolean)? = null,
         excludedIds: Set<Int> = emptySet(),
+        hostTypeEntryCounts: Map<Int, Int> = emptyMap(),
     ): WriteOutcome {
+        if (hostTypeEntryCounts.isEmpty()) {
+            // 量不出宿主类型范围就写包 = 赌宿主会不会被我们的 TypeSpec 打断资源查找。
+            // 实机已经赌输过一次（406 条覆盖全被冒烟校验判死、莫奈彻底不生效），这里直接不写。
+            WeLogger.e(TAG, "runtime package skipped: 宿主类型范围未知，拒绝写出会打断宿主资源查找的包")
+            return WriteOutcome(false, "宿主资源表类型范围读取失败，本次不写覆盖包（避免破坏微信资源查找）")
+        }
         if (plan.isEmpty) {
             // 一个角色都没解析出来时不该抛异常打断整条流程：调用方会把它当成
             // 「本次没有可应用的内容」处理（用户看到的是解析结果，而不是崩溃）。
@@ -113,6 +129,7 @@ object MonetRuntimePackageWriter {
                 hostDrawableIsRealFile,
                 excludedIds,
                 writtenFiles,
+                hostTypeEntryCounts,
             ) ?: run {
                 tmp.delete()
                 return WriteOutcome(false, "资源 id 对齐校验未通过（避免覆盖落到别的资源上）")
@@ -124,6 +141,10 @@ object MonetRuntimePackageWriter {
                 tmp.delete()
             }
             built
+        } catch (rejected: PackageRejected) {
+            tmp.delete()
+            WeLogger.e(TAG, "runtime package rejected: ${rejected.message}")
+            return WriteOutcome(false, rejected.message)
         } catch (t: Throwable) {
             tmp.delete()
             throw t
@@ -179,6 +200,7 @@ object MonetRuntimePackageWriter {
         hostDrawableIsRealFile: ((path: String) -> Boolean)?,
         excludedIds: Set<Int>,
         outFiles: MutableSet<String>,
+        hostTypeEntryCounts: Map<Int, Int>,
     ): WriteOutcome? {
         val apk = ApkModule()
         val table = TableBlock()
@@ -230,7 +252,7 @@ object MonetRuntimePackageWriter {
             }
         }
 
-        val aligned = AlignedEntryWriter(pkg, excludedIds)
+        val aligned = AlignedEntryWriter(pkg, excludedIds, hostTypeEntryCounts)
 
         plan.colors.forEach { color ->
             val binding = color.binding
@@ -322,6 +344,23 @@ object MonetRuntimePackageWriter {
             )
         }
 
+        // 【2026-09-27 根治「莫奈彻底不生效」的主修】TypeSpec 声明范围必须盖住宿主同类型的整个
+        // entryId 空间。AOSP 的 `AssetManager2::FindEntryInternal` 对同组每个包都先取
+        // `type_spec->GetFlagsForEntryIndex(entry_idx)`，取不到（`entry_idx >= 本包 spec 声明的
+        // entryCount`）时是 **return 错误**、不是 continue —— 宿主对该 id 的取值/取名字会整体失败。
+        // 旧实现只把 spec 补到「本包写到的最大 entryId+1」，而且那一次补丁从来没生效过（实机日志里
+        // `spec typeId … entryCount … -> …` 一条都没有），于是包一注入宿主就查不到资源名：
+        //   `0 条能按名字解析 … 另有 406 条查不到资源名（?/0x7f0607d3 …）`，
+        // 而 0x7f0607d3 在宿主表里就是 color/wj（宿主 8.0.72 的真实范围：type 6 = 3075、8 = 6544、13 = 11）。
+        val createdCounts = aligned.requiredTypeCounts()
+        val requiredRanges = LinkedHashMap<Int, Int>()
+        (specEntryCounts.keys + createdCounts.keys).forEach { typeId ->
+            requiredRanges[typeId] = maxOf(
+                hostTypeEntryCounts.getOrDefault(typeId, 0),
+                specEntryCounts.getOrDefault(typeId, 0),
+                createdCounts.getOrDefault(typeId, 0),
+            )
+        }
         table.refreshFull()
         specFlags.forEach { (resourceId, flags) -> markSpecFlags(pkg, resourceId, flags) }
         apk.refreshTable()
@@ -331,12 +370,18 @@ object MonetRuntimePackageWriter {
             WeLogger.e(TAG, "runtime package rejected: $mismatch")
             return null
         }
-        freezeCanonicalTable(apk, table, specEntryCounts)
+        freezeCanonicalTable(apk, table, requiredRanges)
         output.parentFile?.mkdirs()
         apk.writeApk(output)
         apk.close()
+        // 回读自检：不看任何库的内部状态，只认写出来的字节。任何一条不成立就弃包。
+        val writtenIds = aligned.writtenIds()
+        verifyWrittenPackage(output, requiredRanges, writtenIds)?.let { reason ->
+            throw PackageRejected(reason)
+        }
         val failedNote = if (failures > 0) ", entry failures $failures" else ""
         val outcome = aligned.outcome("${aligned.summary()}$failedNote")
+            .copy(specRanges = requiredRanges.toMap())
         WeLogger.i(
             TAG,
             "runtime package written: ${outcome.summary}, 写入率 ${outcome.coveragePercent}%" +
@@ -350,6 +395,50 @@ object MonetRuntimePackageWriter {
             is ColorValue.Reference -> setValueAsReference(value.id)
             is ColorValue.Literal -> setValueAsRaw(ValueType.COLOR_ARGB8, value.argb)
         }
+    }
+
+    /**
+     * 回读刚写出的包，逐条断言「宿主能安全使用它」。
+     *
+     * @return 非 null = 必须弃包（理由）。
+     */
+    private fun verifyWrittenPackage(
+        output: File,
+        required: Map<Int, Int>,
+        expectedIds: List<Int>,
+    ): String? {
+        val scan = MonetArscScanner.inspectPackage(output)
+            ?: return "写出的包读不出 resources.arsc（结构不可用）"
+        if (scan.packageId != HOST_PACKAGE_ID) {
+            return "写出的包 packageId=0x${scan.packageId.toString(16)} 不是宿主包 0x${HOST_PACKAGE_ID.toString(16)}"
+        }
+        required.forEach { (typeId, count) ->
+            val range = scan.types[typeId] ?: return "写出的包里没有 typeId $typeId 的 TypeSpec"
+            if (range.specEntryCount < count) {
+                return "typeId $typeId 的 TypeSpec 只声明 ${range.specEntryCount} 条（需要 $count）：" +
+                    "盖不住宿主 entryId 的包会打断宿主的资源查找"
+            }
+            if (range.specFlagsCapacity < range.specEntryCount) {
+                return "typeId $typeId 的 TypeSpec 声明 ${range.specEntryCount} 条 > flags 物理容量 " +
+                    "${range.specFlagsCapacity}（AOSP 会丢掉整个包 = 静默不生效）"
+            }
+        }
+        // 自洽：每个 type 的声明范围都必须盖住它**自己真实存在**的最大 entryId。
+        // 这条不成立时，宿主查这个 entryId 会因为我们这个包而整类型失败 —— 与 hostTypeEntryCounts
+        // 是否量准无关，纯看我们写出的字节。
+        scan.types.forEach { (typeId, range) ->
+            val maxEntry = range.entryIds.maxOrNull() ?: return@forEach
+            if (range.specEntryCount <= maxEntry) {
+                return "typeId $typeId 里有 entryId $maxEntry，但 TypeSpec 只声明 " +
+                    "${range.specEntryCount} 条（包内条目落在声明范围外 = 打断宿主资源查找）"
+            }
+        }
+        val present = scan.resourceIds().toHashSet()
+        val absent = expectedIds.firstOrNull { it !in present }
+        if (absent != null) {
+            return "写出的包里没有 0x${absent.toUInt().toString(16)}（条目没真的落地）"
+        }
+        return null
     }
 
     private fun markSpecFlags(pkg: PackageBlock, resourceId: Int, flags: Int) {
@@ -404,7 +493,7 @@ object MonetRuntimePackageWriter {
     private fun freezeCanonicalTable(
         apk: ApkModule,
         table: TableBlock,
-        specEntryCounts: Map<Int, Int>,
+        requiredRanges: Map<Int, Int>,
     ) {
         val bytes = table.bytes
         val tableStrings = table.stringPool
@@ -418,42 +507,41 @@ object MonetRuntimePackageWriter {
             putI32(bytes, packageOffset + 0x118, 0)
             pkg.listSpecTypePairs().forEach { pair ->
                 val specOffset = table.countUpTo(pair.specBlock)
-                val typeId = bytes[specOffset + 8].toInt() and 0xff
-                val current = getI32(bytes, specOffset + 12)
-                val wanted = specEntryCounts[typeId] ?: 0
                 putU16(bytes, specOffset + 10, pair.countTypeBlocks())
-                if (wanted > current) {
-                    // TypeSpec 的 entryCount（结构体偏移 12）必须覆盖它名下 TypeBlock 真正用到
-                    // 的最大 entryId。ARSCLib 从零建表时这一栏不保证跟着条目涨：实机包里有
-                    // typeId 8 写到 0x116c、别的 typeId 的 spec 却只声明很小一段。
-                    // spec 盖不住条目时，宿主的
-                    //   TypedArray.getDrawable -> ResourcesImpl.loadDrawableForCookie
-                    // 会在**取到值之后**再回查一次资源名，回查失败抛
-                    //   Resources$NotFoundException: File res/drawable/ao1.xml from
-                    //   drawable resource ID #0x7f08116c
-                    // 直接崩进程（joker-crash-2026-09-26_13-33-02 / 13-43-03）。
-                    // 补大不补小：多出来的 flags 全是 0，语义就是「该配置没有差异」，安全。
-                    putI32(bytes, specOffset + 12, wanted)
-                    WeLogger.i(
-                        TAG,
-                        "spec typeId $typeId entryCount $current -> $wanted（写到了高 entryId，spec 同步补大）",
-                    )
-                }
             }
         }
 
+        // TypeSpec 的声明范围最后用**自己的扫描器**按真实字节补一遍。
+        //
+        // 为什么必须是「物理扩容 + 改数字」两步，而不能只改数字（2026-09-27 实测）：
+        // ARSCLib 的 `SpecBlock.setEntryCount(3075)` 看着有效，但只要之后调用
+        // `ApkModule.refreshTable()`（本函数前一步就是它）就会被**重置回本包条目的最大
+        // entryId+1**，flags 数组也跟着缩回去。实测（真 ARSCLib 1.4.0）：
+        //   entryCount(after setEntryCount)=3075 → entryCount(after apk.refreshTable)=2501
+        // 于是只改数字的 [MonetArscScanner.patchSpecEntryCounts] 会因「容量 < 声明」直接失败
+        // → 每次写包都弃包 → 莫奈永远不注入。
+        // 所以这里用 [MonetArscScanner.growSpecFlags] 在序列化之后的字节上插入零填充 flags，
+        // 并同步三个 chunk 长度字段（table / package / spec），最后才写 entryCount。
+        // 实测同一路径写出的 APK 回读字节与扩容后的字节完全一致（writeApk 不会重算这张表）。
+        val grown = MonetArscScanner.growSpecFlags(bytes, requiredRanges)
+            ?: throw PackageRejected("TypeSpec 结构读不出来或缺少目标 typeId（写出来也是废包）")
+        MonetArscScanner.patchSpecEntryCounts(grown, requiredRanges)?.forEach { (typeId, count) ->
+            WeLogger.i(
+                TAG,
+                "spec typeId $typeId 声明范围已确保 $count 条" +
+                    "（宿主同类型范围；盖不住宿主 entryId 的包会打断宿主资源查找 = 取色全不生效）",
+            )
+        } ?: throw PackageRejected("TypeSpec 的 flags 容量不足以声明宿主同类型范围（写出来也是废包）")
+        if (grown.size != bytes.size) {
+            WeLogger.i(TAG, "TypeSpec flags 扩容 ${bytes.size} -> ${grown.size} 字节（补到宿主同类型范围）")
+        }
+
         apk.removeInputSource(TableBlock.FILE_NAME)
-        apk.add(ByteInputSource(bytes, TableBlock.FILE_NAME).apply {
+        apk.add(ByteInputSource(grown, TableBlock.FILE_NAME).apply {
             method = ZipEntry.STORED
             sort = 1
         })
     }
-
-    private fun getI32(bytes: ByteArray, offset: Int): Int =
-        (bytes[offset].toInt() and 0xff) or
-            ((bytes[offset + 1].toInt() and 0xff) shl 8) or
-            ((bytes[offset + 2].toInt() and 0xff) shl 16) or
-            ((bytes[offset + 3].toInt() and 0xff) shl 24)
 
     private fun putU16(bytes: ByteArray, offset: Int, value: Int) {
         bytes[offset] = value.toByte()
@@ -493,12 +581,21 @@ object MonetRuntimePackageWriter {
     private class AlignedEntryWriter(
         private val pkg: PackageBlock,
         private val excludedIds: Set<Int>,
+        private val hostTypeEntryCounts: Map<Int, Int>,
     ) {
 
         private val typeNames = linkedMapOf<Int, String>()
         private var written = 0
         private val skipped = linkedMapOf<String, Int>()
         private val created = mutableListOf<Pair<Entry, Int>>()
+        /**
+         * 每个 typeId 里**真的建出来**的最大 entryId + 1。
+         *
+         * 与 `specEntryCounts`（只有值写成功的条目才记账）不同，这里是「条目已在包里」的事实。
+         * TypeSpec 声明范围必须 ≥ 这个值，否则宿主查这个 entryId 时
+         * `GetFlagsForEntryIndex` 返回 nullopt → 整个类型的查找被我们的包打断。
+         */
+        private val createdCounts = linkedMapOf<Int, Int>()
         /** 计划要写的覆盖槽位数（含被黑名单跳过的）：写入率的分母。 */
         private var attempted = 0
         /** 真写进包里的覆盖 id：冒烟校验只针对这些。 */
@@ -521,6 +618,11 @@ object MonetRuntimePackageWriter {
             val typeId = (id ushr 16) and 0xff
             val entryId = id and 0xffff
             if (typeId == 0 || entryId == 0) return skip(binding, "id 退化 (0x${id.toUInt().toString(16)})")
+            // 宿主这个 typeId 的 id 空间量不出来就不写：写进去就要声明 TypeSpec 范围，
+            // 声明小了会打断宿主该类型下**所有** id 的查找（见 [MonetArscScanner]）。
+            if (!hostTypeEntryCounts.containsKey(typeId)) {
+                return skip(binding, "宿主该 typeId 的 id 空间未知（写进去可能打断宿主资源查找）")
+            }
             // 到这里才是一个「本来该写进去的槽位」，写入率从这一行开始统计。
             attempted++
             // 拉黑表：曾经在实机上「值能取到、但 getResourceTypeName(id) 取不到名字」的 id。
@@ -541,6 +643,7 @@ object MonetRuntimePackageWriter {
             val entry = pkg.getOrCreateEntry(typeId.toByte(), entryId.toShort(), qualifiers)
                 ?: return skip(binding, "ARSCLib 未能创建条目")
             if (entry.name != binding.name) entry.setName(binding.name)
+            if (entryId + 1 > createdCounts.getOrDefault(typeId, 0)) createdCounts[typeId] = entryId + 1
             written++
             writtenIds += id
             created += entry to id
@@ -585,6 +688,12 @@ object MonetRuntimePackageWriter {
             }
             return null
         }
+
+        /** 真写进包里的覆盖 id（写完后回读自检 / 冒烟校验都用它）。 */
+        fun writtenIds(): List<Int> = writtenIds.toList()
+
+        /** 每个 typeId 里真的建出来的最大 entryId + 1：TypeSpec 声明范围必须 ≥ 它。 */
+        fun requiredTypeCounts(): Map<Int, Int> = createdCounts.toMap()
 
         fun summary(): String = buildString {
             append("aligned $written entries")

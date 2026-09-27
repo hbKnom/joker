@@ -477,7 +477,7 @@ object ActivityProxy {
 
         override fun callActivityOnCreate(activity: Activity, icicle: Bundle?) {
             ResourcesInjector.injectModuleRes(activity.resources)
-            ActivityResourceHooks.dispatch(activity.resources)
+            ActivityResourceHooks.dispatch(activity)
             if (ActProxyMgr.isModuleProxyActivity(activity.javaClass.name)) {
                 val cl = ParcelableFixer.hybridClassLoader
                 runCatching {
@@ -498,7 +498,7 @@ object ActivityProxy {
             persistentState: PersistableBundle?
         ) {
             ResourcesInjector.injectModuleRes(activity.resources)
-            ActivityResourceHooks.dispatch(activity.resources)
+            ActivityResourceHooks.dispatch(activity)
             base.callActivityOnCreate(activity, icicle, persistentState)
         }
 

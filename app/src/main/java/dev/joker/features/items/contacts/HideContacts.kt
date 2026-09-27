@@ -48,6 +48,7 @@ import dev.joker.features.items.contacts.hidecontacts.installVoipHooks
 import dev.joker.features.items.contacts.hidecontacts.rewriteMomentsFeedSql
 import dev.joker.features.items.contacts.hidecontacts.showSchedulesDialog
 import dev.joker.features.items.contacts.hidecontacts.uninstallSchedules
+import dev.joker.preferences.HotPrefs
 import dev.joker.preferences.WePrefs
 import dev.joker.preferences.WePrefs.Companion.prefOption
 import dev.joker.ui.content.AlertDialogContent
@@ -88,15 +89,25 @@ object HideContacts : ClickableFeature(), IResolveDex, WeChatInputBarApi.IInputB
     // need to re-check. New hides rely purely on the query-time filter and never set the marker.
     private const val KEY_LEGACY_MIGRATED = "hidden_parentref_migrated"
 
+    /**
+     * 被隐藏的联系人/会话集合。
+     *
+     * 【2026-09-27 修卡顿】这个集合在**每条消息 bind、每次会话列表滚动、每个会话点开**时都会被
+     * 判断（`talker !in hiddenContacts` / `wxId !in hiddenContacts` / `isHiddenNow()`），
+     * 而原来每次读都是 `WePrefs.getStringSetOrDef` = 一次真正的 SQLite 查询。改用
+     * [HotPrefs]（1 秒 TTL）：跨进程写入最多晚 1 秒可见，对「隐藏名单」这种用户手动触发的
+     * 设置不可感知；本进程写入会立刻失效缓存，所以「刚隐藏立刻生效」不受影响。
+     */
     var hiddenContacts
-        get() = WePrefs.getStringSetOrDef(KEY_CONTACTS, emptySet())
+        get() = HotPrefs.stringSet(KEY_CONTACTS, emptySet())
         set(value) {
             // Muting is a server-synced oplog (OpenImOpLogLogic), so only send it for contacts that
             // were just added — the previous version re-sent it for the entire set on every save.
             // NB: un-hiding deliberately does NOT restore the prior mute state; doing so would
             // overwrite a mute the user set themselves. See the design doc.
-            val newlyHidden = value - WePrefs.getStringSetOrDef(KEY_CONTACTS, emptySet())
+            val newlyHidden = value - HotPrefs.stringSet(KEY_CONTACTS, emptySet())
             WePrefs.putStringSet(KEY_CONTACTS, value)
+            HotPrefs.invalidate(KEY_CONTACTS)
             for (convId in newlyHidden) {
                 WeConversationApi.setDnd(convId, true)
             }

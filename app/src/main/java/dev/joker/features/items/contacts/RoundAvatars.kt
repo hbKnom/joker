@@ -15,6 +15,7 @@ import dev.joker.dexkit.dsl.dexConstructor
 import dev.joker.dexkit.dsl.dexMethod
 import dev.joker.features.core.ClickableFeature
 import dev.joker.features.core.FeatureCategoryIds
+import dev.joker.preferences.HotPrefs
 import dev.joker.preferences.WePrefs
 import dev.joker.ui.content.AlertDialogContent
 import dev.joker.ui.content.TextButton
@@ -42,8 +43,17 @@ object RoundAvatars : ClickableFeature(), IResolveDex {
     }
     private val methodAvatarModify by dexMethod()
 
+    /**
+     * 头像圆角系数。
+     *
+     * 【2026-09-27 修卡顿】它在 `hookBefore { setFloatArg(2, radiusFactor) }` 里被读 —— 也就是
+     * **每创建一个头像就触发一次**（聊天列表、通讯录、群成员、朋友圈都是这个入口）。原先直查
+     * `WePrefs.getFloatOrDef`，而 WePrefs 的一次读就是一次真正的 SQLite 查询（建语句/开游标/加锁），
+     * 在快速滑动时是可见的掉帧来源。改用 [HotPrefs.float]（1 秒 TTL 缓存）；
+     * 设置界面里的写入路径会 `invalidate`，所以「改完立刻生效」这条语义不变。
+     */
     private val radiusFactor: Float
-        get() = WePrefs.getFloatOrDef(KEY_ROUND_AVATAR, 0.5f).coerceIn(0.1f, 0.5f)
+        get() = HotPrefs.float(KEY_ROUND_AVATAR, 0.5f).coerceIn(0.1f, 0.5f)
 
     override fun onEnable() {
         CustomLocalFriendAvatars.methodConversationAvatar.hookBefore {
@@ -105,6 +115,7 @@ object RoundAvatars : ClickableFeature(), IResolveDex {
                                     onValueChange = {
                                         percent = it
                                         WePrefs.putFloat(KEY_ROUND_AVATAR, it / 100f)
+                                        HotPrefs.invalidate(KEY_ROUND_AVATAR)
                                         notifyCustomContactAvatarChanged()
                                     },
                                 )

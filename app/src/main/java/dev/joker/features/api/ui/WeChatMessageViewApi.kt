@@ -12,6 +12,7 @@ import dev.joker.features.core.FeatureCategoryIds
 import dev.joker.utils.HookParam
 import dev.joker.utils.WeLogger
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.WeakHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -216,14 +217,42 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
     fun getBoundMessage(view: View): MessageInfo? =
         synchronized(currentBindings) { currentBindings[view] }
 
+    /**
+     * 「宿主行容器 → 聊天数据 adapter」的字段，按宿主类缓存。
+     *
+     * 【2026-09-27 修卡顿】[getMsgInfoFromParam] 在**每一条消息 bind**时都会执行（实机 1000+
+     * 条/分钟），而它原本每次都做两次 `reflekt()` 查找（`firstField` 扫字段 + `firstMethod`
+     * 扫方法）后再 invoke。改成按宿主类缓存**已解析好的 `java.lang.reflect.Field`/`Method`**
+     * （`isAccessible` 只设一次），热路径上就只剩一次 `Field.get` + 一次 `Method.invoke`。
+     * 用「按类缓存」而不是「单例缓存」：宿主在不同消息类型下可能用不同的 adapter 实现类，
+     * 按类缓存天然覆盖这种情况，也不会因为某个类被替换而串味。
+     */
+    private val adapterFieldByHolder = ConcurrentHashMap<Class<*>, java.lang.reflect.Field>()
+    private val getItemMethodByAdapter = ConcurrentHashMap<Class<*>, java.lang.reflect.Method>()
+
+    private fun chattingDataAdapterFieldOf(holder: Any): java.lang.reflect.Field =
+        adapterFieldByHolder[holder.javaClass] ?: run {
+            val resolved = holder.reflekt()
+                .firstField { type = WeMessageApi.classChattingDataAdapter.clazz }
+                .self
+                .also { it.isAccessible = true }
+            adapterFieldByHolder.putIfAbsent(holder.javaClass, resolved) ?: resolved
+        }
+
+    private fun getItemMethodOf(adapter: Any): java.lang.reflect.Method =
+        getItemMethodByAdapter[adapter.javaClass] ?: run {
+            val resolved = adapter.reflekt()
+                .firstMethod { name = "getItem" }
+                .self
+                .also { it.isAccessible = true }
+            getItemMethodByAdapter.putIfAbsent(adapter.javaClass, resolved) ?: resolved
+        }
+
     fun getMsgInfoFromParam(param: HookParam): MessageInfo {
-        val chattingDataAdapter = param.thisObject!!.reflekt()
-            .firstField { type = WeMessageApi.classChattingDataAdapter.clazz }
-            .get()!!
+        val holder = param.thisObject!!
+        val chattingDataAdapter = chattingDataAdapterFieldOf(holder).get(holder)!!
         val msgId = param.args[2] as Int
-        val raw = chattingDataAdapter.reflekt()
-            .firstMethod { name = "getItem" }
-            .invoke(msgId)!!
+        val raw = getItemMethodOf(chattingDataAdapter).invoke(chattingDataAdapter, msgId)!!
         val msgInfo = MessageInfo(raw)
         // 诊断日志：确认 onBindView 参数与 getItem 取到的消息是否一致（头衔串排查用）。
         // 这里每条消息 bind 都会被调用（实测 1000+ 条/分钟），必须挂在「详细日志」开关后面：

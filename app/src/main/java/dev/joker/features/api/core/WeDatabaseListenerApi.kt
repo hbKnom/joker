@@ -90,7 +90,11 @@ object WeDatabaseListenerApi : ApiFeature() {
         args: Array<out Any?>,
         result: Any? = null
     ) {
-        if (!Preferences.verboseLog) return
+        // 【2026-09-27 修卡顿】这里原来是 `Preferences.verboseLog` —— 它的 getter
+        // **每次读都走一次 SharedPreferences/SQLite 查询**，而本函数挂在宿主 rawQuery 的
+        // 热路径上（每打开一个聊天页/每次数据库读都会经过）。改用带缓存的
+        // [WeLogger.verboseEnabled]（开关变化后再开微信生效），省掉每次一次 SQLite 读。
+        if (!WeLogger.verboseEnabled) return
 
         val argsInfo = formatArgs(args)
         val resultStr = if (result != null) ", result=$result" else ""
@@ -195,7 +199,7 @@ object WeDatabaseListenerApi : ApiFeature() {
 
                     if (currentSql != sql) {
                         args[0] = currentSql
-                        if (Preferences.verboseLog)
+                        if (WeLogger.verboseEnabled)
                             WeLogger.d(
                                 TAG,
                                 "[rawQuery] SQL modified: $sql -> $currentSql, stack=${WeLogger.currentStackTrace}"
@@ -230,7 +234,7 @@ object WeDatabaseListenerApi : ApiFeature() {
 
                 if (currentSql != sql) {
                     args[1] = currentSql
-                    if (Preferences.verboseLog)
+                    if (WeLogger.verboseEnabled)
                         WeLogger.d(
                             TAG,
                             "[rawQueryWithFactory] SQL modified: $sql -> $currentSql, stack=${WeLogger.currentStackTrace}"
