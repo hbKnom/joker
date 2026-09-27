@@ -73,6 +73,15 @@ data class MonetRuntimeState(
     val resolveStartedAt: Long = 0L,
     /** 连续「解析没跑完就退出」的次数；达到上限后本次启动跳过解析（用户可手动重试）。 */
     val resolveFailStreak: Int = 0,
+    /**
+     * 上一个成功应用的运行时包里**真的写进去**的覆盖资源 id。
+     *
+     * 为什么必须记：复用旧包时唯一诚实的校验对象是「包的内容」，而不是语义角色表
+     * （`MonetBindings.roles` 里的 id 本来就存在于微信自己的资源表里，包里一条覆盖都没有时
+     * 也照样能解析得出来，于是残缺包永远检测不到）。实机 2026-09-27 的现场就是
+     * 「包内只剩 4 条覆盖、日志却打印 231 条覆盖资源全部可取用」。
+     */
+    val appliedOverlayIds: List<Int> = emptyList(),
 ) {
     /** 应用后没等到确认就重启 = 疑似是被这个包搞崩的。 */
     fun suspiciousRestart(now: Long, restartWindowMs: Long, expectedPackage: String): Boolean =

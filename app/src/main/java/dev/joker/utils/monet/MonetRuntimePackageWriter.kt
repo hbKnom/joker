@@ -53,6 +53,34 @@ object MonetRuntimePackageWriter {
     private const val TAG = "MonetRuntimePackageWriter"
 
     /**
+     * 一次写包的**结果**，而不只是成功/失败。
+     *
+     * 为什么必须把「到底写进去了哪些 id」交回调用方（2026-09-27 实机事故）：
+     * 注入后的冒烟校验原来遍历的是**语义角色的 id 表**（`bindings.roles`），而那张表里的 id
+     * 本来就存在于微信自己的资源表里 —— 于是「包里其实只剩 4 条覆盖（403 条被黑名单跳过）」时，
+     * 校验依然打印「231 条覆盖资源全部可取用」并通过，黑名单从此再也不会收缩。用户看到的就是
+     * 「解析成功、包也 applied，但取色/圆角 PRO/角标全都不生效」（实机日志
+     * `runtime package written: aligned 4 entries … skipped 冒烟校验未通过×402`）。
+     *
+     * 现在校验对象 = [writtenIds]（**真的写进包里的条目**），覆盖率也如实报出来。
+     */
+    data class WriteOutcome(
+        val ok: Boolean,
+        val reason: String? = null,
+        /** 真的写进包里的覆盖 id（冒烟校验只针对这些）。 */
+        val writtenIds: List<Int> = emptyList(),
+        /** 计划要写的覆盖槽位数（含 night 变体）。 */
+        val plannedCount: Int = 0,
+        /** 因为黑名单/别名等原因被跳过的条数（按原因分组）。 */
+        val skipped: Map<String, Int> = emptyMap(),
+        val summary: String = "",
+    ) {
+        /** 写入率（%）：黑名单把覆盖吃掉多少一眼可见。 */
+        val coveragePercent: Int
+            get() = if (plannedCount <= 0) 100 else writtenIds.size * 100 / plannedCount
+    }
+
+    /**
      * Creates the runtime package at [output]. Existing files are replaced atomically.
      *
      * @param packageName must be the host package (`com.tencent.mm`) for the provider to bind.
@@ -64,31 +92,30 @@ object MonetRuntimePackageWriter {
         hostReference: ((type: String, name: String) -> Int?)? = null,
         hostDrawableIsRealFile: ((path: String) -> Boolean)? = null,
         excludedIds: Set<Int> = emptySet(),
-    ): Boolean {
+    ): WriteOutcome {
         if (plan.isEmpty) {
             // 一个角色都没解析出来时不该抛异常打断整条流程：调用方会把它当成
             // 「本次没有可应用的内容」处理（用户看到的是解析结果，而不是崩溃）。
             WeLogger.w(TAG, "runtime package skipped: empty plan")
-            return false
+            return WriteOutcome(false, "计划为空（没有可应用的资源）")
         }
         val tmp = File(
             output.parentFile,
             ".${output.name}.tmp-${Thread.currentThread().id}-${System.nanoTime()}",
         )
         val writtenFiles = HashSet<String>()
-        try {
-            if (!writeTo(
-                    tmp,
-                    packageName,
-                    plan,
-                    hostReference,
-                    hostDrawableIsRealFile,
-                    excludedIds,
-                    writtenFiles,
-                )
-            ) {
+        val outcome: WriteOutcome = try {
+            val built = writeTo(
+                tmp,
+                packageName,
+                plan,
+                hostReference,
+                hostDrawableIsRealFile,
+                excludedIds,
+                writtenFiles,
+            ) ?: run {
                 tmp.delete()
-                return false
+                return WriteOutcome(false, "资源 id 对齐校验未通过（避免覆盖落到别的资源上）")
             }
             if (!tmp.renameTo(output)) {
                 // rename rejected (some FUSE/MediaProvider layers do not permit it); a byte copy is
@@ -96,25 +123,26 @@ object MonetRuntimePackageWriter {
                 tmp.copyTo(output, overwrite = true)
                 tmp.delete()
             }
-            // 写包之后逐条复核「条目里引用的资源文件真的在包里」。
-            //
-            // 宿主取 drawable 的方式是：读条目值 -> 得到 `res/xxx/yyy.xml` 路径 -> 去（合并后的）
-            // 资源包里找这个文件。只要文件缺失，宿主就抛
-            //   Resources$NotFoundException: File res/drawable/ao1.xml from drawable resource ID #0x7f08116c
-            // 并**直接崩进程**（实机 joker-crash-2026-09-26_13-33-02 / 13-43-03 就是这条）。
-            // ARSCLib 写包时是否真的落地这些非资源表文件不由我们掌控，所以这里不信它，
-            // 用 zip 清单自己查一遍：任何一条缺文件就整包放弃（宁可不莫奈化，也不能喂坏包）。
-            val missing = missingResourceFiles(output, writtenFiles)
-            if (missing != null) {
-                WeLogger.e(TAG, "runtime package rejected: $missing")
-                output.delete()
-                return false
-            }
+            built
         } catch (t: Throwable) {
             tmp.delete()
             throw t
         }
-        return true
+        // 写包之后逐条复核「条目里引用的资源文件真的在包里」。
+        //
+        // 宿主取 drawable 的方式是：读条目值 -> 得到 `res/xxx/yyy.xml` 路径 -> 去（合并后的）
+        // 资源包里找这个文件。只要文件缺失，宿主就抛
+        //   Resources$NotFoundException: File res/drawable/ao1.xml from drawable resource ID #0x7f08116c
+        // 并**直接崩进程**（实机 joker-crash-2026-09-26_13-33-02 / 13-43-03 就是这条）。
+        // ARSCLib 写包时是否真的落地这些非资源表文件不由我们掌控，所以这里不信它，
+        // 用 zip 清单自己查一遍：任何一条缺文件就整包放弃（宁可不莫奈化，也不能喂坏包）。
+        val missing = missingResourceFiles(output, writtenFiles)
+        if (missing != null) {
+            WeLogger.e(TAG, "runtime package rejected: $missing")
+            output.delete()
+            return WriteOutcome(false, missing)
+        }
+        return outcome
     }
 
     /**
@@ -151,7 +179,7 @@ object MonetRuntimePackageWriter {
         hostDrawableIsRealFile: ((path: String) -> Boolean)?,
         excludedIds: Set<Int>,
         outFiles: MutableSet<String>,
-    ): Boolean {
+    ): WriteOutcome? {
         val apk = ApkModule()
         val table = TableBlock()
         apk.setTableBlock(table)
@@ -301,15 +329,20 @@ object MonetRuntimePackageWriter {
         if (mismatch != null) {
             // id 被 ARSCLib 重新分配过 = 覆盖会落到别的资源上（正是闪退的成因），宁可整包不写。
             WeLogger.e(TAG, "runtime package rejected: $mismatch")
-            return false
+            return null
         }
         freezeCanonicalTable(apk, table, specEntryCounts)
         output.parentFile?.mkdirs()
         apk.writeApk(output)
         apk.close()
         val failedNote = if (failures > 0) ", entry failures $failures" else ""
-        WeLogger.i(TAG, "runtime package written: ${aligned.summary()}$failedNote")
-        return true
+        val outcome = aligned.outcome("${aligned.summary()}$failedNote")
+        WeLogger.i(
+            TAG,
+            "runtime package written: ${outcome.summary}, 写入率 ${outcome.coveragePercent}%" +
+                "（${outcome.writtenIds.size}/${outcome.plannedCount}）",
+        )
+        return outcome
     }
 
     private fun com.reandroid.arsc.value.Entry.setColorValue(value: ColorValue) {
@@ -466,16 +499,21 @@ object MonetRuntimePackageWriter {
         private var written = 0
         private val skipped = linkedMapOf<String, Int>()
         private val created = mutableListOf<Pair<Entry, Int>>()
+        /** 计划要写的覆盖槽位数（含被黑名单跳过的）：写入率的分母。 */
+        private var attempted = 0
+        /** 真写进包里的覆盖 id：冒烟校验只针对这些。 */
+        private val writtenIds = ArrayList<Int>()
+
+        fun outcome(summary: String): WriteOutcome = WriteOutcome(
+            ok = true,
+            writtenIds = writtenIds.toList(),
+            plannedCount = attempted,
+            skipped = skipped.toMap(),
+            summary = summary,
+        )
 
         fun entry(binding: MonetBinding, qualifiers: String): Entry? {
             val id = binding.id
-            // 拉黑表：曾经在实机上「值能取到、但 getResourceTypeName(id) 取不到名字」的 id。
-            // 宿主的 TypedArray -> getDrawable 路径会在取到值之后再回查一次资源名，回查失败
-            // 就抛 Resources$NotFoundException 直接崩进程（实机 joker-crash-2026-09-26_13-33-02）。
-            // 这些 id 永久不再写进包，是「宁可少莫奈化几个资源，也绝不让微信崩」的兜底。
-            if (id in excludedIds) {
-                return skip(binding, "冒烟校验未通过（已拉黑，见 monet_blacklist.json）")
-            }
             if (id == 0) return skip(binding, "id==0（合成资源必须先用 syntheticId 借槽位）")
             if ((id ushr 24) and 0xff != HOST_PACKAGE_ID) {
                 return skip(binding, "packageId 不是宿主 0x${HOST_PACKAGE_ID.toString(16)}")
@@ -483,6 +521,16 @@ object MonetRuntimePackageWriter {
             val typeId = (id ushr 16) and 0xff
             val entryId = id and 0xffff
             if (typeId == 0 || entryId == 0) return skip(binding, "id 退化 (0x${id.toUInt().toString(16)})")
+            // 到这里才是一个「本来该写进去的槽位」，写入率从这一行开始统计。
+            attempted++
+            // 拉黑表：曾经在实机上「值能取到、但 getResourceTypeName(id) 取不到名字」的 id。
+            // 宿主的 TypedArray -> getDrawable 路径会在取到值之后再回查一次资源名，回查失败
+            // 就抛 Resources$NotFoundException 直接崩进程（实机 joker-crash-2026-09-26_13-33-02）。
+            // 注意：这张表由 [MonetEngine] 每轮解析**重新验证**（见 BLACKLIST_TRUST_LIMIT），
+            // 绝不允许它长期累积成「整批覆盖被吃掉、莫奈彻底不生效」。
+            if (id in excludedIds) {
+                return skip(binding, "冒烟校验未通过（本轮已拉黑）")
+            }
             val known = typeNames[typeId]
             if (known != null && !known.equals(binding.type, ignoreCase = true)) {
                 // 同一个 typeId 出现在两个类型名下 = 多 APK 合并时 id 撞车，写下去就是乱盖。
@@ -494,6 +542,7 @@ object MonetRuntimePackageWriter {
                 ?: return skip(binding, "ARSCLib 未能创建条目")
             if (entry.name != binding.name) entry.setName(binding.name)
             written++
+            writtenIds += id
             created += entry to id
             return entry
         }

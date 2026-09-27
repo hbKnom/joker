@@ -168,6 +168,15 @@ object MonetEngine : ClickableFeature() {
      */
     private const val MAX_PACKAGE_ATTEMPTS = 3
 
+    /**
+     * 可接受的最低覆盖写入率（%）。
+     *
+     * 实机事故（2026-09-27）：黑名单累积到 402 条，把 406 个覆盖槽位吃掉 402 个，包内只剩 4 条，
+     * 结果「解析成功、包 applied、但取色 / 圆角 PRO / 角标一个都不生效」。写入率低于这个值时
+     * 既要在日志里显式告警，也要在「复用已有包」时把它判成残缺包、删掉重新解析。
+     */
+    private const val MIN_OVERLAY_COVERAGE_PERCENT = 60
+
     /** 宿主 `res/` 下算作「可覆盖的真实文件」的扩展名（用于过滤别名 drawable）。 */
 
     const val KEY_BUBBLE_STYLE = "monet_bubble_style"
@@ -354,6 +363,13 @@ object MonetEngine : ClickableFeature() {
             return
         }
         resolving = true
+        if (force) {
+            // 用户点「重新解析」= 从头来过：连黑名单一起清掉。新版解析本来就不再沿用历史黑名单
+            //（见 startResolve 里的 staleBlacklist 处理），这里顺手删文件，避免手机上残留一份
+            // 曾经把整批覆盖吃掉的旧名单（2026-09-27 实机 402 条）。
+            runCatching { if (blacklistFile.exists()) blacklistFile.delete() }
+                .onFailure { WeLogger.d(TAG, "cannot clear monet blacklist", it) }
+        }
         val app = HostInfo.application
         val info = app.applicationInfo
         val paths = buildList {
@@ -395,26 +411,50 @@ object MonetEngine : ClickableFeature() {
                     // 复用来的包同样要过冒烟校验：校验不过 = 这个包在**当前**微信上会让宿主
                     // 取资源时崩，必须就地销毁并拉黑那批 id，绝不能因为「包名里带着 fingerprint」
                     // 就默认它没问题（上一版就是这样把坏包反复注入的）。
-                    val reused = applyRuntimePackage(packageFile, cached)
-                    if (reused.isNotEmpty()) {
-                        detachLastApplied()
-                        persistBlacklist(fingerprint, loadBlacklist(fingerprint) + reused)
-                        runCatching { if (packageFile.exists()) packageFile.delete() }
-                        error(
-                            "复用的运行时资源包冒烟校验未通过（${reused.size} 条覆盖资源不可用），" +
-                                "已回滚、拉黑并删除该包；下次启动会重新解析",
+                    //
+                    // 【2026-09-27】校验对象改成「这个包里**真的写进去**的覆盖 id」（记在
+                    // [MonetRuntimeState.appliedOverlayIds]），而不是语义角色表 —— 后者本来就存在于
+                    // 微信自己的资源表里，包残缺时也照样「通过」。同时把残缺包直接判死：实机上
+                    // 黑名单吃掉 402/406 个槽位后包内只剩 4 条覆盖，注入也没意义（取色/圆角/角标全不生效），
+                    // 这种包必须删掉重新解析，而不是抱着「applied 成功」继续用。
+                    val recorded = readRuntimeState().appliedOverlayIds
+                    val expectedRoles = cached?.roles?.size ?: 0
+                    val crippled = recorded.isNotEmpty() && expectedRoles > 0 &&
+                        recorded.size * 100 / expectedRoles < MIN_OVERLAY_COVERAGE_PERCENT
+                    if (crippled) {
+                        WeLogger.w(
+                            TAG,
+                            "缓存的运行时包只有 ${recorded.size} 条覆盖（角色 $expectedRoles 个），" +
+                                "判定为残缺包：删除并重新解析，避免「解析成功但取色/圆角/角标全不生效」",
                         )
+                        detachLastApplied()
+                        runCatching { if (packageFile.exists()) packageFile.delete() }
+                    } else {
+                        val reused = applyRuntimePackage(
+                            packageFile,
+                            recorded.ifEmpty { cached?.roles?.values?.toList() ?: emptyList() },
+                        )
+                        if (reused.isNotEmpty()) {
+                            detachLastApplied()
+                            persistBlacklist(fingerprint, loadBlacklist(fingerprint) + reused)
+                            runCatching { if (packageFile.exists()) packageFile.delete() }
+                            error(
+                                "复用的运行时资源包冒烟校验未通过（${reused.size} 条覆盖资源不可用），" +
+                                    "已回滚、拉黑并删除该包；下次启动会重新解析",
+                            )
+                        }
+                        recordRuntimeApplied(packageFile, recorded)
+                        publishPalette()
+                        if (cached != null) {
+                            _result.value = MonetResolveResult.Success(cached, packageFile)
+                        }
+                        WeLogger.i(
+                            TAG,
+                            "复用已有运行时包（覆盖 ${recorded.size} 条），本次启动未做资源解析，" +
+                                "用时 ${(System.nanoTime() - startedAt) / 1_000_000} ms",
+                        )
+                        return@thread
                     }
-                    recordRuntimeApplied(packageFile)
-                    publishPalette()
-                    if (cached != null) {
-                        _result.value = MonetResolveResult.Success(cached, packageFile)
-                    }
-                    WeLogger.i(
-                        TAG,
-                        "复用已有运行时包，本次启动未做资源解析，用时 ${(System.nanoTime() - startedAt) / 1_000_000} ms",
-                    )
-                    return@thread
                 }
                 WeLogger.i(
                     TAG,
@@ -517,37 +557,71 @@ object MonetEngine : ClickableFeature() {
                         ?: return@realFileDrawable true
                     value !is MonetResourceValue.Reference
                 }
-                // 写包 -> 注入 -> 逐条校验 -> 不通过就拉黑重写。
+                // 写包 -> 注入 -> 逐条校验 -> 不通过就重写。
                 //
                 // 为什么不让「一个坏条目」蒙混过关：宿主的 drawable 取值路径会在**取到值之后**
                 // 回查一次资源名，回查失败直接抛 Resources$NotFoundException 崩进程
                 //（joker-crash-2026-09-26_13-33-02 / 13-43-03：File res/drawable/ao1.xml from
                 // drawable resource ID #0x7f08116c）。所以判据只能是「每一条写进包里的资源，
                 // 注入之后都既能取值、又能按名字解析」，达不到就把那几条剔出去重写。
-                val excluded = loadBlacklist(fingerprint)
+                //
+                // 【2026-09-27 根治「莫奈彻底不生效」】以前这里**从累积的黑名单开始**写包：
+                //   val excluded = loadBlacklist(fingerprint)
+                // 而冒烟校验遍历的是语义角色的 id（那些 id 本来就存在于微信自己的资源表里，
+                // 一条都不写进去也照样「通过」），于是黑名单只涨不缩、永远不会被重新验证。
+                // 实机上最后长到 402 条，把 406 个覆盖槽位吃掉 402 个：
+                //   runtime package written: aligned 4 entries … skipped 冒烟校验未通过×402
+                // 用户看到的就是「解析成功、包也 applied，但取色 / 圆角 PRO / 角标全都不生效」。
+                // 现在改成**每轮解析都从零验证**（历史黑名单只打印，不再直接沿用），一轮之内最多
+                // [MAX_PACKAGE_ATTEMPTS] 次尝试自然收敛到「把所有健康条目都写进去」。
+                val staleBlacklist = loadBlacklist(fingerprint)
+                if (staleBlacklist.isNotEmpty()) {
+                    WeLogger.i(
+                        TAG,
+                        "历史黑名单 ${staleBlacklist.size} 条：本轮从零重新验证" +
+                            "（不再直接沿用，避免整批覆盖被吃掉导致莫奈不生效）",
+                    )
+                }
+                val excluded = LinkedHashSet<Int>()
                 var attempt = 0
+                var appliedIds: List<Int> = emptyList()
                 while (true) {
                     attempt++
-                    if (!MonetRuntimePackageWriter.write(
-                            packageFile,
-                            info.packageName,
-                            resolution.plan,
-                            hostReference,
-                            hostDrawableIsRealFile,
-                            excluded,
-                        )
-                    ) {
+                    val outcome = MonetRuntimePackageWriter.write(
+                        packageFile,
+                        info.packageName,
+                        resolution.plan,
+                        hostReference,
+                        hostDrawableIsRealFile,
+                        excluded,
+                    )
+                    if (!outcome.ok) {
                         // 条目 id 校验没过 = 覆盖会落到别的资源上，写了就是闪退，宁可这次不注入。
                         error(
-                            "运行时资源包构建失败（资源 id 校验未通过），已中止本次注入以免影响微信运行" +
-                                "（可在设置里重新解析）",
+                            "运行时资源包构建失败（${outcome.reason ?: "资源 id 校验未通过"}），" +
+                                "已中止本次注入以免影响微信运行（可在设置里重新解析）",
                         )
                     }
-                    val unhealthy = applyRuntimePackage(packageFile, resolution.bindings)
-                    if (unhealthy.isEmpty()) break
+                    if (outcome.coveragePercent < MIN_OVERLAY_COVERAGE_PERCENT) {
+                        WeLogger.w(
+                            TAG,
+                            "覆盖写入率偏低 ${outcome.coveragePercent}%" +
+                                "（${outcome.writtenIds.size}/${outcome.plannedCount}）：${outcome.summary}",
+                        )
+                    } else {
+                        WeLogger.i(
+                            TAG,
+                            "覆盖写入率 ${outcome.coveragePercent}%" +
+                                "（${outcome.writtenIds.size}/${outcome.plannedCount}）",
+                        )
+                    }
+                    val unhealthy = applyRuntimePackage(packageFile, outcome.writtenIds)
+                    if (unhealthy.isEmpty()) {
+                        appliedIds = outcome.writtenIds
+                        break
+                    }
                     detachLastApplied()
                     excluded += unhealthy
-                    persistBlacklist(fingerprint, excluded)
                     runCatching { if (packageFile.exists()) packageFile.delete() }
                     WeLogger.w(
                         TAG,
@@ -561,8 +635,11 @@ object MonetEngine : ClickableFeature() {
                         )
                     }
                 }
+                // 自愈：把「本轮实测不健康」的集合写回黑名单文件，覆盖掉历史累积的巨大名单。
+                // 下次解析又从零验证，所以这张表只是诊断用，绝不会再变成「覆盖被整批吃掉」。
+                persistBlacklist(fingerprint, excluded)
                 persistBindings(resolution.bindings)
-                recordRuntimeApplied(packageFile)
+                recordRuntimeApplied(packageFile, appliedIds)
                 // 解析成功 → 清零「解析未完成」计数，下次启动照常复用缓存。
                 runCatching {
                     writeRuntimeState(
@@ -664,7 +741,7 @@ object MonetEngine : ClickableFeature() {
      * @return 校验**不通过**的覆盖资源 id；空集 = 包健康、已生效。拿到非空集合时调用方必须
      *   [detachLastApplied]，把这些 id 拉黑后重写包（见 [startResolve]）。
      */
-    private fun applyRuntimePackage(file: File, bindings: MonetBindings?): Set<Int> {
+    private fun applyRuntimePackage(file: File, overlayIds: Collection<Int>): Set<Int> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return emptySet()
         val resources = HostInfo.application.resources
         val loader = android.content.res.loader.ResourcesLoader()
@@ -677,7 +754,7 @@ object MonetEngine : ClickableFeature() {
         resources.addLoaders(loader)
         // 冒烟校验：注入之后宿主资源必须还能正常取用。不通过就立刻摘掉 loader 并把**具体哪些
         // id**交回调用方 —— 宁可不莫奈化，也不把一个坏包留在微信进程里（实机教训：坏包 = 取资源就崩）。
-        val unhealthy = runCatching { smokeTestRuntimePackage(resources, bindings) }
+        val unhealthy = runCatching { smokeTestRuntimePackage(resources, overlayIds) }
             .onFailure { WeLogger.w(TAG, "smoke test failed to run", it) }
             .getOrDefault(emptySet())
         if (unhealthy.isNotEmpty()) {
@@ -766,8 +843,11 @@ object MonetEngine : ClickableFeature() {
      * 返回「不健康的 id 集合」而不是 Boolean：调用方要拿这批 id 去拉黑 + 重写包。只知道
      * 「包坏了」是不够的 —— 坏 id 不带回来，下一轮写包还会原样写回去，等于每次开机崩一遍。
      */
-    private fun smokeTestRuntimePackage(resources: Resources, bindings: MonetBindings?): Set<Int> {
-        val ids = bindings?.roles?.values?.toList() ?: return emptySet()
+    private fun smokeTestRuntimePackage(resources: Resources, overlayIds: Collection<Int>): Set<Int> {
+        // 校验对象 = **真的写进包里的覆盖 id**（2026-09-27 事故后被调用方明确传入）。
+        // 以前这里取的是语义角色表 `bindings.roles`，那些 id 本来就存在于微信自己的资源表里 ——
+        // 包里一条覆盖都没有时也照样「通过」，于是黑名单只涨不缩、残缺包永远检测不出来。
+        val ids = overlayIds.toList()
         if (ids.isEmpty()) return emptySet()
         var named = 0
         var valueOk = 0
@@ -956,12 +1036,16 @@ object MonetEngine : ClickableFeature() {
     }
 
     /** 记录「刚应用了哪个包」，作为下次启动判断是否疑似崩溃的依据。 */
-    private fun recordRuntimeApplied(packageFile: File) {
+    private fun recordRuntimeApplied(packageFile: File, overlayIds: List<Int> = emptyList()) {
+        // 把「这个包里真的写了哪些覆盖」一起落盘：下次启动复用这个包时才能校验**包的内容**
+        // 而不是语义角色表，也才能识别出「只剩几条覆盖的残缺包」。见
+        // [MonetRuntimeState.appliedOverlayIds] 与 startResolve 里的 crippled 判定。
         writeRuntimeState(
             MonetRuntimeState(
                 packageName = packageFile.name,
                 appliedAt = System.currentTimeMillis(),
                 failStreak = readRuntimeState().failStreak,
+                appliedOverlayIds = overlayIds,
             ),
         )
         runCatching {

@@ -1,15 +1,57 @@
 package dev.joker.utils.monet
 
+import android.content.Context
+import android.os.PowerManager
+import dev.joker.utils.HostInfo
 import dev.joker.utils.WeLogger
 
+/**
+ * 屏幕是否亮着（用户正在用手机）——决定匹配阶段让出 CPU 的力度。
+ *
+ * 为什么不能固定在 `MonetEngine` 里：本文件是「纯资源图/结构匹配」层，被上层引擎调用，
+ * 反过来依赖 `features/items/beautify` 会形成环（并且实测编译时该符号根本解析不到）。
+ * 这里直接用宿主 Application 拿 PowerManager，自成一体。
+ *
+ * 取不到（模块初始化早期、宿主上下文缺失、非主进程）时按**亮屏**处理：
+ * 亮屏让出得多，宁可解析慢一点也不能让前台掉帧。
+ */
+private val screenPower: PowerManager? by lazy {
+    runCatching {
+        HostInfo.application.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    }.getOrNull()
+}
+
+private fun hostScreenInteractive(): Boolean {
+    val power = screenPower ?: return true
+    return runCatching { power.isInteractive }.getOrDefault(true)
+}
+
+/**
+ * 遍历剪枝用的「前缀可达」判定。
+ *
+ * 必须是**文件级私有**声明：本文件里真正做遍历的是顶层扩展函数（`collectUsage` /
+ * `collectEvidence` 等），它们看不到 `object MonetStructureMatcher` 内部的嵌套声明。
+ * 语义说明见 [MonetStructureMatcher] 内 `EvidencePrefixIndex` 的注释。
+ */
+private interface EvidencePrefixGate {
+    /** 是否存在某个被接受的 token 以 [prefix] 开头。 */
+    fun reachable(prefix: String): Boolean
+}
 
 object MonetStructureMatcher {
+
+
 
     private const val TAG = "MonetStructureMatcher"
 
     /** 匹配阶段占空比：连续跑满这么久就让出一次 CPU。 */
     private const val MATCH_SLICE_NANOS = 2_000_000_000L
-    private const val MATCH_REST_MILLIS = 500L
+
+    /** 亮屏（用户在用手机）时的让出时长：宁可解析慢一点，也不能让前台掉帧。 */
+    private const val MATCH_REST_MILLIS = 1_200L
+
+    /** 息屏时的让出时长：没人看屏幕，尽快把解析做完。 */
+    private const val MATCH_REST_IDLE_MILLIS = 150L
 
     /**
      * 匹配阶段的「占空比让出」。
@@ -24,16 +66,26 @@ object MonetStructureMatcher {
     private class CpuYielder {
         private var sliceStart = System.nanoTime()
         private var yields = 0
+        private var restTotal = 0L
 
         fun maybeYield() {
             if (System.nanoTime() - sliceStart < MATCH_SLICE_NANOS) return
             yields++
-            runCatching { Thread.sleep(MATCH_REST_MILLIS) }
+            // 亮屏时让出得多（用户在用手机，前台优先），息屏时让出得少（尽快解析完）。
+            // 实机 2026-09-27：亮屏 + 前台使用期间把 90 秒的扫描跑成了持续卡顿的主要来源。
+            val rest = if (hostScreenInteractive()) MATCH_REST_MILLIS else MATCH_REST_IDLE_MILLIS
+            restTotal += rest
+            runCatching { Thread.sleep(rest) }
             sliceStart = System.nanoTime()
         }
 
         fun report(label: String) {
-            if (yields > 0) WeLogger.d(TAG, "$label 分片让出 $yields 次，避免长时间占用 CPU")
+            if (yields > 0) {
+                WeLogger.d(
+                    TAG,
+                    "$label 分片让出 $yields 次（累计让出 ${restTotal}ms），避免长时间占用 CPU",
+                )
+            }
         }
     }
 
@@ -201,8 +253,10 @@ object MonetStructureMatcher {
         val yielder = CpuYielder()
         if (resourceTotal > 0) onProgress(0, resourceTotal, "扫描资源特征与引用关系")
         requiredByType.forEach { (type, required) ->
+            // 每个类型只建一次前缀索引（见 [EvidencePrefixIndex]）：逐节点重建会得不偿失。
+            val gate = EvidencePrefixIndex(required)
             nodesByType.getValue(type).forEach { node ->
-                calculateEvidence(node, graph, required).forEach { token ->
+                calculateEvidence(node, graph, required, gate).forEach { token ->
                     idsByToken.getOrPut(token, ::linkedSetOf).add(node.id)
                 }
                 scanned++
@@ -486,13 +540,47 @@ object MonetStructureMatcher {
      * (`OutOfMemoryError` at the 512 MB process limit) while only a few hundred tokens are ever
      * queried. `null` keeps every token and is used by [evidence] for one-off lookups.
      */
-    private class FilteredEvidenceSink(private val accepted: Set<String>?) : AbstractMutableSet<String>() {
+    /**
+     * 遍历剪枝用的「前缀可达」判定。
+     *
+     * 背景（2026-09-27 实机性能事故）：语义特征扫描要把每个节点（同类型可达 2 万个）的
+     * 本节点/子节点/上下文/兄弟节点的证据都算出来，其中「上下文证据」要把**每个引用者的
+     * XML 树整棵遍历两遍**（[collectUsage] + [collectSimpleUsage]）。实机日志里这一步
+     * 单项就要 90 秒（`resolved 231 roles ... 匹配用时 90515 ms`），期间 CPU 被占满，
+     * 用户反馈的「初加载 + 运行中特别卡顿」主要来源之一。
+     *
+     * 但绝大多数遍历是**白跑**的：证据 token 里带着完整元素路径
+     * （`usage:<ownerType>:<path>:<nameId>:<name>`），而被接受的 token 集合
+     * （[FilteredEvidenceSink.accepted]，来自本轮规则）是已知且很短的。若某个路径前缀
+     * 不可能出现在任何被接受的 token 里，那么这棵子树**一个能通过过滤的 token 也产不出来**，
+     * 可以直接剪掉 —— 语义完全等价（只跳过必然被丢弃的 token），只是不再拼接字符串。
+     */
+    /**
+     * [EvidencePrefixGate] 的实现：预先展开被接受 token 的**全部字符前缀**，判定降到 O(1)。
+     *
+     * 每个类型只建一次（绝不能放进逐节点的 [calculateEvidence] —— 那等于每个节点重建上万条
+     * 字符串，比不剪枝还慢）。单类型 token 不过几百条、总长几万字符，内存可忽略。
+     */
+    private class EvidencePrefixIndex(tokens: Set<String>) : EvidencePrefixGate {
+        private val prefixes = HashSet<String>(tokens.size * 8).also { set ->
+            tokens.forEach { token -> for (length in 1..token.length) set.add(token.substring(0, length)) }
+        }
+
+        override fun reachable(prefix: String): Boolean = prefix in prefixes
+    }
+
+    private class FilteredEvidenceSink(
+        private val accepted: Set<String>?,
+        private val gate: EvidencePrefixGate? = null,
+    ) : AbstractMutableSet<String>(), EvidencePrefixGate {
         private val kept = linkedSetOf<String>()
 
         override val size: Int get() = kept.size
 
         override fun add(element: String): Boolean =
             (accepted == null || element in accepted) && kept.add(element)
+
+        override fun reachable(prefix: String): Boolean = gate?.reachable(prefix) ?: true
 
         override fun iterator(): MutableIterator<String> = kept.iterator()
 
@@ -505,10 +593,14 @@ object MonetStructureMatcher {
     private class PrefixedEvidenceSink(
         private val prefix: String,
         private val delegate: MutableSet<String>,
-    ) : AbstractMutableSet<String>() {
+    ) : AbstractMutableSet<String>(), EvidencePrefixGate {
         override val size: Int get() = delegate.size
 
         override fun add(element: String): Boolean = delegate.add(prefix + element)
+
+        /** 前缀判定要连本层的 prefix 一起算，否则剪枝会「看不到」外层前缀（如 `context:drawable:`）。 */
+        override fun reachable(prefix: String): Boolean =
+            (delegate as? EvidencePrefixGate)?.reachable(this.prefix + prefix) ?: true
 
         override fun iterator(): MutableIterator<String> = delegate.iterator()
 
@@ -525,7 +617,8 @@ object MonetStructureMatcher {
         node: MonetResourceNode,
         graph: MonetResourceGraph,
         accepted: Set<String>,
-    ): Set<String> = FilteredEvidenceSink(accepted).also { computeEvidence(node, graph, it) }
+        gate: EvidencePrefixGate?,
+    ): Set<String> = FilteredEvidenceSink(accepted, gate).also { computeEvidence(node, graph, it) }
 
     private fun computeEvidence(
         node: MonetResourceNode,
@@ -674,9 +767,18 @@ private fun MonetXmlElement.collectUsage(
     result: MutableSet<String>,
 ) {
     val path = if (parent.isEmpty()) name else "$parent/$name"
-    attributes.filter { (it.value as? MonetResourceValue.Reference)?.resourceId == targetId }
-        .forEach { result += "usage:$ownerType:$path:${it.nameId}:${it.name}" }
-    children.forEach { it.collectUsage(targetId, path, ownerType, graph, result) }
+    // 剪枝（语义等价）：本节点 token 是 `usage:<ownerType>:<path>:...`，子节点是
+    // `usage:<ownerType>:<path>/...`。若被接受的 token 里没有任何一条以对应前缀开头，
+    // 本节点及其子树都不可能产出「能通过过滤」的 token，直接跳过（省掉整棵树的字符串拼接）。
+    val gate = result as? EvidencePrefixGate
+    val base = "usage:$ownerType:$path"
+    if (gate == null || gate.reachable("$base:")) {
+        attributes.filter { (it.value as? MonetResourceValue.Reference)?.resourceId == targetId }
+            .forEach { result += "$base:${it.nameId}:${it.name}" }
+    }
+    if (gate == null || gate.reachable("$base/")) {
+        children.forEach { it.collectUsage(targetId, path, ownerType, graph, result) }
+    }
 }
 
 private fun MonetXmlElement.collectSimpleUsage(
@@ -687,9 +789,15 @@ private fun MonetXmlElement.collectSimpleUsage(
 ) {
     val simpleName = name.substringAfterLast('.')
     val path = if (parent.isEmpty()) simpleName else "$parent/$simpleName"
-    attributes.filter { (it.value as? MonetResourceValue.Reference)?.resourceId == targetId }
-        .forEach { result += "simple-usage:$ownerType:$path:${it.nameId}:${it.name}" }
-    children.forEach { it.collectSimpleUsage(targetId, path, ownerType, result) }
+    val gate = result as? EvidencePrefixGate
+    val base = "simple-usage:$ownerType:$path"
+    if (gate == null || gate.reachable("$base:")) {
+        attributes.filter { (it.value as? MonetResourceValue.Reference)?.resourceId == targetId }
+            .forEach { result += "$base:${it.nameId}:${it.name}" }
+    }
+    if (gate == null || gate.reachable("$base/")) {
+        children.forEach { it.collectSimpleUsage(targetId, path, ownerType, result) }
+    }
 }
 
 private fun MonetXmlElement.referenceIds(): Set<Int> = buildSet {
@@ -899,6 +1007,9 @@ private fun MonetResourceValue.collectUsage(
     when (this) {
         is MonetResourceValue.Reference -> if (resourceId == targetId) result += "usage:$path:reference"
         is MonetResourceValue.Complex -> items.forEach { item ->
+            (result as? EvidencePrefixGate)?.let { gate ->
+                if (!gate.reachable("usage:$path:item:${item.nameId}")) return@forEach
+            }
             item.value.collectUsage(targetId, "$path:item:${item.nameId}", graph, result)
         }
         else -> Unit
@@ -911,12 +1022,20 @@ private fun MonetXmlElement.collectEvidence(
     result: MutableSet<String>,
 ) {
     val path = if (parent.isEmpty()) name else "$parent/$name"
-    result += "element:$path"
-    attributes.forEach { attribute ->
-        result += "attribute:$path:${attribute.nameId}:${attribute.name}:${attribute.valueType}:" +
-            attribute.value.evidence(graph)
+    // 剪枝（语义等价）：token 是 `element:<path>` / `attribute:<path>:...`，
+    // 子节点路径是 `<path>/<childName>`。不可能命中就别往下走了。
+    val gate = result as? EvidencePrefixGate
+    val elementSelf = gate == null || gate.reachable("element:$path")
+    val attributeSelf = gate == null || gate.reachable("attribute:$path:")
+    if (elementSelf) result += "element:$path"
+    if (attributeSelf) {
+        attributes.forEach { attribute ->
+            result += "attribute:$path:${attribute.nameId}:${attribute.name}:${attribute.valueType}:" +
+                attribute.value.evidence(graph)
+        }
     }
-    children.forEach { it.collectEvidence(path, graph, result) }
+    val descend = gate == null || gate.reachable("element:$path/") || gate.reachable("attribute:$path/")
+    if (descend) children.forEach { it.collectEvidence(path, graph, result) }
 }
 
 private fun MonetXmlElement.collectSimpleEvidence(
@@ -926,11 +1045,16 @@ private fun MonetXmlElement.collectSimpleEvidence(
 ) {
     val simpleName = name.substringAfterLast('.')
     val path = if (parent.isEmpty()) simpleName else "$parent/$simpleName"
-    attributes.forEach { attribute ->
-        result += "simple-attribute:$path:${attribute.nameId}:${attribute.name}:${attribute.valueType}:" +
-            attribute.value.evidence(graph)
+    val gate = result as? EvidencePrefixGate
+    if (gate == null || gate.reachable("simple-attribute:$path:")) {
+        attributes.forEach { attribute ->
+            result += "simple-attribute:$path:${attribute.nameId}:${attribute.name}:${attribute.valueType}:" +
+                attribute.value.evidence(graph)
+        }
     }
-    children.forEach { it.collectSimpleEvidence(path, graph, result) }
+    if (gate == null || gate.reachable("simple-attribute:$path/")) {
+        children.forEach { it.collectSimpleEvidence(path, graph, result) }
+    }
 }
 
 private fun MonetResourceValue.evidence(graph: MonetResourceGraph): String = when (this) {

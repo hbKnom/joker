@@ -96,6 +96,7 @@ object FeaturesLoader {
         // their valid delegates work immediately; only the item itself is queued for re-resolution.
         val cacheFailedItems = loadDescriptorsFromCache(validItems)
         val allBrokenItems = (outdatedItems + cacheFailedItems).distinct()
+        brokenDexItems = allBrokenItems
 
         if (allBrokenItems.isNotEmpty())
             handleBrokenItems(allBrokenItems)
@@ -125,6 +126,9 @@ object FeaturesLoader {
         // 主线程空闲（首帧画完）后再用「切片 + 让出」的方式装延后批次，不再阻塞启动关键路径。
         if (deferredFeatures.isNotEmpty()) {
             scheduleDeferredStartup(deferredFeatures, allBrokenItems)
+        } else {
+            // 没有延后批次时同步批次就是全部：立刻做一次自愈重挂兜底（失败会自动重试）。
+            rearmDeadFeatures(1)
         }
 
         if (TargetProcesses.isInMain && Preferences.showStartupToast) {
@@ -147,7 +151,6 @@ object FeaturesLoader {
     private val DEFERRED_STARTUP_ORDER = listOf(
         "@所有人",
         "WeAgent",
-        "半屏相册选择器",
         "去除菜单限制",
         "快捷回底",
         "悬浮输入框",
@@ -163,8 +166,17 @@ object FeaturesLoader {
         // 所以挪到首帧之后的切片批次（见 scheduleDeferredStartup）。
         //
         // 排序 = 用户可能多快用到它，越靠前越先装：
-        "圆角头像",              // 会话列表头像，首屏渲染就会用到 → 延后批次第一个
-        "通知进化",              // 通知随时可能到达
+        //
+        // 【2026-09-27 回移】「圆角头像 / 通知进化 / 半屏相册选择器」已挪回**同步批次**。
+        // 实机日志（joker-2026-09-27.log）显示延后批次挂在 IdleHandler 上：
+        // 「09:05:10.112 排入 23 个功能 → 09:05:18.910 才跑完」，也就是说主线程空闲了
+        // **8.8 秒**之后才轮到它们。而这三个功能的生效时机都早于那一刻：
+        //   · 圆角头像：会话列表第一帧就把头像 View 建好了，钩子晚装只能等下次重建；
+        //   · 通知进化：通知随时可能到达（甚至就在微信刚起来的那几秒）；
+        //   · 半屏相册选择器：钩的是宿主 Activity 的 onCreate，装晚了就整整漏掉一次。
+        // 用户看到的就是「重启微信后这三个功能失效，得去设置里关掉再打开才生效」。
+        // 三者实测 startup() 合计不到 1 秒（圆角头像 <200ms、半屏相册 <200ms、通知进化 ~450ms），
+        // 换回「重启即生效」比省这几百毫秒重要。
         "反已读追踪",            // 聊天内
         "对话框窗口级背景模糊",   // 任意弹窗
         "解除消息多选数量限制",   // 聊天内
@@ -192,6 +204,53 @@ object FeaturesLoader {
 
     /** 两次切片之间让给 UI 的一帧时长（毫秒）。 */
     private const val DEFERRED_SLICE_GAP_MS = 16L
+
+    /** 自愈重挂的两次尝试之间的间隔。 */
+    private const val REARM_DELAY_MS = 4_000L
+
+    /** 自愈重挂的最大尝试次数（之后只留一行日志，绝不无限重试）。 */
+    private const val REARM_MAX_ATTEMPTS = 3
+
+    /** 最近一次解析里「缓存不完整、正等 DexKit 重新解析」的功能（自愈重挂必须跳过它们）。 */
+    private var brokenDexItems: List<IResolveDex> = emptyList()
+
+    /**
+     * 自愈重挂：把「开关是开的、但钩子实际没装上」的功能重新挂一遍。
+     *
+     * 为什么需要（用户第 0 条反馈的根因之一）：`BaseFeature.enable()` 里 `onEnable()` 抛出的
+     * 异常会被 `runCatching` 吃掉并 `unhookAll()`，功能从此停在「开关开着、什么都没装」的状态，
+     * 而**启动阶段不会重试** —— 用户看到的就是「重启微信后这个功能失效，得去设置里关掉再打开
+     * 才生效」（圆角头像 / 通知进化 / 半屏相册选择器都踩过这一类）。
+     *
+     * 只重挂 `SwitchFeature`（含 `ClickableFeature`）里「按配置本该启用、且当前确实没装」的：
+     *  · 已装的（`isActive`）直接跳过 → 天然幂等，重复调用没有副作用；
+     *  · 缓存不完整、还在等 DexKit 重新解析的跳过 → 委托没解析，重挂只会再炸一次；
+     *  · `startup()` 被功能自己重写过的（非 SwitchFeature）不碰 → 避免重复安装。
+     */
+    private fun rearmDeadFeatures(attempt: Int) {
+        if (!TargetProcesses.isInMain) return
+        val current = TargetProcesses.currentType
+        val dead: List<BaseFeature> = FeaturesProvider.ALL_FEATURES.filter { feature ->
+            feature is SwitchFeature &&
+                current in feature.targetProcesses &&
+                !feature.isActive &&
+                (feature.isEnabled || (feature as? ClickableFeature)?.alwaysEnabled == true) &&
+                brokenDexItems.none { it === feature }
+        }
+        if (dead.isEmpty()) return
+        dead.forEach { feature ->
+            WeLogger.i(TAG, "自愈重挂（第 $attempt 次）：${feature.technicalId}")
+            feature.enable()
+        }
+        if (attempt < REARM_MAX_ATTEMPTS) {
+            Handler(Looper.getMainLooper()).postDelayed({ rearmDeadFeatures(attempt + 1) }, REARM_DELAY_MS)
+        } else {
+            WeLogger.w(
+                TAG,
+                "自愈重挂 $REARM_MAX_ATTEMPTS 次后仍未生效：${dead.map { it.technicalId }}",
+            )
+        }
+    }
 
     private fun runFeatureStartup(feature: BaseFeature, allBrokenItems: List<IResolveDex>) {
         val isBroken = feature is IResolveDex && allBrokenItems.contains(feature)
@@ -256,6 +315,8 @@ object FeaturesLoader {
             TAG,
             "deferred feature startup finished in ${SystemClock.uptimeMillis() - totalStartedAt}ms",
         )
+        // 延后批次跑完后再兜一次「开关开着、钩子没挂上」的功能（见 rearmDeadFeatures 注释）。
+        rearmDeadFeatures(1)
     }
 
     // ---------------------------------------------------------------------------
