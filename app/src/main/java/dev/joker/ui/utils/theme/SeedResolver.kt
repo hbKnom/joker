@@ -82,7 +82,10 @@ object SeedResolver {
      * 只覆盖这些角色：强调色系（secondary / tertiary 等）仍由种子派生，保证 Material 组件的
      * hover / 状态层仍有层次；不在这里引入新色值。
      */
-    fun ColorScheme.applyMonetTokens(tokens: MonetColors.Tokens): ColorScheme = copy(
+    fun ColorScheme.applyMonetTokens(tokens: MonetColors.Tokens): ColorScheme {
+        // 提前算好 error / onError：[copy()] 的参数块不允许 val 声明
+        val (derivedErrFirst, derivedOnErrFirst) = tokens.derivedError()
+        return copy(
         primary = Color(tokens.primary),
         onPrimary = Color(tokens.onPrimary),
         primaryContainer = Color(tokens.primaryContainer),
@@ -113,12 +116,13 @@ object SeedResolver {
         // 修法：把 error / onError / errorContainer / onErrorContainer 也按引擎 tokens 派生
         // —— 暖红取自 primary 的色调抖动（HSL H±18° 固定偏移），保证「红」仍是红，
         // 但 hue 跟当前莫奈主色相关，与整套界面不冲突。亮色版亮、暗色版暗，对比度保 ≥ 4.5:1。
-        val (err, onErr) = tokens.derivedError()
-        error = Color(err),
-        onError = Color(onErr),
+        // 注：[copy()] 不允许在参数块里声明 val，所以 (err, onErr) 提前算好。
+        error = Color(derivedErrFirst),
+        onError = Color(derivedOnErrFirst),
         errorContainer = Color(tokens.errorContainer),
         onErrorContainer = Color(tokens.onErrorContainer),
-    )
+        )
+    }
 
     /**
      * 派生与当前莫奈主色**同源**的 error / onError 对（[第 27 轮]）。
