@@ -86,7 +86,7 @@ object ChatAnalysisPng {
     private const val CARD_GAP = 52
 
     /** 卡片圆角半径（全文件所有卡片、徽章、KPI 单元共用一套圆角语言） */
-    private const val CARD_RADIUS = 40f
+    private const val CARD_RADIUS = 44f
 
     /** 卡片左侧强调条宽度 */
     private const val CARD_ACCENT_W = 10
@@ -106,8 +106,15 @@ object ChatAnalysisPng {
     private const val CARD_TOP_LIGHT_H = 2f
     private const val CARD_TOP_LIGHT_ALPHA = 0x22
 
-    /** 画布底部收尾留白 */
-    private const val BOTTOM_PAD = 88
+    /**
+     * 画布底部收尾留白。
+     *
+     * 第 23 轮由 88 提到 104：用户反馈"每张图片底部总是溢出 / 压线"。
+     * 分页导出的最后一张图，页脚品牌条之下必须留出一段完整空白才算"图有下边界"——
+     * 88px 在手机上（1440 宽画布按 3x 屏看 ≈ 29dp）仍然显得贴边，104px（≈ 35dp）
+     * 与卡片之间的 CARD_GAP 视觉重量对齐，底边才像是"设计留白"而不是"被裁掉"。
+     */
+    private const val BOTTOM_PAD = 104
 
     /** 条形行 / 单行键值行高 */
     private const val ROW_H = 88
@@ -398,6 +405,24 @@ object ChatAnalysisPng {
     /** 单张 ARGB_8888 画布的像素内存预算（512MB 宿主堆下的安全上限） */
     private const val MEMORY_BUDGET_BYTES = 120 * 1024 * 1024
 
+    /**
+     * 单张卡片的布局高度上限（超过就在**布局阶段**拆成多张「（续）」卡片）。
+     *
+     * 第 23 轮新增。分页只在「条目边界」上切（见 [paginate]），唯一会切进卡片内部的情形
+     * 就是**一张卡片本身高过一页**——长 AI 报告（整段回复算一个章节）必然是这种形状：
+     * 一张卡片几万像素，于是除首尾外每一页都是从卡片中间劈开的，页底既没有下边框、
+     * 也没有圆角，实机观感就是"每张图片底部都溢出/被截断"。
+     *
+     * 修法不是去改绘制（绘制本来就被裁剪兜住），而是把这张超长卡片**在布局阶段拆开**：
+     * 每一片都保证装得进一页（本上限 = 续页可用容量 × 95%），于是分页永远落在条目边界上，
+     * 每张图的页底都是一张**完整卡片**。
+     */
+    private const val CARD_SPLIT_MAX_H =
+        (MAX_HEIGHT - (CARD_GAP + FOOTER_H + BOTTOM_PAD) - PAGE_HEAD_BAND_H) * 95 / 100
+
+    /** 续卡标题后缀（同一分节被拆开时，第 2 片起在标题后加这个标记） */
+    private const val CONTINUATION_SUFFIX = "（续）"
+
     // ---- 由上面的常量推导：卡片 / 内容区 ----
     private const val CARD_LEFT = CANVAS_PAD                                  // 72
     private const val CARD_RIGHT = W - CANVAS_PAD                             // 1368
@@ -653,6 +678,13 @@ object ChatAnalysisPng {
             "PNG 续页页头占用单页容量比例过大"
         }
         require(PAGE_HEAD_NAME_W_RATIO in 0.2f..0.8f) { "PNG 续页页头会话名宽度比例非法" }
+
+        // ---- 长卡片分片（第 23 轮）：分片上限必须装得进一页续页，否则分页又会切进卡片内部 ----
+        require(CARD_SPLIT_MAX_H + PAGE_HEAD_BAND_H <= MAX_HEIGHT - (CARD_GAP + FOOTER_H + BOTTOM_PAD)) {
+            "PNG 长卡片分片上限超过续页可用容量，页底仍会出现被切开的卡片"
+        }
+        require(CARD_SPLIT_MAX_H > CARD_MIN_H * 4) { "PNG 长卡片分片上限过小，会把正常卡片也拆碎" }
+        require(CONTINUATION_SUFFIX.isNotEmpty()) { "PNG 续卡标题后缀不得为空" }
     }
 
     // ==================================================================
@@ -1304,6 +1336,83 @@ object ChatAnalysisPng {
     }
 
     /**
+     * 长卡片分片（第 23 轮）：把高过 [CARD_SPLIT_MAX_H] 的卡片按行拆成多张「（续）」卡片。
+     *
+     * 分页只在「条目边界」上切，唯一会切进卡片内部的情形就是**一张卡片本身高过一页**：
+     * 长 AI 报告（整段回复算一个章节）必然是这种形状 —— 一张卡片几万像素，
+     * 于是除首尾外每一页都是被卡片中间劈开的，页底没有下边框、没有圆角，
+     * 观感就是"每张图片底部都溢出/被截断"。把超长卡片在布局阶段拆开之后，
+     * 每一片都装得进一页，分页就永远落在条目边界上 —— 每张图的页底都是一张完整卡片。
+     *
+     * 开销：先扫一遍判断"有没有超长卡片"，没有就原样返回（普通报告零开销）；
+     * 拆分点只落在**行边界**上（行高由布局阶段算好、绘制阶段原样复用），
+     * 所以拆出来的每一片都不会切到任何一行文字；续卡标题带「[CONTINUATION_SUFFIX]」、
+     * 序号沿用原分节号、配色不变，读者一眼能看出这是同一节的第几张。
+     */
+    private fun splitLongCards(cards: List<Item.Card>): List<Item.Card> {
+        var overflow = false
+        for (c in cards) {
+            if (c.height > CARD_SPLIT_MAX_H) {
+                overflow = true
+                break
+            }
+        }
+        if (!overflow) return cards
+        val out = ArrayList<Item.Card>(cards.size + 4)
+        for (card in cards) {
+            if (card.height <= CARD_SPLIT_MAX_H) {
+                out.add(card)
+                continue
+            }
+            val headerH = if (card.title != null) SECTION_HEADER_H else 0
+            var start = 0
+            while (start < card.rows.size) {
+                val base = card.rows[start].top
+                var end = start
+                // 一片的高度 = 上下内边距 + 标题带 + 该片最后一行的底边（相对本片正文顶）
+                while (end + 1 < card.rows.size) {
+                    val next = card.rows[end + 1]
+                    val h = CARD_PAD_V * 2 + headerH + (next.top - base + next.height)
+                    if (h > CARD_SPLIT_MAX_H) break
+                    end++
+                }
+                val rows = ArrayList<Row>(end - start + 1)
+                for (i in start..end) {
+                    val r = card.rows[i]
+                    rows.add(Row(r.unit, r.top - base, r.height, r.lines, r.chipLines))
+                }
+                val lastRow = rows[rows.size - 1]
+                val height = maxOf(CARD_MIN_H, CARD_PAD_V * 2 + headerH + lastRow.top + lastRow.height)
+                val header = card.title
+                val title = when {
+                    header == null -> null
+                    start == 0 -> header
+                    else -> header + CONTINUATION_SUFFIX
+                }
+                out.add(Item.Card(title, card.index, card.accent, rows, height))
+                start = end + 1
+            }
+        }
+        return out
+    }
+
+    /**
+     * 报告里对外展示的「分析维度」个数 = 报告文本里的分节标题（【…】）条数。
+     *
+     * 直接从报告文本数，不依赖任何布局结果 —— 弹窗、导出图、AI 提示词三处看到的是同一个数：
+     * 它就是"这份分析报告讲了几个维度"。空报告返回 0，画面上就不出现这个徽标。
+     */
+    private fun dimensionCount(reportText: String): Int {
+        if (reportText.isBlank()) return 0
+        var n = 0
+        for (line in reportText.split("\n")) {
+            val t = line.trim()
+            if (t.length >= 2 && t.startsWith("【") && t.endsWith("】")) n++
+        }
+        return n
+    }
+
+    /**
      * 第 17 轮引入、第 20 轮跟着「25 维整合」重排的分节归属色。
      *
      * 与弹窗 ChatAnalysisUi.sectionAccent **同一套落点**（同族信息同色、与相邻章节错开），
@@ -1326,6 +1435,9 @@ object ChatAnalysisPng {
             title.contains("昼夜话量") || title.contains("作息画像") -> COLOR_ACCENT2
         title.contains("节奏与沉默") || title.contains("互动节奏") ||
             title.contains("沉默") -> COLOR_ACCENT3
+        // 第 23 轮新增的两个维度（承接 25 维整合：分享物并入载体、开场收尾并入作息）
+        title.contains("回复时延") || title.contains("时延热力") -> COLOR_ACCENT3
+        title.contains("冷场") || title.contains("重启") -> COLOR_ACCENT2
         title.contains("消息长度") || title.contains("废话") || title.contains("每人说话") -> COLOR_ACCENT2
         title.contains("情绪与语气") || title.contains("情绪指纹") ||
             title.contains("标点与语气") -> COLOR_ACCENT3
@@ -1356,12 +1468,16 @@ object ChatAnalysisPng {
     private fun buildItems(stats: String, ai: String, bodyP: Paint): List<Item> {
         val items = ArrayList<Item>()
         var nextNo = 1
-        val statsCards = buildCards(groupKpis(parseBlocks(stats)), COLOR_ACCENT, nextNo, bodyP, true)
-        nextNo += statsCards.count { it.title != null }
-        val aiCards = buildCards(groupKpis(parseBlocks(ai)), COLOR_ACCENT2, nextNo, bodyP)
+        val statsRaw = buildCards(groupKpis(parseBlocks(stats)), COLOR_ACCENT, nextNo, bodyP, true)
+        nextNo += statsRaw.count { it.title != null }
+        // 超长卡片在布局阶段就拆开（第 23 轮）：这样分页永远落在条目边界上，页底不留半截卡片
+        val statsCards = splitLongCards(statsRaw)
+        val aiCards = splitLongCards(buildCards(groupKpis(parseBlocks(ai)), COLOR_ACCENT2, nextNo, bodyP))
 
         if (statsCards.isNotEmpty()) {
-            items.add(Item.Pill(GROUP_STATS, COLOR_ACCENT, pillWidth(GROUP_STATS, COLOR_ACCENT)))
+            val dims = dimensionCount(stats)
+            val statsLabel = if (dims > 0) "$GROUP_STATS · $dims 个维度" else GROUP_STATS
+            items.add(Item.Pill(statsLabel, COLOR_ACCENT, pillWidth(statsLabel, COLOR_ACCENT)))
             items.addAll(statsCards)
         }
         if (aiCards.isNotEmpty()) {
@@ -1450,6 +1566,8 @@ object ChatAnalysisPng {
         val generated = "分析生成于 ${reportDateText()}"
         // 页脚元信息：会话名 · 时间范围 · 生成时间 · 数据来源。
         // 每一页都印一遍 —— 分页导出后，单张图脱离弹窗也能自证"是哪次分析、什么时段、数据从哪来"。
+        // 第 23 轮起补一项「本次报告共 N 个分析维度」：25 维是产品口径，图上也要能一眼读到。
+        val statsDims = dimensionCount(stats)
         val footerMeta = buildString {
             if (sessionName.isNotBlank()) append(sessionName)
             if (period.isNotBlank()) {
@@ -1458,6 +1576,7 @@ object ChatAnalysisPng {
             }
             if (isNotEmpty()) append(" · ")
             append(generated)
+            if (statsDims > 0) append(" · 共 ").append(statsDims).append(" 个分析维度")
             append(" · 数据来源：本地消息数据库（仅统计纯文本消息）")
         }
         val bodyP = paint(FS_BODY, COLOR_BODY)

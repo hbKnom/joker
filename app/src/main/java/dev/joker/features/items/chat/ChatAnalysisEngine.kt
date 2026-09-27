@@ -675,6 +675,15 @@ object ChatAnalysisEngine {
                             ex.replyMsSumBySender[rankKey] = lastReplyGap
                             ex.replyMsCntBySender[rankKey] = 1
                         }
+                        // ---- 第 23 轮：把这次回复的时延记到「它落在的那个小时」上 ----
+                        // 复用同一次 `lastReplyGap in 1..TOPIC_BREAK_MS` 判定，不新增比较、
+                        // 不新增对象：定长 24 格数组，两次下标加写。
+                        // hour 是本条消息（= 这条回复）的小时，循环开头已经算好。
+                        val latH = hour
+                        if (latH in 0..23) {
+                            ex.latHourSum[latH] += lastReplyGap
+                            ex.latHourCnt[latH]++
+                        }
                     }
                     // 沉默 ≥30 分钟后的第一条 = 这一段话题的「发起人」（系统消息不参与）
                     if (waitingInitiator) {
@@ -1006,6 +1015,15 @@ object ChatAnalysisEngine {
         var replyGapSum = 0L
         var replyGapCount = 0
 
+        // ---- 第 23 轮：【回复时延热力】维度（时延 × 时间）----
+        // 定长 24 格（168 格的「星期 × 小时」矩阵在本维度里收益很低：星期维度的时延差异远小于
+        // 昼夜差异，而 168 格会让报告里出现第二张 7×24 热力图、更容易与活跃热力混淆）。
+        /** 按「这条回复落在的小时」(0..23) 累计的回复时延毫秒数 */
+        val latHourSum = LongArray(24)
+
+        /** 按小时累计的回复时延样本数（[latHourSum] 的分母；0 = 该小时没有回复样本） */
+        val latHourCnt = IntArray(24)
+
         /** ≥[TOPIC_BREAK_MS] 的沉默次数与累计时长 */
         var silentBreaks = 0
         var silentSum = 0L
@@ -1026,6 +1044,11 @@ object ChatAnalysisEngine {
         var maxTopicMs = 0L
         var maxTopicStart = 0L
         var maxTopicEnd = 0L
+
+        // ---- 第 23 轮：话题持续度（【冷场与重启】维度）----
+        /** 所有话题段的时长之和 / 段数（平均一段话题能撑多久），由 [closeTopic] 就地累加 */
+        var topicSum = 0L
+        var topicCnt = 0
 
         /** 最长 [EXCERPT_N] 条摘录（senderKey to body），定长插入 */
         val topBodies = mutableListOf<Pair<String, String>>()
@@ -1258,15 +1281,23 @@ object ChatAnalysisEngine {
     }
 
     // ==================================================================
-    // 本地统计报告（第 20 轮：维度整合版 —— 25 个维度）
+    // 本地统计报告（第 23 轮：25 个维度 / 25 个分节标题，一一对应）
     //
-    // 第 20 轮做的是**纯整合 + 扩充**：把第 13~18 轮陆续加进来的 41 个段位合并成 19 个
-    // （同类项合一、去掉重复口径），再补 6 个新维度，最终 25 个，每个段位都有独立分析价值。
+    // 第 20 轮先把第 13~18 轮的 41 个段位整合成 25 个维度；第 23 轮按用户反馈再收一遍
+    // （"分析项目太多"），并补两个新维度。这一版的关键性质是**分节标题数 = 维度数 = 25**：
+    //   整合（-2 个标题 + 合掉重复读法）：
+    //     · 原【分享物与链接密度】并入【内容载体与表情】（同一批 typeCount 的两种读法）；
+    //     · 原【每日开场与收尾】并入【作息与昼夜】（同一批"每天首条/末条"时间口径）；
+    //     · 原【发言排行】与【互动均衡度】合成一张卡片【发言排行与互动均衡度】。
+    //   新增（+2 个维度）：
+    //     · 回复时延热力（时延 × 小时 / 昼夜节律，24 格定长数组）；
+    //     · 冷场与重启（冷场统计 + 谁先打破沉默 + 平均话题持续度，从【节奏与沉默】独立）。
     //
     //   核心 13 个（始终输出）：
-    //     1 核心指标 / 2 内容载体与表情 / 3 活跃时段分布 / 4 活跃热力 / 5 作息与昼夜 /
-    //     6 节奏与沉默 / 7 消息长度画像 / 8 情绪与语气 / 9 高频词与口头禅 /
-    //     10 话题雷达与时段 / 11 发言与互动平衡 / 12 特殊消息与互动 / 13 每日开场与收尾
+    //     1 核心指标 / 2 内容载体与表情（含分享物与链接密度）/ 3 活跃时段与热力 /
+    //     4 作息与昼夜（含每日开场与收尾）/ 5 回复时延热力 / 6 节奏与沉默 / 7 冷场与重启 /
+    //     8 消息长度画像 / 9 情绪与语气 / 10 高频词与口头禅 / 11 话题雷达与时段 /
+    //     12 发言排行与互动均衡度 / 13 特殊消息与互动
     //   进阶 12 个（三个开关各管 4 个，默认全开）：
     //     时间包：14 活跃日历与趋势 / 15 回应速度 / 16 活跃密度与连续 / 17 连击与轮次
     //     关系包：18 接话·提问·默契 / 19 复读与重复 / 20 回复速度榜 / 21 个人作息雷达
@@ -1316,7 +1347,10 @@ object ChatAnalysisEngine {
     ): String {
         val r = StringBuilder()
         appendCoreOverview(r, extra, talker, isGroup, totalAll, textN, typeCount, atMe, rank.size, nickCache)
-        appendCoreTime(r, extra, totalAll, textN, hourDist, typeCount)
+        appendCoreTime(r, extra, talker, isGroup, totalAll, textN, hourDist, nickCache)
+        // 第 23 轮新增维度：回复时延热力（时延 × 小时）。紧跟【作息与昼夜】，
+        // 因为它回答的是同一类问题（"什么时间说什么话"），只是把口径从"话量"换成"时延"。
+        appendCoreLatency(r, extra)
         appendCoreRhythm(
             r = r,
             ex = extra,
@@ -1329,6 +1363,16 @@ object ChatAnalysisEngine {
             maxStreak = maxStreak,
             longestLen = longestLen,
             longestFromKey = longestFromKey,
+            nickCache = nickCache,
+        )
+        // 第 23 轮从【节奏与沉默】独立出来的维度：冷场与重启
+        appendCoreColdStart(
+            r = r,
+            ex = extra,
+            talker = talker,
+            isGroup = isGroup,
+            textN = textN,
+            maxGapMs = maxGapMs,
             nickCache = nickCache,
         )
         appendCoreContent(
@@ -1374,6 +1418,44 @@ object ChatAnalysisEngine {
         }
 
         return r.toString()
+    }
+
+    /**
+     * 【分享物与链接密度】的正文（第 22 轮引入，第 23 轮并入【内容载体与表情】）。
+     *
+     * 全部指标都由已有的 typeCount（消息类型计数，在主循环里就地累加）直接推导：
+     * 不额外扫描一遍消息、不查库、不猜字段。每一种类型都对应真实存在过的消息条数，
+     * 该类型一条都没有时就是 0，不做任何补齐或占位。
+     *
+     * 本函数**不输出分节标题** —— 它就是【内容载体与表情】这张卡片的第二段内容：
+     * 上面按"消息是什么"分类，这里把其中的分享物 / 链接 / 媒体再算一遍总量与密度。
+     */
+    private fun appendShareDensity(r: StringBuilder, typeCount: Map<String, Int>, totalAll: Int) {
+        if (totalAll <= 0) return
+        val dCardLinks = typeCount["卡片/链接"] ?: 0
+        val dLocations = typeCount["位置"] ?: 0
+        val dTransfers = typeCount["转账"] ?: 0
+        val dRedPacks = typeCount["红包"] ?: 0
+        val dImages = typeCount["图片"] ?: 0
+        val dVoices = typeCount["语音"] ?: 0
+        val dVideos = typeCount["视频"] ?: 0
+        val dMedia = dImages + dVoices + dVideos
+        val dShare = dCardLinks + dLocations + dTransfers + dRedPacks
+        r.append("链接与卡片：").append(dCardLinks).append(" 条（")
+            .append(pct(dCardLinks, totalAll)).append("%）\n")
+        r.append("位置分享：").append(dLocations).append(" 次\n")
+        r.append("转账 / 红包：").append(dTransfers).append(" / ").append(dRedPacks)
+            .append(" 笔\n")
+        r.append("媒体分享：").append(dMedia).append(" 条（图 ").append(dImages)
+            .append(" · 语音 ").append(dVoices).append(" · 视频 ").append(dVideos)
+            .append("）\n")
+        r.append("媒体占全部消息：").append(pct(dMedia, totalAll)).append("%\n")
+        r.append("分享物总量：").append(dShare + dMedia).append(" 条（")
+            .append(pct(dShare + dMedia, totalAll)).append("%）\n")
+        // pct(...) 返回的是 Int 百分数（调用点自己补 "%"），而 shareDensityText
+        // 收的是字符串形式的百分数，这里必须显式 toString()。
+        r.append("分享密度：").append(shareDensityText(pct(dShare + dMedia, totalAll).toString()))
+            .append("\n")
     }
 
     // ---------------- 核心 1~2：核心指标 / 内容载体与表情 ----------------
@@ -1435,6 +1517,10 @@ object ChatAnalysisEngine {
         } else {
             r.append("统计口径 该时段没有可统计的消息\n")
         }
+        // ── 2B) 分享物与链接密度（第 22 轮维度，第 23 轮并入本段）──────────
+        // 与上面的载体分布读的是同一批 typeCount，合并后这张卡片就是完整的"用什么在说话"，
+        // 报告里的分节标题数也随之收敛到 25 个（= 对外展示的分析维度数）。
+        appendShareDensity(r, typeCount, totalAll)
         // 表情符号排行（第 18 轮的口径原样保留：只统计正文里的 Unicode 表情码点）
         if (textN > 0) {
             r.append("表情总个数：").append(ex.emojiTotal).append(" 个\n")
@@ -1482,13 +1568,12 @@ object ChatAnalysisEngine {
     private fun appendCoreTime(
         r: StringBuilder,
         ex: ExtraStats,
+        talker: String,
+        isGroup: Boolean,
         totalAll: Int,
         textN: Int,
         hourDist: IntArray,
-        // 第 22 轮：2B)「分享物与链接密度」并进这一段讲「聊什么」的地方，用到的
-        // typeCount 必须显式传进来 —— 它在上层是构造统计时就地累加好的 map，
-        // 不在这里重新扫一遍消息，也不查库。
-        typeCount: Map<String, Int>,
+        nickCache: MutableMap<String, String>,
     ) {
         var hMax = 0
         var hPeak = 0
@@ -1533,39 +1618,12 @@ object ChatAnalysisEngine {
             topList.add(h.toString())
         }
 
-        // ── 2B) 分享物与链接密度（第 22 轮新增维度）─────────────────
-        // 全部指标都由已有的 typeCount（消息类型计数，在主循环里就地累加）直接推导：
-        // 不额外扫描一遍消息、不查库、不猜字段。每一种类型都对应真实存在过的消息条数，
-        // 该类型一条都没有时就是 0，不做任何补齐或占位。
-        r.append("\n【分享物与链接密度】\n")
-        if (totalAll > 0) {
-            val dCardLinks = typeCount["卡片/链接"] ?: 0
-            val dLocations = typeCount["位置"] ?: 0
-            val dTransfers = typeCount["转账"] ?: 0
-            val dRedPacks = typeCount["红包"] ?: 0
-            val dImages = typeCount["图片"] ?: 0
-            val dVoices = typeCount["语音"] ?: 0
-            val dVideos = typeCount["视频"] ?: 0
-            val dMedia = dImages + dVoices + dVideos
-            val dShare = dCardLinks + dLocations + dTransfers + dRedPacks
-            r.append("链接与卡片：").append(dCardLinks).append(" 条（")
-                .append(pct(dCardLinks, totalAll)).append("%）\n")
-            r.append("位置分享：").append(dLocations).append(" 次\n")
-            r.append("转账 / 红包：").append(dTransfers).append(" / ").append(dRedPacks)
-                .append(" 笔\n")
-            r.append("媒体分享：").append(dMedia).append(" 条（图 ").append(dImages)
-                .append(" · 语音 ").append(dVoices).append(" · 视频 ").append(dVideos)
-                .append("）\n")
-            r.append("媒体占全部消息：").append(pct(dMedia, totalAll)).append("%\n")
-            r.append("分享物总量：").append(dShare + dMedia).append(" 条（")
-                .append(pct(dShare + dMedia, totalAll)).append("%）\n")
-            // pct(...) 返回的是 Int 百分数（调用点自己补 "%"），而 shareDensityText
-            // 收的是字符串形式的百分数，这里必须显式 toString()。
-            r.append("分享密度：").append(shareDensityText(pct(dShare + dMedia, totalAll).toString()))
-                .append("\n")
-        } else {
-            r.append("样本区间内没有消息，暂不出具分享密度画像。\n")
-        }
+        // ── 2B) 分享物与链接密度 ────────────────────────────────────
+        // 第 23 轮（用户反馈：分析项目太多、合并同类项）：本段内容并入
+        // 【内容载体与表情】—— 两者读的是同一份 typeCount（上面按"消息是什么"分类，
+        // 这里把分享物 / 链接 / 媒体再算一次总量与密度），拆成两段只是同一批数字换种说法。
+        // 实现原样搬到 appendShareDensity()，调用点改到 appendCoreOverview 里。
+        // 这样"分节标题数 = 对外展示的分析维度数 = 25"在报告文本层就成立。
 
         // ── 3) 活跃时段分布 ─────────────────────────────────────────
         r.append("\n【活跃时段与热力】\n")
@@ -1681,6 +1739,200 @@ object ChatAnalysisEngine {
                 }
             ).append("\n")
         }
+
+        // ── 4B) 每日开场与收尾（第 18 轮维度，第 23 轮并入本段）──────────
+        // 与"作息与昼夜"读的是同一批时间口径（每天的首条 / 末条），只是多一层归因：
+        // 上面回答"这个群几点醒、几点睡"，这里回答"每天谁先醒、谁最后睡"。
+        // 并进同一张卡片后，报告的分节标题数收敏到 25（= 对外展示维度数）。
+        appendDailyOpenClose(r, ex, talker, isGroup, nickCache)
+    }
+
+    /**
+     * 【每日开场与收尾】的正文（第 18 轮引入，第 23 轮并入【作息与昼夜】）。
+     *
+     * 数据来自扫描期就地累加的两张人级小表（dayOpener / dayCloser），
+     * 这里只做 Top N 拼接与结论判定：不查库、不遍历消息。
+     *
+     * 本函数**不输出分节标题** —— 它是【作息与昼夜】这张卡片的第二段内容。
+     */
+    private fun appendDailyOpenClose(
+        r: StringBuilder,
+        ex: ExtraStats,
+        talker: String,
+        isGroup: Boolean,
+        nickCache: MutableMap<String, String>,
+    ) {
+        if (ex.senderDayKey == 0) {
+            r.append("开场收尾 该时段没有可归因的文字消息\n")
+            return
+        }
+        var openerSum = 0
+        for (v in ex.dayOpener.values) openerSum += v
+        r.append("归因天数：").append(openerSum).append(" 天\n")
+        val ok = topKeys(ex.dayOpener, 6)
+        if (ok.isNotEmpty()) {
+            val oTop = ok[0]
+            r.append("开场王：")
+                .append(textSafe(speakerDisplayName(oTop, talker, isGroup, nickCache))).append("\n")
+            r.append("每日开场榜 每天第一条文字消息是谁发的\n")
+            val oMax = (ex.dayOpener[oTop] ?: 1).coerceAtLeast(1)
+            for ((i, k) in ok.withIndex()) {
+                val v = ex.dayOpener[k] ?: 0
+                if (v <= 0) continue
+                r.append(i + 1).append(". ")
+                    .append(textSafe(speakerDisplayName(k, talker, isGroup, nickCache)))
+                    .append(' ').append(v).append(' ').append(bar(v, oMax, 16)).append("\n")
+            }
+        }
+        val ck = topKeys(ex.dayCloser, 6)
+        if (ck.isNotEmpty()) {
+            val cTop = ck[0]
+            r.append("收尾王：")
+                .append(textSafe(speakerDisplayName(cTop, talker, isGroup, nickCache))).append("\n")
+            r.append("每日收尾榜 每天最后一条文字消息是谁发的\n")
+            val cMax = (ex.dayCloser[cTop] ?: 1).coerceAtLeast(1)
+            for ((i, k) in ck.withIndex()) {
+                val v = ex.dayCloser[k] ?: 0
+                if (v <= 0) continue
+                r.append(i + 1).append(". ")
+                    .append(textSafe(speakerDisplayName(k, talker, isGroup, nickCache)))
+                    .append(' ').append(v).append(' ').append(bar(v, cMax, 16)).append("\n")
+            }
+        }
+        val oTopV = if (ok.isNotEmpty()) ex.dayOpener[ok[0]] ?: 0 else 0
+        val cTopV = if (ck.isNotEmpty()) ex.dayCloser[ck[0]] ?: 0 else 0
+        val samePerson = ok.isNotEmpty() && ck.isNotEmpty() && ok[0] == ck[0]
+        r.append("开场收尾点评 ").append(
+            when {
+                samePerson && oTopV * 2 >= openerSum -> "同一个人既开场又收尾 每天的聊天由他起头也由他收尾"
+                oTopV <= 1 && cTopV <= 1 -> "谁先冒头都不固定 没有固定的开场人"
+                oTopV * 2 >= openerSum -> "一个人常先开口 每天多半是他先冒头"
+                else -> "开场与收尾都比较分散"
+            }
+        ).append("\n")
+    }
+
+    // ---------------- 核心 5B：回复时延热力（第 23 轮新增维度）----------------
+
+    /** 【回复时延热力】的 24 小时归段（8 段）。标签里必须含数字：两侧排版器都是靠"标签里有没有数字"
+     *  来决定画柱状图还是环形图，8 段带数字的标签才能画出"时延随时段变化"的那条轮廓。 */
+    private val LATENCY_BAND_LABELS = arrayOf(
+        "凌晨0-5点", "上午6-8点", "上午9-11点", "午间12-13点",
+        "下午14-17点", "傍晚18-19点", "晚间20-22点", "深夜23点",
+    )
+
+    /** 每个归段的起止小时（闭区间），与 [LATENCY_BAND_LABELS] 一一对应 */
+    private val LATENCY_BAND_FROM = intArrayOf(0, 6, 9, 12, 14, 18, 20, 23)
+    private val LATENCY_BAND_TO = intArrayOf(5, 8, 11, 13, 17, 19, 22, 23)
+
+    /**
+     * 【回复时延热力】：同一个群里"几点回得快、几点回得慢"。
+     *
+     * 数据是扫描期按小时累加的两条定长数组（[ExtraStats.latHourSum] / [ExtraStats.latHourCnt]，
+     * 每条真回复记两笔：小时下标 + 时延毫秒），所以这里只做除法与阈值判定：
+     * 不查库、不遍历消息、不物化全量，也没有"按小时再扫一遍"的二次遍历。
+     *
+     * 与【回应速度】的区别：那张卡片给的是全天总分布（多少比例在一分钟内），
+     * 这张卡片给的是**按小时切开**的时延轮廓（白天 vs 深夜、哪个小时最慢、8 段节律），
+     * 也就是用户要的"回复时延热力 / 昼夜节律"。
+     */
+    private fun appendCoreLatency(r: StringBuilder, ex: ExtraStats) {
+        r.append("\n【回复时延热力】\n")
+        var covered = 0
+        var fastH = -1
+        var slowH = -1
+        var fastMs = Long.MAX_VALUE
+        var slowMs = -1L
+        var daySum = 0L
+        var dayCnt = 0
+        var nightSum = 0L
+        var nightCnt = 0
+        for (h in 0..23) {
+            val c = ex.latHourCnt[h]
+            if (c <= 0) continue
+            covered++
+            val avg = ex.latHourSum[h] / c
+            if (avg < fastMs) {
+                fastMs = avg
+                fastH = h
+            }
+            if (avg > slowMs) {
+                slowMs = avg
+                slowH = h
+            }
+            if (h in 6..17) {
+                daySum += ex.latHourSum[h]
+                dayCnt += c
+            } else {
+                nightSum += ex.latHourSum[h]
+                nightCnt += c
+            }
+        }
+        if (covered <= 0) {
+            r.append("统计口径 样本区间内没有可归因的回复间隔（同一个人连发不计）\n")
+            return
+        }
+        r.append("有样本时段：").append(covered).append(" / 24 个\n")
+        if (fastH >= 0 && fastMs != Long.MAX_VALUE) {
+            r.append("最快时段：").append(fastH).append(" 点（").append(humanDuration(fastMs)).append("）\n")
+        }
+        if (slowH >= 0 && slowMs > 0L) {
+            r.append("最慢时段：").append(slowH).append(" 点（").append(humanDuration(slowMs)).append("）\n")
+        }
+        if (dayCnt > 0) {
+            r.append("白天平均：").append(humanDuration(daySum / dayCnt)).append("\n")
+        }
+        if (nightCnt > 0) {
+            r.append("夜晚平均：").append(humanDuration(nightSum / nightCnt)).append("\n")
+        }
+        val fastValid = fastMs != Long.MAX_VALUE && fastMs > 0L
+        if (fastValid && slowMs >= fastMs) {
+            r.append("快慢差：").append(oneDecimal(slowMs.toDouble() / fastMs.toDouble())).append(" 倍\n")
+        }
+
+        // ---- 昼夜节律：24 小时归成 8 段，用条形行画一条"时延轮廓" ----
+        val bSum = LongArray(LATENCY_BAND_LABELS.size)
+        val bCnt = IntArray(LATENCY_BAND_LABELS.size)
+        for (h in 0..23) {
+            val c = ex.latHourCnt[h]
+            if (c <= 0) continue
+            for (b in LATENCY_BAND_LABELS.indices) {
+                if (h in LATENCY_BAND_FROM[b]..LATENCY_BAND_TO[b]) {
+                    bSum[b] += ex.latHourSum[h]
+                    bCnt[b] += c
+                    break
+                }
+            }
+        }
+        val bMin = IntArray(LATENCY_BAND_LABELS.size)
+        var bMax = 0
+        var bands = 0
+        for (b in LATENCY_BAND_LABELS.indices) {
+            if (bCnt[b] <= 0) continue
+            bands++
+            // 向上取整到分钟、至少 1 分钟：0 会让条形消失，读者会以为"这个时段没数据"。
+            val m = ((bSum[b] / bCnt[b] + 59_999L) / 60_000L).toInt().coerceAtLeast(1)
+            bMin[b] = m
+            if (m > bMax) bMax = m
+        }
+        if (bands >= 2) {
+            r.append("时延节律 各时段的平均回复时长（分钟，越短回得越快）\n")
+            for (b in LATENCY_BAND_LABELS.indices) {
+                if (bMin[b] <= 0) continue
+                r.append(LATENCY_BAND_LABELS[b]).append(' ').append(bMin[b]).append(' ')
+                    .append(bar(bMin[b], bMax, 16)).append("\n")
+            }
+        }
+        r.append("时延热力点评 ").append(
+            when {
+                dayCnt > 0 && nightCnt > 0 &&
+                    nightSum / nightCnt >= 4L * (daySum / dayCnt).coerceAtLeast(1L) ->
+                    "夜里回得明显慢 白天基本是秒回"
+                fastValid && slowMs >= 4L * fastMs -> "时段差很大 最快最慢差了数倍"
+                else -> "各时段回得差不多 没有明显的快慢时段"
+            }
+        ).append("\n")
+        r.append("时延读法 只统计相隔 30 分钟以内的回复，同一条消息连发不计\n")
     }
 
     // ---------------- 核心 6：节奏与沉默 ----------------
@@ -1711,9 +1963,6 @@ object ChatAnalysisEngine {
         if (gapCount > 0) {
             r.append("平均间隔：").append(humanDuration(gapSum / gapCount)).append("\n")
         }
-        if (maxGapMs > 0L) {
-            r.append("最长冷场：").append(humanDuration(maxGapMs)).append("\n")
-        }
         r.append("最长连发：").append(maxStreak).append(" 条\n")
         if (longestLen > 0) {
             r.append("最长一条：").append(longestLen).append(" 字")
@@ -1722,17 +1971,73 @@ object ChatAnalysisEngine {
             }
             r.append("\n")
         }
-        r.append("沉默次数：").append(ex.silentBreaks).append(" 次\n")
-        if (ex.silentBreaks > 0) {
-            r.append("平均每次沉默：").append(humanDuration(ex.silentSum / ex.silentBreaks)).append("\n")
-        }
         if (ex.replyGapCount > 0) {
             r.append("平均回复间隔：").append(humanDuration(ex.replyGapSum / ex.replyGapCount)).append("\n")
         }
+        // 第 23 轮：本段只保留"节奏"口径（多久说一句、能连发多少条），
+        // 冷场 / 重启 / 话题持续度整块搬到【冷场与重启】—— 那是另一件事（断在哪里、谁把话接回来），
+        // 以前混在一张卡片里，读者要自己从一堆数字里分辨。
+        // 补一句人话结论，让这张卡片即使指标少也读得懂。
+        if (gapCount > 0) {
+            val avg = gapSum / gapCount
+            r.append("节奏点评 ").append(
+                when {
+                    avg <= 60_000L -> "基本实时 平均一分钟内就接上话"
+                    avg <= 5L * 60_000L -> "聊得很密 平均几分钟就有一条"
+                    avg <= TOPIC_BREAK_MS -> "节奏适中 想起来就说两句"
+                    else -> "更像留言板 平均要半小时以上才回一句"
+                }
+            ).append("\n")
+        }
+    }
+
+    // ---------------- 核心 6B：冷场与重启（第 23 轮新增维度）----------------
+
+    /**
+     * 【冷场与重启】：这段关系"断在哪里、断多久、谁把话接回来"。
+     *
+     * 第 23 轮从【节奏与沉默】里**独立出来**的维度 —— 原来冷场次数 / 静默分档 / 谁更常先开口 /
+     * 话题段都挤在节奏段里，读者要在一堆数字里自己分辨"这是节奏还是冷场"。独立成段之后：
+     *   1) 冷场侧：次数、平均时长、**冷场时长占比**（沉默时长 / 沉默 + 回复时长，本轮新增的口径）；
+     *   2) 重启侧：沉默后的第一条是谁发的（[ExtraStats.initiator]，扫描期就地累加）；
+     *   3) 话题侧：话题段数、**平均话题持续度**（[ExtraStats.topicSum] / [ExtraStats.topicCnt]，
+     *      本轮在 closeTopic 里顺手累加，不额外遍历）、最长话题及其区间。
+     *
+     * 全部数据来自同一次扫描累出来的定长数组 / 人级小表：不查库、不遍历消息。
+     */
+    private fun appendCoreColdStart(
+        r: StringBuilder,
+        ex: ExtraStats,
+        talker: String,
+        isGroup: Boolean,
+        textN: Int,
+        maxGapMs: Long,
+        nickCache: MutableMap<String, String>,
+    ) {
+        r.append("\n【冷场与重启】\n")
+        val topicCount = ex.silentBreaks + 1
+        if (maxGapMs > 0L) {
+            r.append("最长冷场：").append(humanDuration(maxGapMs)).append("\n")
+        }
+        r.append("冷场次数：").append(ex.silentBreaks).append(" 次\n")
+        if (ex.silentBreaks > 0) {
+            r.append("平均冷场时长：").append(humanDuration(ex.silentSum / ex.silentBreaks)).append("\n")
+            // 冷场时长占比：分母是"沉默时长 + 真正在回复的时长"，
+            // 也就是把整段对话的间隔时间分成"接得上"和"断了"两部分。
+            val busy = ex.silentSum + ex.replyGapSum
+            if (busy > 0L) {
+                // pct() 的入参是 Int，这里两个操作数都是 Long（时长毫秒），
+                // 显式换算成百分数，避免隐式截断：占比只在 0~100 之间，Int 足够。
+                val coldRatio = ((ex.silentSum.toDouble() * 100.0) / busy.toDouble()).roundToInt()
+                r.append("冷场时长占比：").append(coldRatio).append("%\n")
+            }
+        }
         if (ex.maxGapEnd > ex.maxGapStart && ex.maxGapStart > 0L) {
-            r.append("最长沉默区间 ").append(clockText(ex.maxGapStart)).append(" → ")
+            r.append("最长冷场区间 ").append(clockText(ex.maxGapStart)).append(" → ")
                 .append(clockText(ex.maxGapEnd)).append("\n")
         }
+
+        // ---- 静默间隔谱（第 18 轮口径原样保留）----
         var silenceSum = 0
         for (v in ex.silence) silenceSum += v
         if (silenceSum > 0) {
@@ -1756,6 +2061,8 @@ object ChatAnalysisEngine {
         } else {
             r.append("静默分档 只有一条消息，没有可比较的间隔\n")
         }
+
+        // ---- 重启侧：沉默之后是谁把话接回来的 ----
         if (ex.initiator.isEmpty()) {
             r.append("谁更常先开口 没有跨越 30 分钟的中断\n")
         } else {
@@ -1763,6 +2070,8 @@ object ChatAnalysisEngine {
             val ik = topKeys(ex.initiator, 4)
             val iMax = (ex.initiator[ik[0]] ?: 1).coerceAtLeast(1)
             var firstKey = ik[0]
+            var iSum = 0
+            for (k in ik) iSum += ex.initiator[k] ?: 0
             for (k in ik) {
                 val v = ex.initiator[k] ?: 0
                 if (v <= 0) continue
@@ -1770,14 +2079,24 @@ object ChatAnalysisEngine {
                 val dn = textSafe(speakerDisplayName(k, talker, isGroup, nickCache))
                 r.append(dn).append(" ").append(v).append(" ").append(bar(v, iMax, 16)).append("\n")
             }
+            val topV = ex.initiator[firstKey] ?: 0
             r.append("先开口最多：")
                 .append(textSafe(speakerDisplayName(firstKey, talker, isGroup, nickCache)))
-                .append("（").append(ex.initiator[firstKey] ?: 0).append(" 次）\n")
+                .append("（").append(topV).append(" 次）\n")
+            r.append("重启点评 ").append(
+                when {
+                    topV * 2 >= iSum -> "冷场之后基本是同一个人把人叫回来"
+                    else -> "冷场之后谁先冒头都不固定"
+                }
+            ).append("\n")
         }
-        // 本轮整合后把「话题段」的结论也并进节奏段（原【话题切换】的段落结构口径）
-        val topicCount = ex.silentBreaks + 1
-        if (textN > 0 || topicCount > 0) {
+
+        // ---- 话题侧：话题段数 / 平均持续度 / 最长话题 ----
+        if (textN > 0) {
             r.append("话题段数：").append(topicCount).append(" 段\n")
+            if (ex.topicCnt > 0 && ex.topicSum > 0L) {
+                r.append("平均话题持续度：").append(humanDuration(ex.topicSum / ex.topicCnt)).append("\n")
+            }
             if (ex.maxTopicMs > 0L) {
                 r.append("最长话题：").append(humanDuration(ex.maxTopicMs)).append("\n")
             }
@@ -1788,10 +2107,11 @@ object ChatAnalysisEngine {
             if (ex.silentBreaks > 0) {
                 r.append("切换间隔：").append(humanDuration(ex.silentSum / ex.silentBreaks)).append("/次\n")
             } else {
-                r.append("切换节奏 全程连贯，没有跨越 30 分钟的中断\n")
+                r.append("话题节奏 全程连贯，没有跨越 30 分钟的中断\n")
             }
         }
     }
+
 
     // ---------------- 核心 7~9：消息长度 / 情绪与语气 / 高频词与口头禅 ----------------
 
@@ -2065,9 +2385,13 @@ object ChatAnalysisEngine {
             r.append("统计口径 该时段没有文字消息\n")
         }
 
-        // ── 11) 发言与互动平衡 ──────────────────────────────────────
+        // ── 11) 发言排行与互动均衡度 ────────────────────────────────
+        // 第 23 轮：原【发言排行】与【互动均衡度】两张卡片合成一张 —— 排行是绝对量、
+        // 均衡度是占比，读的是同一份 rank 数据，分开列只会重复（也是"分析项目太多"的来源之一）。
         if (showRank) {
-            r.append("\n").append(if (isGroup) "【发言排行 Top10】" else "【发言对比】").append("\n")
+            r.append("\n").append(
+                if (isGroup) "【发言排行与互动均衡度】" else "【发言对比与均衡度】"
+            ).append("\n")
             val rk = topKeys(rank, 10)
             if (rk.isNotEmpty()) {
                 val rMax = rank[rk[0]] ?: 1
@@ -2079,10 +2403,15 @@ object ChatAnalysisEngine {
                 }
             }
         }
+        if (!showRank) {
+            // showRank = false 时排行整段不输出，均衡度必须自己带标题，
+            // 否则会被并进上一张卡片（【话题雷达与时段】），标题与内容就对不上了。
+            r.append("\n【互动均衡度】\n")
+        }
         // 第 22 轮：把原【互动平衡】收敛进【互动均衡度】—— 原有的占比/条数比/平衡度全部保留，
         // 另外补一个**基尼系数**（纯由 rank 推导，不额外扫描）来回答"话量到底有多集中"。
         // 之所以合并成一个维度而不是并列两个：两者读的是同一份数据（rank），分开列只会重复。
-        r.append("\n【互动均衡度】\n")
+        // 第 23 轮起本段**不再另起分节标题**，它接在【发言排行与互动均衡度】的排行条形之后。
         val rankTotal = rank.values.sum()
         val mine = rank["我"] ?: 0
         val mineChars = ex.rankChars["我"] ?: 0
@@ -2179,55 +2508,9 @@ object ChatAnalysisEngine {
         }
 
         // ── 13) 每日开场与收尾 ──────────────────────────────────────
-        r.append("\n【每日开场与收尾】\n")
-        if (ex.senderDayKey != 0) {
-            var openerSum = 0
-            for (v in ex.dayOpener.values) openerSum += v
-            r.append("归因天数：").append(openerSum).append(" 天\n")
-            val ok = topKeys(ex.dayOpener, 6)
-            if (ok.isNotEmpty()) {
-                val oTop = ok[0]
-                r.append("开场王：")
-                    .append(textSafe(speakerDisplayName(oTop, talker, isGroup, nickCache))).append("\n")
-                r.append("每日开场榜 每天第一条文字消息是谁发的\n")
-                val oMax = (ex.dayOpener[oTop] ?: 1).coerceAtLeast(1)
-                for ((i, k) in ok.withIndex()) {
-                    val v = ex.dayOpener[k] ?: 0
-                    if (v <= 0) continue
-                    r.append(i + 1).append(". ")
-                        .append(textSafe(speakerDisplayName(k, talker, isGroup, nickCache)))
-                        .append(' ').append(v).append(' ').append(bar(v, oMax, 16)).append("\n")
-                }
-            }
-            val ck = topKeys(ex.dayCloser, 6)
-            if (ck.isNotEmpty()) {
-                val cTop = ck[0]
-                r.append("收尾王：")
-                    .append(textSafe(speakerDisplayName(cTop, talker, isGroup, nickCache))).append("\n")
-                r.append("每日收尾榜 每天最后一条文字消息是谁发的\n")
-                val cMax = (ex.dayCloser[cTop] ?: 1).coerceAtLeast(1)
-                for ((i, k) in ck.withIndex()) {
-                    val v = ex.dayCloser[k] ?: 0
-                    if (v <= 0) continue
-                    r.append(i + 1).append(". ")
-                        .append(textSafe(speakerDisplayName(k, talker, isGroup, nickCache)))
-                        .append(' ').append(v).append(' ').append(bar(v, cMax, 16)).append("\n")
-                }
-            }
-            val oTopV = if (ok.isNotEmpty()) ex.dayOpener[ok[0]] ?: 0 else 0
-            val cTopV = if (ck.isNotEmpty()) ex.dayCloser[ck[0]] ?: 0 else 0
-            val samePerson = ok.isNotEmpty() && ck.isNotEmpty() && ok[0] == ck[0]
-            r.append("开场收尾点评 ").append(
-                when {
-                    samePerson && oTopV * 2 >= openerSum -> "同一个人既开场又收尾 每天的聊天由他起头也由他收尾"
-                    oTopV <= 1 && cTopV <= 1 -> "谁先冒头都不固定 没有固定的开场人"
-                    oTopV * 2 >= openerSum -> "一个人常先开口 每天多半是他先冒头"
-                    else -> "开场与收尾都比较分散"
-                }
-            ).append("\n")
-        } else {
-            r.append("统计口径 该时段没有文字消息\n")
-        }
+        // 第 23 轮并入【作息与昼夜】（同一批"每天首条 / 末条"时间口径的归因读法），
+        // 实现搬到 appendDailyOpenClose()，调用点在 appendCoreTime 里。
+        // 这里不再输出分节标题：报告的分节标题数 = 对外展示的分析维度数 = 25。
     }
 
     // ---------------- 进阶包一（时间与趋势）：4 个维度 ----------------
@@ -2812,6 +3095,10 @@ object ChatAnalysisEngine {
     private fun closeTopic(ex: ExtraStats, endCt: Long) {
         if (ex.topicStart <= 0L || endCt <= ex.topicStart) return
         val dur = endCt - ex.topicStart
+        // 第 23 轮：顺手累计「话题持续度」的分母与分子（平均一段话题能撑多久）。
+        // 与下面的最长话题共用同一次计算，不新增遍历。
+        ex.topicSum += dur
+        ex.topicCnt++
         if (dur > ex.maxTopicMs) {
             ex.maxTopicMs = dur
             ex.maxTopicStart = ex.topicStart
