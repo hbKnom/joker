@@ -514,6 +514,18 @@ object ChatAnalysisPng {
     private const val SUB_BAR_W = 8f
     private const val SUB_BAR_H = 32f
 
+    // ── 单条 TextLine 的布局上限（第 27 轮 修「PNG 单张卡底部溢出」）────────
+    /**
+     * 单条 [Block.TextLine] 的最大行数。
+     *
+     * 计算依据：CARD_SPLIT_MAX_H ≈ 18466px（见第 23 轮长卡分片阈值），单卡可分配给 TextLine
+     * 的高度 ≈ CARD_SPLIT_MAX_H - CARD_PAD_V*2 - SECTION_HEADER_H ≈ 18202px。每行占
+     * TEXT_LINE_H(74) + TEXT_LINE_GAP(24) = 98px → 理论上限约 186 行；这里取保守的 180，
+     * 留出 KPI / 排行 / 柱图与文本共存的富余。超过部分由 [wrapLinesLimited] 在末行按宽度省略，
+     * 不留「续」字样（因为是布局层防溢出保护，不是用户可见的功能截断）。
+     */
+    private const val PNG_TEXTLINE_MAX_LINES = 180
+
     // ---- 配色（集中常量：主色 / 强调色 / 成功 / 警示 / 危险 / 文本主次 / 分隔线）----
     private const val COLOR_BG_TOP = 0xFFEEF5FC.toInt()
     private const val COLOR_BG_MID = 0xFFF7FAFE.toInt()
@@ -1269,7 +1281,14 @@ object ChatAnalysisPng {
                     y += HEATMAP_H
                 }
                 is Block.TextLine -> {
-                    val lines = wrapLines(u.text, CONTENT_W.toFloat(), bodyP)
+                    // 【第 27 轮 修「PNG 单张卡底部溢出」】上一版用 `wrapLines` 不限行数，
+                    // AI 报告单段话极长（数百字连续）会让一行换出几十上百行，
+                    // TextLine 高度远超 [CARD_SPLIT_MAX_H] → 走到卡片中段才被分页切 →
+                    // 每张分页图底部的卡片被截断。给单条 TextLine 加上布局上限，超过的
+                    // 走 [wrapLinesLimited] 在最后一行按宽度截断，不留「续」字样
+                    // （这里只管单条 Block，不过单卡）。具体阈值见下方常量。
+                    val maxLines = PNG_TEXTLINE_MAX_LINES
+                    val lines = wrapLinesLimited(u.text, CONTENT_W.toFloat(), bodyP, maxLines)
                     val count = lines.size.coerceAtLeast(1)
                     val h = count * TEXT_LINE_H + TEXT_LINE_GAP
                     rows.add(Row(u, y, h, lines))

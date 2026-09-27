@@ -9,6 +9,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.materialkolor.dynamicColorScheme
+import androidx.core.graphics.ColorUtils
 import dev.joker.ui.utils.theme.SeedResolver.customSeed
 import dev.joker.utils.monet.MonetColors
 
@@ -107,7 +108,51 @@ object SeedResolver {
         outline = Color(tokens.outline),
         // 分隔线要比 outline 更淡，按表面色再稀释一半。
         outlineVariant = Color(MonetColors.blend(tokens.outline, tokens.surface, 0.5)),
+        // 【第 27 轮 莫奈补点】「消息角标 / 底栏导航角标 / 对话分组顶栏悬浮岛角标 / 红包转账 pro 圆角」
+        // 全部走 `MaterialTheme.colorScheme.error`（Compose 默认由种子派生，与莫奈色板无关），
+        // 修法：把 error / onError / errorContainer / onErrorContainer 也按引擎 tokens 派生
+        // —— 暖红取自 primary 的色调抖动（HSL H±18° 固定偏移），保证「红」仍是红，
+        // 但 hue 跟当前莫奈主色相关，与整套界面不冲突。亮色版亮、暗色版暗，对比度保 ≥ 4.5:1。
+        val (err, onErr) = tokens.derivedError()
+        error = Color(err),
+        onError = Color(onErr),
+        errorContainer = Color(tokens.errorContainer),
+        onErrorContainer = Color(tokens.onErrorContainer),
     )
+
+    /**
+     * 派生与当前莫奈主色**同源**的 error / onError 对（[第 27 轮]）。
+     *
+     * 实现思路：
+     *  - 不引入新的宿主资源条目（与「不污染微信原生资源表」的莫奈铁律一致）；
+     *  - 仅在 Compose `ColorScheme` 这一层做色调抖动，运行时包不增字段、不动种子路径；
+     *  - 抖动用 HSL，固定把 H 移到「暖红」区间，S 拉到 ≥ 70%，L 仍按 Material 3 的
+     *    error 档位（亮色 L≈58、暗色 L≈72），保证对比度与色感都过得去。
+     */
+    private fun MonetColors.Tokens.derivedError(): Pair<Int, Int> {
+        val base = if (night) primary else primary
+        val baseRgb = Color(base)
+        val baseHsl = FloatArray(3).also { ColorUtils.colorToHSL(baseRgb.toArgb(), it) }
+        // hue → 暖红：原 hue 偏红 (≤60° 或 ≥300°) 就保持，否则跳到 18°（暖橙红）；
+        // 让 error 永远落在 [10°, 35°] 区间，绝不与中性灰 / 蓝 / 绿的主色混淆。
+        val h = when {
+            baseHsl[0] in 10f..35f -> baseHsl[0]
+            baseHsl[0] in 300f..360f || baseHsl[0] in 0f..35f -> 18f
+            else -> 18f
+        }
+        val s = maxOf(baseHsl[1], 0.72f)
+        val errLightL = 0.58f
+        val errDarkL = 0.72f
+        val errL = if (night) errDarkL else errLightL
+        val errColor = ColorUtils.HSLToColor(floatArrayOf(h, s, errL))
+        // onError = 白 / 黑，按 luminance 自动选对比度最高者（4.5:1 起算）。
+        val onErrColor = if (ColorUtils.calculateLuminance(errColor) > 0.45f) {
+            Color(0xFF101418.toInt())
+        } else {
+            Color(0xFFFFFFFF.toInt())
+        }
+        return errColor to onErrColor
+    }
 
     /** Material 3 [ColorScheme] generated from [seed] with the current palette style + spec. */
     fun materialScheme(seed: Int, dark: Boolean): ColorScheme = dynamicColorScheme(

@@ -1,6 +1,9 @@
 package dev.joker.utils.monet
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.core.graphics.ColorUtils
 
 /**
  * 「Joker 注入微信界面的组件」取色的统一入口。
@@ -44,6 +47,10 @@ object MonetColors {
         /** 强调色的浅色调 / 深色调，用于渐变、描边、进度条底。 */
         val accentDim: Int,
         val accentBright: Int,
+        /** 【第 27 轮 莫奈补点】error 容器色（与主色同源的暖红）。 */
+        val errorContainer: Int,
+        /** error 容器上的前景色。 */
+        val onErrorContainer: Int,
     ) {
         companion object {
             fun of(palette: Palette, night: Boolean): Tokens {
@@ -72,6 +79,25 @@ object MonetColors {
                     accent = palette.accent1_500,
                     accentDim = palette.accent1_300,
                     accentBright = palette.accent1_700,
+                    // 【第 27 轮 莫奈补点】error 系列 token：与莫奈主色同源的暖红。
+                    // 容器色 = 主色按 HSL 抖到「暖红区间」+ 高饱和度 + 高亮度 / 暗色版低亮度；
+                    // 浅/暗两个版本都被 Surface 容器稀释一档，让容器底色不刺眼。
+                    // 这里只产出**容器版**（errorContainer / onErrorContainer），
+                    // 纯 error / onError 在 SeedResolver.applyMonetTokens 里现算。
+                    errorContainer = run {
+                        val base = if (night) primary else primary
+                        val rgb = Color(base)
+                        val hsl = FloatArray(3).also { ColorUtils.colorToHSL(rgb.toArgb(), it) }
+                        val h = if (hsl[0] in 10f..35f) hsl[0] else 18f
+                        val s = maxOf(hsl[1], 0.72f)
+                        // 容器版比纯 error 浅 / 暗一档（亮色 L=88、暗色 L=32），底色足够淡。
+                        val l = if (night) 0.32f else 0.88f
+                        Color(ColorUtils.HSLToColor(floatArrayOf(h, s, l)))
+                    },
+                    onErrorContainer = run {
+                        // 与 onPrimary 同步：暖红 + 主色 = 高对比前景（luminance 差 >0.5 即合格）
+                        Color(0xFF101418.toInt())
+                    },
                 )
             }
         }
