@@ -529,7 +529,7 @@ internal object ChatAnalysisUi {
             Spacer(Modifier.width(Space6))
             Text(
                 title,
-                style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 0.2f),
+                style = MaterialTheme.typography.labelMedium.copy(letterSpacing = 0.2.sp),
                 fontWeight = FontWeight.SemiBold,
                 color = accent.copy(alpha = 0.9f),
                 maxLines = 1,
