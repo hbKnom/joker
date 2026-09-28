@@ -2,6 +2,7 @@ package dev.joker.features.items.moments
 
 import android.content.ContentValues
 import dev.joker.R
+import dev.joker.features.api.core.WeApi
 import dev.joker.features.api.core.WeDatabaseListenerApi
 import dev.joker.features.api.net.WeProtoData
 import dev.joker.features.core.FeatureCategoryIds
@@ -18,6 +19,9 @@ object AntiMomentsDelete : SwitchFeature(), WeDatabaseListenerApi.IUpdateListene
     private const val TAG = "AntiMomentsDelete"
     private const val TBL_SNS_INFO = "SnsInfo"
     const val INTERCEPT_MARKER = "[拦截删除]"
+
+    /** SnsInfo 表的 userName 列 —— 用于【本人豁免】。 */
+    private const val COL_USER_NAME = "userName"
 
     override fun onUpdate(table: String, values: ContentValues, whereClause: String?, whereArgs: Array<String>?, conflictAlgorithm: Int) {
         try {
@@ -43,6 +47,20 @@ object AntiMomentsDelete : SwitchFeature(), WeDatabaseListenerApi.IUpdateListene
 
         if (!MomentsContentType.allTypeIds.contains(typeVal)) return
         if (sourceVal != 0) return
+
+        // 【★★★ Round30 三件套·本人豁免】
+        // 逆向版做法：反射 SnsInfo.field_userName，与 selfWxId 比对。
+        // 我方路径：ContentValues 是 DB 列级别，列名就是 userName；
+        // 当 update 不带 userName 时（insert/update 已有 row）放过；带 userName
+        // 时若等于自己的 wxId → 不打标记，避免误标自己朋友圈。
+        val publisherUserName = values.getAsString(COL_USER_NAME)
+        if (publisherUserName != null) {
+            val self = runCatching { WeApi.selfWxId }.getOrNull()
+            if (self != null && self.isNotEmpty() && publisherUserName == self) {
+                // 自己的朋友圈不打标记（即使微信自身想撤回也放过——避免误撤回）
+                return
+            }
+        }
 
         val kindName = MomentsContentType.fromId(typeVal)?.name ?: "Unknown[$typeVal]"
 

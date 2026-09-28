@@ -37,6 +37,7 @@ import dev.joker.features.core.ApiFeature
 import dev.joker.features.core.FeatureCategoryIds
 import dev.joker.features.core.SwitchFeature
 import dev.joker.preferences.WePrefs.Companion.prefOption
+import kotlin.properties.ReadWriteProperty
 import dev.joker.utils.TargetProcess
 import dev.joker.utils.WeLogger
 
@@ -108,8 +109,9 @@ data class BlockMessagesRules(
         val current: BlockMessagesRules by lazy {
                 runCatching {
                     // prefOption 返回 ReadWriteProperty<Any?, String>，
-                    // 直接读委托属性本身就是它的 getter 返回底层 prefs 值。
-                    val raw: String = rulesJsonPref
+                    // 必须显式调 getValue(thisRef, property) 才能拿到底层 prefs 值。
+                    // 这里 thisRef 是 companion 实例；property 是 rulesJsonPref 自身。
+                    val raw: String = rulesJsonPref.getValue(this@BlockMessagesRules.Companion, ::rulesJsonPref)
                     if (raw.isBlank()) {
                         BlockMessagesRules()
                     } else {
@@ -134,7 +136,7 @@ data class BlockMessagesRules(
                 }.getOrDefault(BlockMessagesRules())
             }
 
-        private val rulesJsonPref =
+        private val rulesJsonPref: ReadWriteProperty<Any?, String> =
             prefOption("block_messages_rules_json", "")
     }
 }
