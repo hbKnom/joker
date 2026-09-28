@@ -79,6 +79,15 @@ object BlockMessages : SwitchFeature() {
         if (rules.talkers.isEmpty() && rules.keywords.isEmpty() && rules.senderKeywords.isEmpty()) {
             return false
         }
+
+        // 【Round30 ★】白名单模式：useWhitelist=true 时，
+        //   仅名单内的会话放行；talker 不在名单 = 屏蔽；keywords/senderKeywords 在白名单模式下不生效。
+        val whitelistMode = BlockMessagesWhitelistPrefs.useWhitelist
+        if (whitelistMode) {
+            if (talker.isEmpty()) return true  // 无 talker 在白名单模式下默认屏蔽
+            return !rules.talkers.contains(talker)
+        }
+
         // 黑名单会话
         if (talker.isNotEmpty() && rules.talkers.contains(talker)) return true
         // 发送人黑名单
@@ -193,4 +202,13 @@ object BlockMessagesRuntime : ApiFeature() {
     override fun onDisable() {
         // Joker 自己的 hook 框架会自动卸载 dexMethod 委托；本类无额外状态
     }
+}
+/**
+ * 【Round30 ★】BlockMessages 白名单模式 prefs。
+ *
+ * - useWhitelist=true  → 白名单模式：仅名单内的 talker 放行，其它一律屏蔽
+ * - useWhitelist=false → 黑名单模式（默认）：仅名单内的 talker 屏蔽
+ */
+object BlockMessagesWhitelistPrefs {
+    var useWhitelist: Boolean by prefOption("block_messages_use_whitelist", false)
 }
