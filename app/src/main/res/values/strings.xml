@@ -1066,6 +1066,21 @@
     <string name="feature_we_group_api_description">Provides the ability to add/delete/invite group members</string>
     <string name="feature_we_message_api_name">Message sending service</string>
     <string name="feature_we_message_api_description">Provides the ability to send text, pictures, files, and voice messages</string>
+    <!-- 【第 28 轮 WeKit1945 整合】收藏服务 -->
+    <string name="feature_we_favorite_api_name">Favorites service</string>
+    <string name="feature_we_favorite_api_description">Exposes read/send capabilities for WeChat favorites (text, image, voice, video, link) used by forwarding features.</string>
+    <!-- 【第 28 轮 WeKit1945 整合】Hchat 4 自动化占位（SwitchFeature 默认关闭，等用户后续激活） -->
+    <string name="feature_chat_block_messages_name">Block messages</string>
+    <string name="feature_chat_block_messages_description">Drop incoming messages matching per-session keyword / sender rules before WeChat processes them (Hchat 4).</string>
+    <string name="feature_contacts_auto_accept_friend_requests_name">Auto-accept friend requests</string>
+    <string name="feature_contacts_auto_accept_friend_requests_description">Automatically label / set remark / greet new friends when their request is accepted (Hchat 4).</string>
+    <string name="feature_notifications_custom_notifications_name">Custom notifications</string>
+    <string name="feature_notifications_custom_notifications_description">Replace WeChat notification styles with custom channels + per-conversation message stacking + inline reply (Hchat 4).</string>
+    <string name="feature_system_prevent_module_data_cleanup_name">Prevent module data cleanup</string>
+    <string name="feature_system_prevent_module_data_cleanup_description">Block other cleanup tools from removing the module root before being cleared.</string>
+    <!-- 聊天功能开关（ChatFunctionSwitch）—— 提供会话底栏入口按钮的统一开关 -->
+    <string name="feature_chat_input_bar_menu_chat_function_switch_name">Chat function switch</string>
+    <string name="feature_chat_input_bar_menu_chat_function_switch_description">Add the unified chat function entry to the conversation input bar menu.</string>
     <string name="feature_we_payment_api_name">Payment service</string>
     <string name="feature_we_payment_api_description">Provide transfer confirmation and refund capabilities</string>
     <string name="feature_we_service_api_name">WeChat service management service</string>

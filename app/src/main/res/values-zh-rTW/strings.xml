@@ -1013,6 +1013,21 @@
     <string name="feature_we_group_api_description">提供添加/刪除/邀請羣成員能力</string>
     <string name="feature_we_message_api_name">消息發送服務</string>
     <string name="feature_we_message_api_description">提供文本、圖片、文件、語音消息發送能力</string>
+    <!-- 【第 28 輪 WeKit1945 整合】收藏服務 -->
+    <string name="feature_we_favorite_api_name">收藏服務</string>
+    <string name="feature_we_favorite_api_description">為轉發類功能暴露收藏的讀取與發送能力（文字/圖片/語音/影片/連結）。</string>
+    <!-- 【第 28 輪 WeKit1945 整合】Hchat 4 自動化佔位（SwitchFeature 預設關閉，等使用者後續啟用） -->
+    <string name="feature_chat_block_messages_name">屏蔽訊息</string>
+    <string name="feature_chat_block_messages_description">按會話/關鍵詞/寄送人規則在微信處理新訊息前丟棄（Hchat 4）。</string>
+    <string name="feature_contacts_auto_accept_friend_requests_name">自動通過好友申請</string>
+    <string name="feature_contacts_auto_accept_friend_requests_description">好友請求被通過後自動貼標籤/寫備註/打招呼（Hchat 4）。</string>
+    <string name="feature_notifications_custom_notifications_name">自訂通知</string>
+    <string name="feature_notifications_custom_notifications_description">替換微信通知樣式：自訂通道 + 同會話堆疊 + 通知內快速回覆（Hchat 4）。</string>
+    <string name="feature_system_prevent_module_data_cleanup_name">阻止清理模組資料</string>
+    <string name="feature_system_prevent_module_data_cleanup_description">阻止其他清理工具把模組根目錄清掉。</string>
+    <!-- 聊天功能開關（ChatFunctionSwitch）—— 提供會話底欄入口按鈕的統一開關 -->
+    <string name="feature_chat_input_bar_menu_chat_function_switch_name">聊天功能開關</string>
+    <string name="feature_chat_input_bar_menu_chat_function_switch_description">在會話底欄選單中顯示統一的「聊天功能」入口按鈕。</string>
     <string name="feature_we_payment_api_name">支付服務</string>
     <string name="feature_we_payment_api_description">提供轉賬確認與退還能力</string>
     <string name="feature_we_service_api_name">微信服務管理服務</string>
