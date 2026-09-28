@@ -55,6 +55,9 @@ object ChatFunctionSwitch : ClickableFeature() {
                 id = "joker_chat_function_switch",
                 icon = MaterialSymbols.Outlined.Tune,
                 label = "聊天功能",
+                onClick = { context, _ ->
+                    showToast(context, "聊天功能：阶段 2 提供汇总菜单。")
+                },
             ),
         )
     }
