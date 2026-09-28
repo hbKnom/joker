@@ -242,6 +242,10 @@ jobs:
 
   dex-test:
     runs-on: ubuntu-latest
+    # 本 fork：Dex resolution 只在手动 dispatch 时跑，push 不再触发。
+    # 理由：该 job 需下载微信 APK 做 Dex 解析，单次约 10-15 分钟，push 也跑纯烧私有库额度
+    # （free plan 2000 分钟/月，2026-09 已用到 4345 分钟），且曾多次被 GitHub 403 限流。
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     outputs:
       reports-available: ${{ steps.report-check.outputs.available }}
     steps:
