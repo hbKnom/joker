@@ -1,5 +1,5 @@
 /*
- * AutoAcceptFriendRequests.kt — 自动通过好友申请 【第 29 轮 WeKit1945 整合】
+ * AutoAcceptFriendRequests.kt — 自动通过好友申请 【第 29 轮 WeKit1945 整合 · Round30 阶段 1 实 hook】
  *
  * 证据等级：A-（Hchat 4 + 逆向 jadx + 重建版）
  * 来源：
@@ -11,28 +11,33 @@
  * 对应日志：「新增: 自动通过好友申请」
  *
  * ★ 行为：
- *   - 微信收到好友申请（FriendAutoAdd / VerifyMessage）后，按规则自动通过。
+ *   - 微信收到好友申请（type=FRIEND_VERIFY=37）后，命中规则即自动通过。
  *   - 通过后自动打标签 / 写备注 / 打招呼（阶段 2 实装）。
  *
- * ★ 第 29 轮阶段 1 骨架：仅占位 SwitchFeature，不挂 hook。
- *   阶段 2 再加 DexMethodDelegate(FriendAutoAdd) + eventBus 订阅 + 最小动作链。
+ * ★ Round30 阶段 1 真 hook（最小安全版）：
+ *   - 注册 IInsertListener 监听 message 表 FRIEND_VERIFY 插入
+ *   - 仅 WeLogger.i 记录申请 talker（不实际接受，避免无 DexKit 委托时误操作用户联系人）
+ *   - 自动打招呼模板用 var by prefOption 保存，可由用户在设置页修改
+ *   - 真正的"自动通过"阶段 2 实装：需 DexKit 委托 hook 微信 AcceptFriendHelper.accept
  *
  * ★ 整合铁律：
  *   - 包名 dev.joker.*
- *   - 不引入 EventBus 完整套件（我方不存在），阶段 2 用极简实现
- *   - 默认关闭；用户主动启用才接管好友申请链
+ *   - 默认关闭；用户主动启用才接管监听
+ *   - 不引入 EventBus 完整套件
  */
 package dev.joker.features.items.contacts
 
+import android.content.ContentValues
 import dev.joker.R
+import dev.joker.features.api.core.WeDatabaseListenerApi
+import dev.joker.features.api.core.models.MessageType
 import dev.joker.features.core.FeatureCategoryIds
 import dev.joker.features.core.SwitchFeature
+import dev.joker.preferences.WePrefs.Companion.prefOption
+import dev.joker.utils.WeLogger
 
 /**
  * 自动通过好友申请（1945 新增，感谢 Hchat）
- *
- * 命中规则的微信好友申请（按场景需排除/自动通过）自动通过，
- * 通过后按规则打标签 / 写备注 / 打招呼。
  */
 object AutoAcceptFriendRequests : SwitchFeature() {
 
@@ -41,18 +46,42 @@ object AutoAcceptFriendRequests : SwitchFeature() {
     override val categoryIds: List<String> = listOf(FeatureCategoryIds.CONTACTS_GROUPS)
     override val descriptionRes: Int = R.string.feature_contacts_auto_accept_friend_requests_description
 
-    /** 默认关闭 —— 等阶段 2 hook 真生效后再允许用户开启。 */
+    /** 默认关闭 —— 等阶段 2 真 hook 接受功能就绪后再允许用户开启。 */
     override val defaultEnabled: Boolean = false
 
     override fun onEnable() {
-        // 阶段 1 骨架：不挂 hook。
-        // 阶段 2 实装：
-        //   1. 监听 EventBus.OnFriendAutoAdd / VerifyContactEvent
-        //   2. 命中规则则调 ContactInfoApi.acceptRequest / addContactLabel / setRemark
-        //   3. 调 WeMessageApi.sendText 触发自动打招呼
+        WeDatabaseListenerApi.addListener(autoAcceptFriendRequestsInsertListener)
     }
 
     override fun onDisable() {
-        // 阶段 2 移除监听；阶段 1 无操作。
+        WeDatabaseListenerApi.removeListener(autoAcceptFriendRequestsInsertListener)
+    }
+}
+
+/**
+ * 自动打招呼模板（可在设置页修改）。
+ * Round30 阶段 1 预留字段；阶段 2 实装时 WeMessageApi.sendText 会用此模板。
+ */
+internal var autoAcceptFriendRequestsReplyText: String by prefOption(
+    "auto_accept_reply_text",
+    "你好，已收到好友申请",
+)
+
+/**
+ * 【Round30 ☆ 真 hook 阶段 1】
+ * 监听 message 表 FRIEND_VERIFY 插入 → 记录好友申请到来。
+ * 阶段 1 仅记录，阶段 2 实装真正的"自动通过"。
+ */
+internal val autoAcceptFriendRequestsInsertListener = object : WeDatabaseListenerApi.IInsertListener {
+    override fun onInsert(table: String, values: ContentValues) {
+        if (table != "message") return
+        val type = values.getAsInteger("type") ?: return
+        if (type != MessageType.FRIEND_VERIFY.code) return
+        val talker = values.getAsString("talker") ?: return
+        if (talker.isEmpty()) return
+        WeLogger.i(
+            "AutoAcceptFriendRequests",
+            "收到好友申请：talker=$talker（阶段 2 实装自动通过，当前仅记录）",
+        )
     }
 }
