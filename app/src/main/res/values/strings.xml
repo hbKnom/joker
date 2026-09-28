@@ -2366,6 +2366,10 @@
         <item quantity="one">Exactly matches any string in the list (%1$d)</item>
         <item quantity="other">Exactly matches any string in the list (%1$d)</item>
     </plurals>
+    <plurals name="chat_auto_reply_keyword_prefix_summary">
+        <item quantity="one">Matches messages starting with any list entry (%1$d)</item>
+        <item quantity="other">Matches messages starting with any list entry (%1$d)</item>
+    </plurals>
     <string name="chat_auto_reply_keyword_regex_empty">No regular expression entered</string>
     <string name="chat_auto_reply_keyword_regex_summary">Matches one regular expression</string>
     <string name="chat_auto_reply_task_error">Task “%1$s”: %2$s</string>
@@ -3445,6 +3449,7 @@
     <string name="automation_keyword_mode_contains">Contains</string>
     <string name="automation_keyword_mode_exact">Equals</string>
     <string name="automation_keyword_mode_regex">Regex</string>
+    <string name="automation_keyword_mode_prefix">Prefix</string>
     <string name="automation_keyword_mode_label">Match mode</string>
     <string name="automation_ignore_case">Ignore case</string>
     <string name="automation_new_keyword">New keyword</string>
@@ -3471,6 +3476,10 @@
     <plurals name="automation_keyword_exact_summary">
         <item quantity="one">Exactly match any item in the string list (%1$d item)</item>
         <item quantity="other">Exactly match any item in the string list (%1$d items)</item>
+    </plurals>
+    <plurals name="automation_keyword_prefix_summary">
+        <item quantity="one">Match items starting with any list entry (%1$d item)</item>
+        <item quantity="other">Match items starting with any list entry (%1$d items)</item>
     </plurals>
     <plurals name="automation_overrides">
         <item quantity="one">%1$d override</item>

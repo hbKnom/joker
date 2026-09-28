@@ -1049,6 +1049,11 @@ internal object AutoReplySettings {
                 rule.strings.size,
                 rule.strings.size,
             )
+            AutomationKeywordMode.PREFIX -> pluralStringResource(
+                R.plurals.chat_auto_reply_keyword_prefix_summary,
+                rule.strings.size,
+                rule.strings.size,
+            )
             AutomationKeywordMode.REGEX -> if (rule.regex.isBlank()) {
                 stringResource(R.string.chat_auto_reply_keyword_regex_empty)
             } else {
@@ -1081,7 +1086,7 @@ internal object AutoReplySettings {
         if (!task.enabled) return null
         if (task.keyword.enabled) {
             when (task.keyword.mode) {
-                AutomationKeywordMode.STRING_LIST, AutomationKeywordMode.EXACT ->
+                AutomationKeywordMode.STRING_LIST, AutomationKeywordMode.EXACT, AutomationKeywordMode.PREFIX ->
                     if (task.keyword.strings.none(String::isNotBlank)) {
                         return stringResource(R.string.chat_auto_reply_error_keyword_list_empty)
                     }

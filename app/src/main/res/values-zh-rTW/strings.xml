@@ -2308,6 +2308,9 @@
     <plurals name="chat_auto_reply_keyword_exact_summary">
         <item quantity="other">完全匹配字符串列表中的任意一項（%1$d）</item>
     </plurals>
+    <plurals name="chat_auto_reply_keyword_prefix_summary">
+        <item quantity="other">匹配以字符串列表中任意一項開頭的消息（%1$d）</item>
+    </plurals>
     <string name="chat_auto_reply_keyword_regex_empty">尚未填寫正則表達式</string>
     <string name="chat_auto_reply_keyword_regex_summary">匹配單個正則表達式</string>
     <string name="chat_auto_reply_task_error">任務“%1$s”：%2$s</string>
@@ -3465,6 +3468,7 @@
     <string name="automation_keyword_mode_contains">包含</string>
     <string name="automation_keyword_mode_exact">相等</string>
     <string name="automation_keyword_mode_regex">Regex</string>
+    <string name="automation_keyword_mode_prefix">前綴</string>
     <string name="automation_keyword_mode_label">比對方式</string>
     <string name="automation_ignore_case">忽略大小寫</string>
     <string name="automation_new_keyword">新關鍵詞</string>
@@ -3489,6 +3493,9 @@
     </plurals>
     <plurals name="automation_keyword_exact_summary">
         <item quantity="other">完全匹配字符串列表中的任意一項 (%1$d)</item>
+    </plurals>
+    <plurals name="automation_keyword_prefix_summary">
+        <item quantity="other">匹配以字符串列表中任意一項開頭的消息 (%1$d)</item>
     </plurals>
     <plurals name="automation_overrides">
         <item quantity="other">已覆蓋 %1$d 項</item>

@@ -2325,6 +2325,9 @@
     <plurals name="chat_auto_reply_keyword_exact_summary">
         <item quantity="other">完全匹配字符串列表中的任意一项（%1$d）</item>
     </plurals>
+    <plurals name="chat_auto_reply_keyword_prefix_summary">
+        <item quantity="other">匹配以字符串列表中任意一项开头的消息（%1$d）</item>
+    </plurals>
     <string name="chat_auto_reply_keyword_regex_empty">尚未填写正则表达式</string>
     <string name="chat_auto_reply_keyword_regex_summary">匹配单个正则表达式</string>
     <string name="chat_auto_reply_task_error">任务“%1$s”：%2$s</string>
@@ -3492,6 +3495,7 @@
     <string name="automation_keyword_mode_contains">包含</string>
     <string name="automation_keyword_mode_exact">相等</string>
     <string name="automation_keyword_mode_regex">Regex</string>
+    <string name="automation_keyword_mode_prefix">前缀</string>
     <string name="automation_keyword_mode_label">匹配方式</string>
     <string name="automation_ignore_case">忽略大小写</string>
     <string name="automation_new_keyword">新关键词</string>
@@ -3516,6 +3520,9 @@
     </plurals>
     <plurals name="automation_keyword_exact_summary">
         <item quantity="other">完全匹配字符串列表中的任意一项 (%1$d)</item>
+    </plurals>
+    <plurals name="automation_keyword_prefix_summary">
+        <item quantity="other">匹配以字符串列表中任意一项开头的消息 (%1$d)</item>
     </plurals>
     <plurals name="automation_overrides">
         <item quantity="other">已覆盖 %1$d 项</item>

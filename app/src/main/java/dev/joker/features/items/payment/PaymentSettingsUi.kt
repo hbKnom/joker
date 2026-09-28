@@ -294,6 +294,7 @@ fun SegmentedColumnScope.keywordItems(
                             AutomationKeywordMode.STRING_LIST -> R.string.automation_keyword_mode_contains
                             AutomationKeywordMode.EXACT -> R.string.automation_keyword_mode_exact
                             AutomationKeywordMode.REGEX -> R.string.automation_keyword_mode_regex
+                            AutomationKeywordMode.PREFIX -> R.string.automation_keyword_mode_prefix
                         }
                     ),
                 )

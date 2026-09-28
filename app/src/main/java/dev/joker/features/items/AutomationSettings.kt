@@ -220,6 +220,11 @@ fun automationKeywordSummary(rule: AutomationKeywordRule, unrestrictedText: Stri
             rule.strings.size,
             rule.strings.size,
         )
+        AutomationKeywordMode.PREFIX -> pluralStringResource(
+            R.plurals.automation_keyword_prefix_summary,
+            rule.strings.size,
+            rule.strings.size,
+        )
         AutomationKeywordMode.REGEX -> if (rule.regex.isBlank()) {
             stringResource(R.string.automation_regex_empty_summary)
         } else {
