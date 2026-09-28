@@ -1270,9 +1270,15 @@ object HomeSidePanel : SwitchFeature(), IResolveDex {
             toolbarProfileBindings.values.forEach { binding ->
                 binding.composeView.visibility = if (showProfile) View.VISIBLE else View.GONE
             }
+            // 【Round30 ★★ 侧边栏字样闪烁修复】
+            // 逆向版定位：标题栏字样"先按微信默认渲染一帧再被重新应用"是因为
+            // hideWeChatTitle 只在 _uiState 初始化时读一次 prefs，后续状态不同步。
+            // 修法：sync 时直接读 prefs（HomeSidePanelPreferences.hideWeChatTitle）
+            // 而不是 uiState 快照，确保每次 sync 都拿到最新用户配置。
+            val hideFromPrefs = HomeSidePanelPreferences.hideWeChatTitle
             syncNativeTitleVisibility(
                 bindings = toolbarProfileBindings.values,
-                hide = showProfile && state.hideWeChatTitle,
+                hide = showProfile && hideFromPrefs,
             )
         }
 
