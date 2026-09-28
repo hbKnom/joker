@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import dev.joker.R
 import dev.joker.features.api.core.WeDatabaseListenerApi
 import dev.joker.features.api.core.WeMessageApi
+import dev.joker.features.api.core.models.MessageInfo
 import dev.joker.features.api.core.models.MessageType
 import dev.joker.features.core.ClickableFeature
 import dev.joker.features.core.FeatureCategoryIds
@@ -33,6 +34,47 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
 
     override fun onEnable() {
         WeDatabaseListenerApi.addListener(this)
+        // 【Round31】hookAfter methodMsgInfoStorageInsertMessage 用以做基础过滤
+        // （isSelfSender / type / talker / content 都不依赖 NativeXmlParser）
+        // 场景字段 isAtMe/isNotifyAll/isPatMe 保守 false（避免引入 NativeXmlParser
+        // 跨包 import 在 K2 编译器的 Unresolved 'asString' 问题）。
+        WeMessageApi.methodMsgInfoStorageInsertMessage.hookAfter { param ->
+            try {
+                val raw = param.args[0] ?: return@hookAfter
+                val info = MessageInfo(raw)
+                if (info.isSelfSender) return@hookAfter
+                val msgType = info.type ?: return@hookAfter
+                if (!msgType.isText) return@hookAfter
+                if (info.talker.isEmpty()) return@hookAfter
+                val talker = info.talker
+                val content = info.content
+                if (content.isEmpty()) return@hookAfter
+                val sender = info.sender.takeIf { talker.isGroupChatWxId }
+
+                val rules = AutoReplySettings.resolve(talker, sender)
+                if (!rules.enabled.enabled) return@hookAfter
+                if (!rules.timeRange.matches()) return@hookAfter
+
+                // 【Round31 保守场景字段探测】只取 type（不依赖 NativeXmlParser）
+                val isQuote = msgType.code == MessageType.QUOTE.code
+                // isAtMe/isNotifyAll/isPatMe 留 false：阶段 2 实装时需把项目内
+                // serialization 全套 import 适配 ChatAutoReply.kt 后再启用。
+                val isAtMe = false
+                val isNotifyAll = false
+                val isPatMe = false
+
+                val gen = generation.get()
+                executor.execute {
+                    try {
+                        process(rules, talker, content, gen, isAtMe, isNotifyAll, isPatMe, isQuote)
+                    } catch (e: Throwable) {
+                        WeLogger.e(TAG, "auto reply processing failed", e)
+                    }
+                }
+            } catch (e: Throwable) {
+                WeLogger.e(TAG, "methodMsgInfoStorageInsertMessage.hookAfter failed", e)
+            }
+        }
     }
 
     override fun onDisable() {
@@ -45,6 +87,10 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         AutoReplySettings.showMainDialog(context)
     }
 
+    /**
+     * 保留 IInsertListener.onInsert 作为兜底通道：DB 层插入也兜一次（保守 false 探测）。
+     * 当 methodMsgInfoStorageInsertMessage.hookAfter 没触发到（极少数情况）时仍能响应。
+     */
     override fun onInsert(table: String, values: ContentValues) {
         if (table != "message") return
         val type = values.getAsInteger("type") ?: return
@@ -59,43 +105,16 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         if (!rules.enabled.enabled) return
         if (!rules.timeRange.matches()) return
 
-        // 【Round31 简化方案】场景字段探测：从 IInsertListener 的 ContentValues 接口
-        // 上无法拿 msgSource 的结构化 Map（只有字符串），保守实现：
-        //   - isAtMe       → false（保守：默认不认为消息是 @我，避免误触发 onlyAtMe 规则）
-        //   - isNotifyAll  → false（同上）
-        //   - isPatMe      → false（同上）
-        //   - isQuote      → true iff type == MessageType.QUOTE.code（DB 字段直读）
-        // 用户可用的实际场景字段触发只有 onlyQuote = type=QUOTE.code。
-        // 阶段 2 实装：改用 WeMessageApi.methodMsgInfoStorageInsertMessage.hookAfter
-        // 拿到 MessageInfo 实例，调用 message.isAtMe / isNotifyAll / isPat（这些属性
-        // 内部已实装 msgSource XML 解析）。
         val isQuote = type == MessageType.QUOTE.code
-
         val gen = generation.get()
         executor.execute {
             try {
                 process(rules, talker, content, gen, false, false, false, isQuote)
             } catch (e: Throwable) {
-                WeLogger.e(TAG, "auto reply processing failed", e)
+                WeLogger.e(TAG, "auto reply (db fallback) failed", e)
             }
         }
     }
-
-    /**
-     * 【Round31 保守实现】@我 探测：IInsertListener 接口上拿不到 msgSource 的结构化 Map，
-     * 阶段 2 改用 methodMsgInfoStorageInsertMessage.hookAfter 拿 MessageInfo 实例。
-     * 当前保守返回 false，避免误触发 onlyAtMe 规则。
-     */
-    private fun isAtMeFromValues(@Suppress("UNUSED_PARAMETER") values: ContentValues): Boolean = false
-
-    /** @所有人：保守返回 false，阶段 2 改用 MessageInfo.isNotifyAll */
-    private fun isNotifyAllFromValues(
-        @Suppress("UNUSED_PARAMETER") values: ContentValues,
-        @Suppress("UNUSED_PARAMETER") content: String,
-    ): Boolean = false
-
-    /** 拍一拍我：保守返回 false，阶段 2 改用 MessageInfo 解析 PatMessage */
-    private fun isPatMeFromValues(@Suppress("UNUSED_PARAMETER") values: ContentValues): Boolean = false
 
     private fun process(
         rules: AutoReplyRuleSet,
