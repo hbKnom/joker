@@ -2377,6 +2377,14 @@
     <string name="chat_auto_reply_error_voice_duration">Voice duration must be between 1 and 60000 ms</string>
     <string name="chat_auto_reply_error_delay">Delay must be between 0 and 60000 ms</string>
     <string name="chat_auto_reply_error_cooldown">Cooldown cannot be negative</string>
+    <!-- 【Round31】AI 回复开关与配置 — 复用聊天分析的 ChatAnalysisModelStore -->
+    <string name="chat_auto_reply_use_ai">Reply with AI</string>
+    <string name="chat_auto_reply_use_ai_summary">Send AI-generated replies instead of fixed text. The AI model is configured in Chat Analysis → AI Models.</string>
+    <string name="chat_auto_reply_ai_system_prompt">AI system prompt</string>
+    <string name="chat_auto_reply_ai_system_prompt_hint">Leave blank to use the built-in Hchat-style prompt (a friendly chat assistant replying in Chinese).</string>
+    <string name="chat_auto_reply_ai_max_tokens">Max tokens (64–4096)</string>
+    <string name="chat_auto_reply_ai_model_current">Current AI model: %1$s</string>
+    <string name="chat_auto_reply_ai_no_model">No AI model configured. Open Chat Analysis → AI Models to add one.</string>
     <string name="chat_message_details_menu">Details</string>
     <string name="chat_message_details_type">Type</string>
     <string name="chat_message_details_talker_id">Contact/group ID</string>

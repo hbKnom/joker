@@ -791,6 +791,59 @@ internal object AutoReplySettings {
                 )
             }
 
+            // 【Round31】AI 回复配置 — 复用 ChatAnalysisModelStore
+            item(key = "use_ai") {
+                SwitchWidget(
+                    iconPlaceholder = false,
+                    title = stringResource(R.string.chat_auto_reply_use_ai),
+                    description = stringResource(R.string.chat_auto_reply_use_ai_summary),
+                    checked = task.useAi,
+                    onCheckedChange = { onChange(task.copy(useAi = it)) },
+                )
+            }
+            // 当前 AI 模型提示
+            val currentAiModel = ChatAnalysisModelStore.selectedModel()
+            item(key = "ai_model_hint") {
+                BaseSupportingWidget(
+                    title = if (currentAiModel != null && currentAiModel.model.isNotBlank()) {
+                        stringResource(
+                            R.string.chat_auto_reply_ai_model_current,
+                            "${currentAiModel.name} (${currentAiModel.model})",
+                        )
+                    } else {
+                        stringResource(R.string.chat_auto_reply_ai_no_model)
+                    },
+                ) {}
+            }
+            if (task.useAi) {
+                item(key = "ai_system_prompt") {
+                    BaseSupportingWidget(
+                        title = stringResource(R.string.chat_auto_reply_ai_system_prompt),
+                        description = stringResource(R.string.chat_auto_reply_ai_system_prompt_hint),
+                    ) {
+                        InlineTaskTextField(
+                            value = task.aiSystemPrompt,
+                            onValueChange = { onChange(task.copy(aiSystemPrompt = it)) },
+                        )
+                    }
+                }
+                item(key = "ai_max_tokens") {
+                    BaseSupportingWidget(
+                        title = stringResource(R.string.chat_auto_reply_ai_max_tokens),
+                    ) {
+                        InlineTaskTextField(
+                            value = task.aiMaxTokens.toString(),
+                            keyboardType = KeyboardType.Number,
+                            onValueChange = { raw ->
+                                val digits = raw.filter(Char::isDigit).take(4)
+                                val parsed = digits.toIntOrNull()?.coerceIn(64, 4096) ?: task.aiMaxTokens
+                                onChange(task.copy(aiMaxTokens = parsed))
+                            },
+                        )
+                    }
+                }
+            }
+
             validationError?.let { error ->
                 item(key = "validation_error") { PaymentErrorRow(error) }
             }
