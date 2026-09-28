@@ -246,6 +246,10 @@ jobs:
     # 理由：该 job 需下载微信 APK 做 Dex 解析，单次约 10-15 分钟，push 也跑纯烧私有库额度
     # （free plan 2000 分钟/月，2026-09 已用到 4345 分钟），且曾多次被 GitHub 403 限流。
     if: ${{ github.event_name == 'workflow_dispatch' }}
+    # 护栏：Run desktop Dex resolution 是 CPU 密集步骤（12 个微信版本的 DexKit 解析），
+    # 实测曾在 CI 上超过 28 分钟仍未收敛。若无 job 级超时，卡住时会挂到 GitHub
+    # 默认 6 小时上限，把整个 workflow 结论拖成 in_progress。
+    timeout-minutes: 45
     outputs:
       reports-available: ${{ steps.report-check.outputs.available }}
     steps:
