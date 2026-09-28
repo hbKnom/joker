@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       HAS_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
     if: |
@@ -210,7 +210,7 @@ jobs:
 
   build_zygisk:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 本 fork 默认不构建 Zygisk 模块；workflow_dispatch 手动触发时启用，产出 zy 版 zip。
     if: ${{ always() && needs.build.result == 'success' && github.event_name == 'workflow_dispatch' }}
     steps:
@@ -279,7 +279,7 @@ jobs:
           if-no-files-found: error
 
   dex-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       reports-available: ${{ steps.report-check.outputs.available }}
     steps:
@@ -436,7 +436,7 @@ jobs:
 
   release-dex-test:
     needs: dex-test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ always() && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev') && github.event_name != 'pull_request' && needs.dex-test.outputs.reports-available == 'true' }}
     permissions:
       contents: write
@@ -496,7 +496,7 @@ jobs:
           gh release upload Dex-Test "${upload[@]}" --clobber
 
   build-extensions:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # This dedicated publishing job is the only path that downloads the Arch rootfs.
     if: ${{ (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/dev')) || (github.event_name == 'workflow_dispatch' && inputs.publish_extensions) }}
     permissions:
@@ -672,7 +672,7 @@ jobs:
 
   release-ci:
     needs: [build, build_zygisk]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ always() && needs.build.result == 'success' && github.ref == 'refs/heads/master' }}
     permissions:
       contents: write
