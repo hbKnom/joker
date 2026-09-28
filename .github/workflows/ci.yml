@@ -53,6 +53,25 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          show-progress: false
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+      - name: Verify submodules
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule status || true
+          echo "---"
+          # 【Round31 兼容】子模块初始化容错：GitHub Actions runner 偶发限流导致子模块下载失败。
+          # 退化为：先尝试默认 init；如失败，对每个子模块单独重试（最多 3 次）。
+          for sub in third_party/proot-static third_party/cloudflared third_party/Vulkan-Hpp third_party/SPIRV-Headers third_party/OpenCL-Headers; do
+            if [ ! -d "$sub/.git" ] && [ ! -f "$sub/.git" ]; then
+              echo "::warning::submodule $sub missing; retrying..."
+              git submodule update --init --depth 1 "$sub" || \
+              git submodule update --init --depth 1 "$sub" || \
+              git submodule update --init --depth 1 "$sub" || \
+              echo "::error::submodule $sub failed after 3 attempts"
+            fi
+          done
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -200,6 +219,25 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          show-progress: false
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+      - name: Verify submodules
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule status || true
+          echo "---"
+          # 【Round31 兼容】子模块初始化容错：GitHub Actions runner 偶发限流导致子模块下载失败。
+          # 退化为：先尝试默认 init；如失败，对每个子模块单独重试（最多 3 次）。
+          for sub in third_party/proot-static third_party/cloudflared third_party/Vulkan-Hpp third_party/SPIRV-Headers third_party/OpenCL-Headers; do
+            if [ ! -d "$sub/.git" ] && [ ! -f "$sub/.git" ]; then
+              echo "::warning::submodule $sub missing; retrying..."
+              git submodule update --init --depth 1 "$sub" || \
+              git submodule update --init --depth 1 "$sub" || \
+              git submodule update --init --depth 1 "$sub" || \
+              echo "::error::submodule $sub failed after 3 attempts"
+            fi
+          done
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -250,6 +288,25 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          show-progress: false
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+      - name: Verify submodules
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule status || true
+          echo "---"
+          # 【Round31 兼容】子模块初始化容错：GitHub Actions runner 偶发限流导致子模块下载失败。
+          # 退化为：先尝试默认 init；如失败，对每个子模块单独重试（最多 3 次）。
+          for sub in third_party/proot-static third_party/cloudflared third_party/Vulkan-Hpp third_party/SPIRV-Headers third_party/OpenCL-Headers; do
+            if [ ! -d "$sub/.git" ] && [ ! -f "$sub/.git" ]; then
+              echo "::warning::submodule $sub missing; retrying..."
+              git submodule update --init --depth 1 "$sub" || \
+              git submodule update --init --depth 1 "$sub" || \
+              git submodule update --init --depth 1 "$sub" || \
+              echo "::error::submodule $sub failed after 3 attempts"
+            fi
+          done
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -453,6 +510,25 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          show-progress: false
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+      - name: Verify submodules
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule status || true
+          echo "---"
+          # 【Round31 兼容】子模块初始化容错：GitHub Actions runner 偶发限流导致子模块下载失败。
+          # 退化为：先尝试默认 init；如失败，对每个子模块单独重试（最多 3 次）。
+          for sub in third_party/proot-static third_party/cloudflared third_party/Vulkan-Hpp third_party/SPIRV-Headers third_party/OpenCL-Headers; do
+            if [ ! -d "$sub/.git" ] && [ ! -f "$sub/.git" ]; then
+              echo "::warning::submodule $sub missing; retrying..."
+              git submodule update --init --depth 1 "$sub" || \
+              git submodule update --init --depth 1 "$sub" || \
+              git submodule update --init --depth 1 "$sub" || \
+              echo "::error::submodule $sub failed after 3 attempts"
+            fi
+          done
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -607,6 +683,25 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          show-progress: false
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+      - name: Verify submodules
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule status || true
+          echo "---"
+          # 【Round31 兼容】子模块初始化容错：GitHub Actions runner 偶发限流导致子模块下载失败。
+          # 退化为：先尝试默认 init；如失败，对每个子模块单独重试（最多 3 次）。
+          for sub in third_party/proot-static third_party/cloudflared third_party/Vulkan-Hpp third_party/SPIRV-Headers third_party/OpenCL-Headers; do
+            if [ ! -d "$sub/.git" ] && [ ! -f "$sub/.git" ]; then
+              echo "::warning::submodule $sub missing; retrying..."
+              git submodule update --init --depth 1 "$sub" || \
+              git submodule update --init --depth 1 "$sub" || \
+              git submodule update --init --depth 1 "$sub" || \
+              echo "::error::submodule $sub failed after 3 attempts"
+            fi
+          done
 
       - name: Download APK artifact
         uses: actions/download-artifact@v8
