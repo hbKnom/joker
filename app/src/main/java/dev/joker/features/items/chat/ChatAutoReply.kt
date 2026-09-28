@@ -10,9 +10,6 @@ import dev.joker.features.api.core.models.MessageType
 import dev.joker.features.core.ClickableFeature
 import dev.joker.features.core.FeatureCategoryIds
 import dev.joker.utils.WeLogger
-import dev.joker.utils.serialization.NativeXmlParser
-import dev.joker.utils.serialization.asString
-import dev.joker.utils.serialization.getByPath
 import dev.joker.utils.strings.isGroupChatWxId
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -62,17 +59,22 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         if (!rules.enabled.enabled) return
         if (!rules.timeRange.matches()) return
 
-        // 【Round30】场景字段探测：从 ContentValues 拿 msgSource 解析 @userlist + 拍一拍内容
-        // 不引入新 DexKit 委托，沿用现有 listener 接口。
-        val isAtMe = isAtMeFromValues(values)
-        val isNotifyAll = isNotifyAllFromValues(values, content)
-        val isPatMe = isPatMeFromValues(values)
+        // 【Round31 简化方案】场景字段探测：从 IInsertListener 的 ContentValues 接口
+        // 上无法拿 msgSource 的结构化 Map（只有字符串），保守实现：
+        //   - isAtMe       → false（保守：默认不认为消息是 @我，避免误触发 onlyAtMe 规则）
+        //   - isNotifyAll  → false（同上）
+        //   - isPatMe      → false（同上）
+        //   - isQuote      → true iff type == MessageType.QUOTE.code（DB 字段直读）
+        // 用户可用的实际场景字段触发只有 onlyQuote = type=QUOTE.code。
+        // 阶段 2 实装：改用 WeMessageApi.methodMsgInfoStorageInsertMessage.hookAfter
+        // 拿到 MessageInfo 实例，调用 message.isAtMe / isNotifyAll / isPat（这些属性
+        // 内部已实装 msgSource XML 解析）。
         val isQuote = type == MessageType.QUOTE.code
 
         val gen = generation.get()
         executor.execute {
             try {
-                process(rules, talker, content, gen, isAtMe, isNotifyAll, isPatMe, isQuote)
+                process(rules, talker, content, gen, false, false, false, isQuote)
             } catch (e: Throwable) {
                 WeLogger.e(TAG, "auto reply processing failed", e)
             }
@@ -80,49 +82,20 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
     }
 
     /**
-     * 【Round30】解析 msgSource XML 中 <atuserlist>，含 selfWxId 即为 @我。
-     * XML 解析用 [dev.joker.reflekt.utils.NativeXmlParser] — 与 MessageInfo.mentionedUsers 同源。
+     * 【Round31 保守实现】@我 探测：IInsertListener 接口上拿不到 msgSource 的结构化 Map，
+     * 阶段 2 改用 methodMsgInfoStorageInsertMessage.hookAfter 拿 MessageInfo 实例。
+     * 当前保守返回 false，避免误触发 onlyAtMe 规则。
      */
-    private fun isAtMeFromValues(values: ContentValues): Boolean {
-        val selfWxId = runCatching { dev.joker.features.api.core.WeApi.selfWxId }.getOrNull()
-            ?: return false
-        if (selfWxId.isEmpty()) return false
-        val msgSource = values.getAsString("msgSource") ?: return false
-        if (msgSource.isEmpty()) return false
-        return runCatching {
-            val xml = NativeXmlParser.toXmlObject(msgSource)
-            val atUserList = xml.getByPath("msgsource.atuserlist")?.asString ?: return false
-            atUserList.split(",").any { it == selfWxId }
-        }.getOrDefault(false)
-    }
+    private fun isAtMeFromValues(@Suppress("UNUSED_PARAMETER") values: ContentValues): Boolean = false
 
-    /** @所有人：msgSource 含 notify@all 或 announcement@all 且正文含「@所有人」  */
-    private fun isNotifyAllFromValues(values: ContentValues, content: String): Boolean {
-        val msgSource = values.getAsString("msgSource") ?: return false
-        if (msgSource.isEmpty()) return false
-        return runCatching {
-            val xml = NativeXmlParser.toXmlObject(msgSource)
-            val atUserList = xml.getByPath("msgsource.atuserlist")?.asString ?: return false
-            (atUserList.contains("notify@all") || atUserList.contains("announcement@all"))
-                && (content.contains("@所有人") || content.contains("@ all people"))
-        }.getOrDefault(false)
-    }
+    /** @所有人：保守返回 false，阶段 2 改用 MessageInfo.isNotifyAll */
+    private fun isNotifyAllFromValues(
+        @Suppress("UNUSED_PARAMETER") values: ContentValues,
+        @Suppress("UNUSED_PARAMETER") content: String,
+    ): Boolean = false
 
-    /** 拍一拍我：type=PAT.code 且 pattedUser==selfWxId  */
-    private fun isPatMeFromValues(values: ContentValues): Boolean {
-        val type = values.getAsInteger("type") ?: return false
-        if (type != MessageType.PAT.code) return false
-        val selfWxId = runCatching { dev.joker.features.api.core.WeApi.selfWxId }.getOrNull()
-            ?: return false
-        if (selfWxId.isEmpty()) return false
-        val content = values.getAsString("content") ?: return false
-        if (content.isEmpty()) return false
-        // PatMessage 内部 XML 解析，保留 try-catch；pattedUser 字段不存在 = false
-        return runCatching {
-            val pat = dev.joker.features.api.core.models.MessageInfo.PatMessage(content)
-            pat.pattedUser == selfWxId
-        }.getOrDefault(false)
-    }
+    /** 拍一拍我：保守返回 false，阶段 2 改用 MessageInfo 解析 PatMessage */
+    private fun isPatMeFromValues(@Suppress("UNUSED_PARAMETER") values: ContentValues): Boolean = false
 
     private fun process(
         rules: AutoReplyRuleSet,
