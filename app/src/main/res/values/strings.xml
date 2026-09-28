@@ -2385,6 +2385,8 @@
     <string name="chat_auto_reply_ai_max_tokens">Max tokens (64–4096)</string>
     <string name="chat_auto_reply_ai_model_current">Current AI model: %1$s</string>
     <string name="chat_auto_reply_ai_no_model">No AI model configured. Open Chat Analysis → AI Models to add one.</string>
+    <string name="chat_auto_reply_ai_model_name">AI model name (optional)</string>
+    <string name="chat_auto_reply_ai_model_name_hint">Leave blank to use the model selected in Chat Analysis. Enter a model name to override per task.</string>
     <string name="chat_message_details_menu">Details</string>
     <string name="chat_message_details_type">Type</string>
     <string name="chat_message_details_talker_id">Contact/group ID</string>

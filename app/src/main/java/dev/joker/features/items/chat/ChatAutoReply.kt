@@ -201,7 +201,8 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         if (gen != generation.get()) return false
 
         // 1) 取当前选中的 AI 模型（聊天分析配置共享）
-        val config = ChatAnalysisModelStore.selectedModel()
+        val config = ChatAnalysisModelStore.findByName(task.aiModelName)
+            ?: ChatAnalysisModelStore.selectedModel()
         if (config == null || config.baseUrl.isBlank() || config.apiKey.isBlank() || config.model.isBlank()) {
             WeLogger.w(
                 TAG,

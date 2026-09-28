@@ -123,6 +123,17 @@ object ChatAnalysisModelStore {
         return models.firstOrNull { it.name == sel } ?: models.firstOrNull()
     }
 
+    /**
+     * 【Round31】按名字查找已保存的 AI 模型配置。供自动回复等场景按 task 选不同模型：
+     *   - 自动回复 task.aiModelName = "本地 Ollama" → 走本地轻量模型
+     *   - 聊天分析用 ChatAnalysisModelStore.selectedModel()（默认选中）
+     * 名字不存在时返回 null（降级为 selectedModel()）。
+     */
+    fun findByName(name: String): AiModelConfig? {
+        if (name.isEmpty()) return null
+        return loadModels().firstOrNull { it.name == name }
+    }
+
     fun select(name: String) {
         WePrefs.putString(KEY_SELECTED, name)
     }

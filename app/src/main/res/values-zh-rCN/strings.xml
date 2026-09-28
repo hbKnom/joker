@@ -2344,6 +2344,8 @@
     <string name="chat_auto_reply_ai_max_tokens">最大 Token (64–4096)</string>
     <string name="chat_auto_reply_ai_model_current">当前 AI 模型：%1$s</string>
     <string name="chat_auto_reply_ai_no_model">尚未配置 AI 模型。请打开「聊天分析 → AI 模型」添加。</string>
+    <string name="chat_auto_reply_ai_model_name">AI 模型名称（选填）</string>
+    <string name="chat_auto_reply_ai_model_name_hint">留空则使用聊天分析中选定的模型。填入名称可让此任务覆盖默认。</string>
     <string name="chat_message_details_menu">详情</string>
     <string name="chat_message_details_type">类型</string>
     <string name="chat_message_details_talker_id">对方/群聊 ID</string>

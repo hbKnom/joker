@@ -126,6 +126,13 @@ internal data class AutoReplyTask(
     val aiSystemPrompt: String = "",
     val aiTemperature: Double = 0.7,
     val aiMaxTokens: Int = 500,
+    /**
+     * 【Round31】可选指定 AI 模型名（与 ChatAnalysisModelStore 的 name 字段对应）：
+     *   - 空字符串 "" = 用 ChatAnalysisModelStore.selectedModel()（聊天分析选中的）
+     *   - 非空 = 用 ChatAnalysisModelStore.findByName(aiModelName)（可被本任务覆盖）
+     * 让用户能为自动回复选不同模型（如：聊天分析用 GPT-4，自动回复用本地 Ollama）。
+     */
+    val aiModelName: String = "",
 )
 
 @Serializable
@@ -800,6 +807,18 @@ internal object AutoReplySettings {
                     checked = task.useAi,
                     onCheckedChange = { onChange(task.copy(useAi = it)) },
                 )
+            }
+            // 【Round31】可选 AI 模型名（覆盖聊天分析的 selected）
+            item(key = "ai_model_name") {
+                BaseSupportingWidget(
+                    title = stringResource(R.string.chat_auto_reply_ai_model_name),
+                    description = stringResource(R.string.chat_auto_reply_ai_model_name_hint),
+                ) {
+                    InlineTaskTextField(
+                        value = task.aiModelName,
+                        onValueChange = { onChange(task.copy(aiModelName = it)) },
+                    )
+                }
             }
             // 当前 AI 模型提示
             val currentAiModel = ChatAnalysisModelStore.selectedModel()
