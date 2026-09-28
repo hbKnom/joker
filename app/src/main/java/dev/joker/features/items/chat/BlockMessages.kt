@@ -120,7 +120,11 @@ data class BlockMessagesRules(
                     // prefOption 返回 ReadWriteProperty<Any?, String>，
                     // 必须显式调 getValue(thisRef, property) 才能拿到底层 prefs 值。
                     // 这里 thisRef 是 companion 实例；property 是 rulesJsonPref 自身。
-                    val raw: String = rulesJsonPref.getValue(this@BlockMessagesRules.Companion, ::rulesJsonPref)
+                    // 【Round31 修编译错】
+                    // 上一轮用 this@BlockMessagesRules.Companion 作为 label 失败：
+                    // BlockMessagesRules 是 data class，companion object 在其内部，
+                    // 'this@BlockMessagesRules' label 不存在；this 本身已经是 companion 实例。
+                    val raw: String = rulesJsonPref.getValue(this, ::rulesJsonPref)
                     if (raw.isBlank()) {
                         BlockMessagesRules()
                     } else {
@@ -128,12 +132,14 @@ data class BlockMessagesRules(
                         val t = mutableListOf<String>()
                         val k = mutableListOf<String>()
                         val s = mutableListOf<String>()
-                        raw.split('\n').forEach { line ->
-                            val t1 = line.trim()
-                            if (t1.isEmpty() || t1.startsWith("#")) return@forEach
+                        // 【Round31】改为 for 循环 + continue 替代 forEach { return@forEach }
+                        // (K2 编译器在嵌套 when 块里对内联 lambda 的 return@forEach label 解析失败)
+                        for (rawLine in raw.split('\n')) {
+                            val t1 = rawLine.trim()
+                            if (t1.isEmpty() || t1.startsWith("#")) continue
                             val prefix = t1.substringBefore('=', "")
                             val value = t1.substringAfter('=', "").trim()
-                            if (value.isEmpty()) return@forEach
+                            if (value.isEmpty()) continue
                             when (prefix) {
                                 "talkers" -> t.addAll(value.split(',').map { it.trim() })
                                 "keywords" -> k.addAll(value.split(',').map { it.trim() })

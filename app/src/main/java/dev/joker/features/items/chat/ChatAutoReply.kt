@@ -9,9 +9,9 @@ import dev.joker.features.api.core.WeMessageApi
 import dev.joker.features.api.core.models.MessageType
 import dev.joker.features.core.ClickableFeature
 import dev.joker.features.core.FeatureCategoryIds
-import dev.joker.reflekt.utils.firstField
-import dev.joker.reflekt.utils.reflekt
 import dev.joker.utils.WeLogger
+import dev.joker.utils.serialization.NativeXmlParser
+import dev.joker.utils.serialization.getByPath
 import dev.joker.utils.strings.isGroupChatWxId
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -89,7 +89,7 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         val msgSource = values.getAsString("msgSource") ?: return false
         if (msgSource.isEmpty()) return false
         return runCatching {
-            val xml = dev.joker.utils.serialization.NativeXmlParser.toXmlObject(msgSource)
+            val xml = NativeXmlParser.toXmlObject(msgSource)
             val atUserList = xml.getByPath("msgsource.atuserlist")?.asString ?: return false
             atUserList.split(",").any { it == selfWxId }
         }.getOrDefault(false)
@@ -100,7 +100,7 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         val msgSource = values.getAsString("msgSource") ?: return false
         if (msgSource.isEmpty()) return false
         return runCatching {
-            val xml = dev.joker.utils.serialization.NativeXmlParser.toXmlObject(msgSource)
+            val xml = NativeXmlParser.toXmlObject(msgSource)
             val atUserList = xml.getByPath("msgsource.atuserlist")?.asString ?: return false
             (atUserList.contains("notify@all") || atUserList.contains("announcement@all"))
                 && (content.contains("@所有人") || content.contains("@ all people"))
