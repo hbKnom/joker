@@ -160,7 +160,13 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
             // 【Round30】模板替换：{content}/{talker}/{name}
             val reply = task.reply
             val resolvedText = renderTemplate(reply.text, content, talker, sender(talker))
-            val sent = when (reply.type) {
+
+            // 【Round31】AI 回复分支：useAi=true 时不再发固定 reply 文本，
+            // 而是调 ChatAnalysisAi.plain(selectedModel(), sys, prompt) 拿 AI 生成文本再发。
+            // 模型配置复用 ChatAnalysisModelStore（与聊天分析功能共享）。
+            val sent = if (task.useAi) {
+                sendAiReply(task, content, talker, gen)
+            } else when (reply.type) {
                 AutoReplyType.TEXT ->
                     resolvedText.isNotBlank() && WeMessageApi.sendText(talker, resolvedText)
 
@@ -181,6 +187,91 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
             if (sent) cooldowns[cooldownKey] = SystemClock.elapsedRealtime()
             if (task.stopAfterMatch) return
         }
+    }
+
+    /**
+     * 【Round31】AI 回复实现：复用聊天分析的 [ChatAnalysisAi] + [ChatAnalysisModelStore]。
+     *
+     * 设计要点：
+     *   - 失败自动降级为 task.reply.text 固定文本（向后兼容）
+     *   - 命中规则按 Hchat 风格：「你是一个聊天助手，正在和对方对话，原消息：…，请简短自然地回复」
+     *   - maxTokens 默认 500（可由任务覆盖）
+     *   - generation 检查：AI 慢响应时防止被 onDisable 后的过期 gen 覆盖
+     */
+    private fun sendAiReply(
+        task: AutoReplyTask,
+        content: String,
+        talker: String,
+        gen: Long,
+    ): Boolean {
+        // 0) generation 检查：onDisable 后过期 gen 不再发
+        if (gen != generation.get()) return false
+
+        // 1) 取当前选中的 AI 模型（聊天分析配置共享）
+        val config = ChatAnalysisModelStore.selectedModel()
+        if (config == null || config.baseUrl.isBlank() || config.apiKey.isBlank() || config.model.isBlank()) {
+            WeLogger.w(
+                TAG,
+                "AI reply skipped: 未在聊天分析里配置 AI 模型（或 baseUrl/apiKey/model 为空）" +
+                    "，降级为 task.reply.text 固定文本",
+            )
+            return fallbackToFixedReply(task, talker)
+        }
+
+        // 2) system prompt：用户自定义 > 默认 Hchat 风格提示
+        val sys = task.aiSystemPrompt.takeIf { it.isNotBlank() }
+            ?: buildDefaultSystemPrompt(talker)
+        val userPrompt = buildUserPrompt(content, talker)
+        val maxTokens = task.aiMaxTokens.coerceIn(64, 4096)
+
+        // 3) 调用 AI（非流式 plain，超时由 longClient 180s 控制）
+        return try {
+            val text = ChatAnalysisAi.plain(config, sys, userPrompt)
+            if (gen != generation.get()) {
+                WeLogger.i(TAG, "AI reply completed but feature already disabled, skip send")
+                false
+            } else if (text.isNullOrBlank()) {
+                WeLogger.w(TAG, "AI reply empty: 降级为固定文本")
+                fallbackToFixedReply(task, talker)
+            } else {
+                val cleaned = text.trim().take(2000) // 截断保护：微信单条文本上限 2000 字符
+                WeMessageApi.sendText(talker, cleaned)
+            }
+        } catch (e: Throwable) {
+            WeLogger.e(TAG, "AI reply failed: 降级为固定文本", e)
+            fallbackToFixedReply(task, talker)
+        }
+    }
+
+    private fun fallbackToFixedReply(task: AutoReplyTask, talker: String): Boolean {
+        val reply = task.reply
+        return when (reply.type) {
+            AutoReplyType.TEXT -> {
+                val text = renderTemplate(reply.text, "", talker, sender(talker))
+                text.isNotBlank() && WeMessageApi.sendText(talker, text)
+            }
+            AutoReplyType.IMAGE ->
+                reply.path.isNotBlank() && File(reply.path).isFile &&
+                    WeMessageApi.sendImage(talker, reply.path)
+            AutoReplyType.VIDEO ->
+                reply.path.isNotBlank() && File(reply.path).isFile &&
+                    WeMessageApi.sendVideo(talker, reply.path)
+            AutoReplyType.VOICE -> {
+                val duration = reply.voiceDurationMs.toIntOrNull() ?: 0
+                reply.path.isNotBlank() && File(reply.path).isFile && duration in 1..60000 &&
+                    WeMessageApi.sendVoice(talker, reply.path, duration)
+            }
+        }
+    }
+
+    private fun buildDefaultSystemPrompt(talker: String): String =
+        "你是一个友好的聊天助手，正在微信中和对方对话。请用简短、自然、口语化的方式回复，" +
+            "1-3 句话以内，不要使用 markdown 标题/列表/代码块。"
+
+    private fun buildUserPrompt(content: String, talker: String): String {
+        // 复用 ChatAutoReply.renderTemplate 的 {content}/{talker}/{name} 占位符
+        val user = sender(talker)
+        return "原消息：${content.trim()}\n\n会话：${talker}${if (user.isNotEmpty()) "（发送者：$user）" else ""}\n\n请回复："
     }
 
     /**

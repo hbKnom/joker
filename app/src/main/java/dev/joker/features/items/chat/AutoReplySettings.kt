@@ -116,6 +116,16 @@ internal data class AutoReplyTask(
     val delayMs: String = "0",
     val cooldownMs: String = "0",
     val stopAfterMatch: Boolean = true,
+    /**
+     * 【Round31】启用 AI 回复：useAi=true 时不再发 reply 固定文本，而是
+     * 调 ChatAnalysisAi.plain(selectedModel(), aiSystemPrompt, "{content}...") 拿 AI 文本再发。
+     * AI 模型配置复用 ChatAnalysisModelStore（与聊天分析功能共享），不在此处存独立配置。
+     * 默认 false（向后兼容）。
+     */
+    val useAi: Boolean = false,
+    val aiSystemPrompt: String = "",
+    val aiTemperature: Double = 0.7,
+    val aiMaxTokens: Int = 500,
 )
 
 @Serializable
