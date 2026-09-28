@@ -43,6 +43,7 @@ jobs:
         (
           github.ref == 'refs/heads/master' ||
           github.ref == 'refs/heads/dev' ||
+          github.ref == 'refs/heads/main' ||
           github.event_name == 'pull_request'
         )
       )
