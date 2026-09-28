@@ -11,6 +11,7 @@ import dev.joker.features.core.ClickableFeature
 import dev.joker.features.core.FeatureCategoryIds
 import dev.joker.utils.WeLogger
 import dev.joker.utils.serialization.NativeXmlParser
+import dev.joker.utils.serialization.asString
 import dev.joker.utils.serialization.getByPath
 import dev.joker.utils.strings.isGroupChatWxId
 import java.io.File
