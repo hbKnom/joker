@@ -9,7 +9,9 @@ import dev.joker.features.core.FeatureCategoryIds
 import dev.joker.features.core.SwitchFeature
 import dev.joker.utils.WeLogger
 
-object AntiMomentsDelete : SwitchFeature(), WeDatabaseListenerApi.IUpdateListener {
+object AntiMomentsDelete : SwitchFeature(),
+    WeDatabaseListenerApi.IUpdateListener,
+    WeDatabaseListenerApi.IInsertListener {
 
     override val technicalId = "朋友圈防撤回"
     override val nameRes = R.string.feature_anti_moments_delete_name
@@ -30,6 +32,21 @@ object AntiMomentsDelete : SwitchFeature(), WeDatabaseListenerApi.IUpdateListene
             }
         } catch (ex: Throwable) {
             WeLogger.e(TAG, "拦截处理异常", ex)
+        }
+    }
+
+    /**
+     * 【Round31 新增】SnsInfo 插入路径：本人发朋友圈时同样打标记，
+     * 让后续撤回（DELETE 路径）也能命中（SQL 守卫 hook 不到的部分）。
+     * ContentValues insert + updateWithOnConflict 都会走这里。
+     */
+    override fun onInsert(table: String, values: ContentValues) {
+        try {
+            when (table) {
+                TBL_SNS_INFO -> handleSnsRecord(values)
+            }
+        } catch (ex: Throwable) {
+            WeLogger.e(TAG, "insert 拦截处理异常", ex)
         }
     }
 
