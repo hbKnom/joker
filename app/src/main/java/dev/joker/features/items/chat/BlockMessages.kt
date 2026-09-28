@@ -107,11 +107,13 @@ data class BlockMessagesRules(
     companion object {
         val current: BlockMessagesRules by lazy {
                 runCatching {
-                    val raw = rulesJsonPref.value
+                    // prefOption 返回 ReadWriteProperty<Any?, String>，
+                    // 直接读委托属性本身就是它的 getter 返回底层 prefs 值。
+                    val raw: String = rulesJsonPref
                     if (raw.isBlank()) {
                         BlockMessagesRules()
                     } else {
-                        // 最小 JSON 解析：逗号分隔字符串
+                        // 行内格式：prefix=value, 逗号分隔；# 开头的行视为注释。
                         val t = mutableListOf<String>()
                         val k = mutableListOf<String>()
                         val s = mutableListOf<String>()
