@@ -100,6 +100,18 @@ internal data class AutoReplyTask(
     val name: String = "",
     val enabled: Boolean = true,
     val keyword: AutomationKeywordRule = AutomationKeywordRule(ignoreCase = true),
+    /**
+     * 【Round30】逆向版 Hchat AutoReplyMessage 9 字段（@我 / @所有人 / 拍一拍）场景：
+     *   - onlyAtMe=true      → 仅 @我的消息触发
+     *   - onlyNotifyAll=true → 仅 @所有人的消息触发
+     *   - onlyPatMe=true     → 仅拍一拍我触发
+     *   - onlyQuote=true     → 仅引用消息触发
+     * 默认 false = 不区分场景，文本匹配即可（向后兼容）。
+     */
+    val onlyAtMe: Boolean = false,
+    val onlyNotifyAll: Boolean = false,
+    val onlyPatMe: Boolean = false,
+    val onlyQuote: Boolean = false,
     val reply: AutoReplyRule = AutoReplyRule(),
     val delayMs: String = "0",
     val cooldownMs: String = "0",

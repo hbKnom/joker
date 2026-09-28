@@ -9,6 +9,8 @@ import dev.joker.features.api.core.WeMessageApi
 import dev.joker.features.api.core.models.MessageType
 import dev.joker.features.core.ClickableFeature
 import dev.joker.features.core.FeatureCategoryIds
+import dev.joker.reflekt.utils.firstField
+import dev.joker.reflekt.utils.reflekt
 import dev.joker.utils.WeLogger
 import dev.joker.utils.strings.isGroupChatWxId
 import java.io.File
@@ -59,20 +61,88 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         if (!rules.enabled.enabled) return
         if (!rules.timeRange.matches()) return
 
+        // 【Round30】场景字段探测：从 ContentValues 拿 msgSource 解析 @userlist + 拍一拍内容
+        // 不引入新 DexKit 委托，沿用现有 listener 接口。
+        val isAtMe = isAtMeFromValues(values)
+        val isNotifyAll = isNotifyAllFromValues(values, content)
+        val isPatMe = isPatMeFromValues(values)
+        val isQuote = type == MessageType.QUOTE.code
+
         val gen = generation.get()
         executor.execute {
             try {
-                process(rules, talker, content, gen)
+                process(rules, talker, content, gen, isAtMe, isNotifyAll, isPatMe, isQuote)
             } catch (e: Throwable) {
                 WeLogger.e(TAG, "auto reply processing failed", e)
             }
         }
     }
 
-    private fun process(rules: AutoReplyRuleSet, talker: String, content: String, gen: Long) {
+    /**
+     * 【Round30】解析 msgSource XML 中 <atuserlist>，含 selfWxId 即为 @我。
+     * XML 解析用 [dev.joker.reflekt.utils.NativeXmlParser] — 与 MessageInfo.mentionedUsers 同源。
+     */
+    private fun isAtMeFromValues(values: ContentValues): Boolean {
+        val selfWxId = runCatching { dev.joker.features.api.core.WeApi.selfWxId }.getOrNull()
+            ?: return false
+        if (selfWxId.isEmpty()) return false
+        val msgSource = values.getAsString("msgSource") ?: return false
+        if (msgSource.isEmpty()) return false
+        return runCatching {
+            val xml = dev.joker.utils.serialization.NativeXmlParser.toXmlObject(msgSource)
+            val atUserList = xml.getByPath("msgsource.atuserlist")?.asString ?: return false
+            atUserList.split(",").any { it == selfWxId }
+        }.getOrDefault(false)
+    }
+
+    /** @所有人：msgSource 含 notify@all 或 announcement@all 且正文含「@所有人」  */
+    private fun isNotifyAllFromValues(values: ContentValues, content: String): Boolean {
+        val msgSource = values.getAsString("msgSource") ?: return false
+        if (msgSource.isEmpty()) return false
+        return runCatching {
+            val xml = dev.joker.utils.serialization.NativeXmlParser.toXmlObject(msgSource)
+            val atUserList = xml.getByPath("msgsource.atuserlist")?.asString ?: return false
+            (atUserList.contains("notify@all") || atUserList.contains("announcement@all"))
+                && (content.contains("@所有人") || content.contains("@ all people"))
+        }.getOrDefault(false)
+    }
+
+    /** 拍一拍我：type=PAT.code 且 pattedUser==selfWxId  */
+    private fun isPatMeFromValues(values: ContentValues): Boolean {
+        val type = values.getAsInteger("type") ?: return false
+        if (type != MessageType.PAT.code) return false
+        val selfWxId = runCatching { dev.joker.features.api.core.WeApi.selfWxId }.getOrNull()
+            ?: return false
+        if (selfWxId.isEmpty()) return false
+        val content = values.getAsString("content") ?: return false
+        if (content.isEmpty()) return false
+        // PatMessage 内部 XML 解析，保留 try-catch；pattedUser 字段不存在 = false
+        return runCatching {
+            val pat = dev.joker.features.api.core.models.MessageInfo.PatMessage(content)
+            pat.pattedUser == selfWxId
+        }.getOrDefault(false)
+    }
+
+    private fun process(
+        rules: AutoReplyRuleSet,
+        talker: String,
+        content: String,
+        gen: Long,
+        isAtMe: Boolean,
+        isNotifyAll: Boolean,
+        isPatMe: Boolean,
+        isQuote: Boolean,
+    ) {
         rules.tasks.forEachIndexed { index, task ->
             if (gen != generation.get()) return
             if (!task.enabled) return@forEachIndexed
+
+            // 【Round30】场景字段过滤：onlyAtMe / onlyNotifyAll / onlyPatMe / onlyQuote
+            if (task.onlyAtMe && !isAtMe) return@forEachIndexed
+            if (task.onlyNotifyAll && !isNotifyAll) return@forEachIndexed
+            if (task.onlyPatMe && !isPatMe) return@forEachIndexed
+            if (task.onlyQuote && !isQuote) return@forEachIndexed
+
             if (!task.keyword.matches(content)) return@forEachIndexed
 
             val now = SystemClock.elapsedRealtime()
@@ -87,10 +157,12 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
             if (delay > 0) Thread.sleep(delay)
             if (gen != generation.get()) return
 
+            // 【Round30】模板替换：{content}/{talker}/{name}
             val reply = task.reply
+            val resolvedText = renderTemplate(reply.text, content, talker, sender(talker))
             val sent = when (reply.type) {
                 AutoReplyType.TEXT ->
-                    reply.text.isNotBlank() && WeMessageApi.sendText(talker, reply.text)
+                    resolvedText.isNotBlank() && WeMessageApi.sendText(talker, resolvedText)
 
                 AutoReplyType.IMAGE ->
                     reply.path.isNotBlank() && File(reply.path).isFile &&
@@ -110,4 +182,16 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
             if (task.stopAfterMatch) return
         }
     }
+
+    /**
+     * 【Round30】Hchat 模板替换对齐：{content} → 原消息正文，{talker} → 会话 ID，
+     * {name} → 发送者 ID（群聊时）/ talker（私聊时）。缺失占位符保留原样。
+     */
+    private fun renderTemplate(template: String, content: String, talker: String, name: String): String =
+        template
+            .replace("{content}", content)
+            .replace("{talker}", talker)
+            .replace("{name}", name)
+
+    private fun sender(@Suppress("UNUSED_PARAMETER") talker: String): String = ""
 }

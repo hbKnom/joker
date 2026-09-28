@@ -58,7 +58,9 @@ data class AutomationTimeRangeRule(
 enum class AutomationKeywordMode {
     STRING_LIST,
     EXACT,
-    REGEX
+    REGEX,
+    /** 【Round30】逆向版 Hchat matchMode=3 = 前缀匹配；补充以对齐 4 态。 */
+    PREFIX,
 }
 
 @Serializable
@@ -84,13 +86,17 @@ data class AutomationKeywordRule(
                 Regex(regex, if (ignoreCase) setOf(RegexOption.IGNORE_CASE) else emptySet())
                     .containsMatchIn(text)
             }.getOrDefault(false)
+
+            AutomationKeywordMode.PREFIX -> keywords.any {
+                text.startsWith(it, ignoreCase)
+            }
         }
     }
 
     fun validationError(label: String): String? {
         if (!enabled) return null
         return when (mode) {
-            AutomationKeywordMode.STRING_LIST, AutomationKeywordMode.EXACT ->
+            AutomationKeywordMode.STRING_LIST, AutomationKeywordMode.EXACT, AutomationKeywordMode.PREFIX ->
                 if (strings.none(String::isNotBlank)) {
                     localizedAutomationString(R.string.automation_keyword_list_required, label)
                 } else null
