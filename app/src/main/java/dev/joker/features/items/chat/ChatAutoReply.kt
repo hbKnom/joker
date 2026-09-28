@@ -38,9 +38,9 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         // （isSelfSender / type / talker / content 都不依赖 NativeXmlParser）
         // 场景字段 isAtMe/isNotifyAll/isPatMe 保守 false（避免引入 NativeXmlParser
         // 跨包 import 在 K2 编译器的 Unresolved 'asString' 问题）。
-        WeMessageApi.methodMsgInfoStorageInsertMessage.hookAfter { param ->
+        WeMessageApi.methodMsgInfoStorageInsertMessage.hookAfter {
             try {
-                val raw = param.args[0] ?: return@hookAfter
+                val raw = args[0] ?: return@hookAfter
                 val info = MessageInfo(raw)
                 if (info.isSelfSender) return@hookAfter
                 val msgType = info.type ?: return@hookAfter

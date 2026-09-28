@@ -52,7 +52,7 @@ object ShowFriendAddTime : SwitchFeature(),
      *   type & 32 = 公众号（排除）
      *   verifyFlag = 0 排除服务号
      */
-    private const val QUERY_FRIEND_CREATE_TIME = """
+    private val QUERY_FRIEND_CREATE_TIME = """
         SELECT createTime FROM rcontact
         WHERE username = ? AND encryptUsername != ''
         AND (type & 1) != 0 AND (type & 8) = 0
@@ -60,13 +60,13 @@ object ShowFriendAddTime : SwitchFeature(),
         AND username NOT LIKE '%@%' LIMIT 1
     """.trimIndent()
 
-    private const val QUERY_GROUP_INVITED = """
+    private val QUERY_GROUP_INVITED = """
         SELECT MAX(createTime) FROM message
         WHERE talker = ? AND type IN (10000, 570425393)
         AND (content LIKE '你加入了群聊%' OR content LIKE '你通过%加入群聊%' OR content LIKE '%邀请你%加入了群聊%')
     """.trimIndent()
 
-    private const val QUERY_GROUP_CREATED = """
+    private val QUERY_GROUP_CREATED = """
         SELECT MIN(createTime) FROM message
         WHERE talker = ? AND type IN (10000, 570425393)
         AND (content LIKE '你创建了群聊%' OR content LIKE '你邀请%加入了群聊%' OR content LIKE '%你邀请%加入了群聊%')
