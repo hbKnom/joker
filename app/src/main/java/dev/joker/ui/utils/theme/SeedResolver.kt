@@ -149,11 +149,12 @@ object SeedResolver {
         val errDarkL = 0.72f
         val errL = if (night) errDarkL else errLightL
         val errColor = ColorUtils.HSLToColor(floatArrayOf(h, s, errL))
-        // onError = 白 / 黑，按 luminance 自动选对比度最高者（4.5:1 起算）。
+        // onError = 白 / 黑，按 luminance 自动选对比度最高者（4.5:1 起算）；
+        // 直接给 ARGB Int（避免回到 Compose Color、Pair 类型被推导成 Color/Int/…）。
         val onErrColor = if (ColorUtils.calculateLuminance(errColor) > 0.45f) {
-            Color(0xFF101418.toInt())
+            0xFF101418.toInt()
         } else {
-            Color(0xFFFFFFFF.toInt())
+            0xFFFFFFFF.toInt()
         }
         return errColor to onErrColor
     }

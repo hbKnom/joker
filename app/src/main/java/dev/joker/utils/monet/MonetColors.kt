@@ -86,17 +86,16 @@ object MonetColors {
                     // 纯 error / onError 在 SeedResolver.applyMonetTokens 里现算。
                     errorContainer = run {
                         val base = if (night) primary else primary
-                        val rgb = Color(base)
-                        val hsl = FloatArray(3).also { ColorUtils.colorToHSL(rgb.toArgb(), it) }
+                        val hsl = FloatArray(3).also { ColorUtils.colorToHSL(base, it) }
                         val h = if (hsl[0] in 10f..35f) hsl[0] else 18f
                         val s = maxOf(hsl[1], 0.72f)
                         // 容器版比纯 error 浅 / 暗一档（亮色 L=88、暗色 L=32），底色足够淡。
                         val l = if (night) 0.32f else 0.88f
-                        Color(ColorUtils.HSLToColor(floatArrayOf(h, s, l)))
+                        ColorUtils.HSLToColor(floatArrayOf(h, s, l))
                     },
                     onErrorContainer = run {
                         // 与 onPrimary 同步：暖红 + 主色 = 高对比前景（luminance 差 >0.5 即合格）
-                        Color(0xFF101418.toInt())
+                        0xFF101418.toInt()
                     },
                 )
             }
