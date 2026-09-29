@@ -313,8 +313,33 @@ object MonetEngine : ClickableFeature() {
         scheduleInitialResolve()
     }
 
+    /**
+     * 有可用缓存时，启动后只等这么久就复用注入。
+     *
+     * 【Round45】用户实机反馈：「刚开始加载取色不了，需要等一段时间后才可以自动取色，
+     * 而不是要等加载完微信了还要等好长一段时间」。
+     *
+     * 根因就是下面 [INITIAL_RESOLVE_DELAY_MS]（20 秒）无差别地推迟了**所有**启动路径 ——
+     * 可「复用已有运行时包」这条路径实机只要 288 ms（日志实证），却被生生推迟 20 秒。
+     * 现在按「有没有可复用的包」分流：
+     *  * 有 → 300 ms 后就走复用路径（微秒级注入，首帧之后立刻取色）；
+     *  * 没有 → 仍然延后 20 秒，避免首次全量解析（分钟级纯 CPU）和微信首屏抢 CPU。
+     */
+    private const val INITIAL_RESOLVE_FAST_DELAY_MS = 300L
+
+    /** 缓存复用路径是否可用（绑定缓存 + 运行时包都在）。 */
+    private fun hasReusablePackage(): Boolean = runCatching {
+        cachedBindings() != null &&
+            runtimeDir.listFiles()?.any { it.isFile && it.name.startsWith("runtime-") } == true
+    }.getOrDefault(false)
+
     /** 启动后延后 [INITIAL_RESOLVE_DELAY_MS] 再解析；调度失败就立刻解析，绝不因此不解析。 */
     private fun scheduleInitialResolve() {
+        // 有缓存 → 尽早复用，让莫奈色在微信**加载过程中**就位；无缓存 → 保持原来的延后策略。
+        val delay = if (hasReusablePackage()) INITIAL_RESOLVE_FAST_DELAY_MS else INITIAL_RESOLVE_DELAY_MS
+        if (delay == INITIAL_RESOLVE_FAST_DELAY_MS) {
+            WeLogger.i(TAG, "发现可复用的莫奈运行时包，${delay}ms 后立即复用（不再等 $INITIAL_RESOLVE_DELAY_MS ms）")
+        }
         runCatching {
             Handler(Looper.getMainLooper()).postDelayed(
                 {
@@ -322,7 +347,7 @@ object MonetEngine : ClickableFeature() {
                         if (isActive && isSupported) startResolve(force = false)
                     }.onFailure { WeLogger.w(TAG, "delayed initial resolve failed", it) }
                 },
-                INITIAL_RESOLVE_DELAY_MS,
+                delay,
             )
         }.onFailure { error ->
             WeLogger.w(TAG, "cannot schedule initial resolve, resolving immediately", error)

@@ -897,9 +897,11 @@ internal object AutoReplySettings {
             // 注意：必须包在 item { } 里 —— SegmentedColumnScope 的 item content 才是
             // @Composable 上下文，直接裸调会报
             // 「@Composable invocations can only happen from the context of a @Composable function」。
-            item(key = "ai_model_picker") {
-                AiModelPicker(task = task, onChange = onChange)
-            }
+            // 【Round45 · 崩溃修复】AiModelPicker 本身是 SegmentedColumnScope 的扩展、体内自己
+            // 调用 item(...)。若再套一层 item { }，它的内容 lambda 会在 SegmentedColumn 的
+            // Layout 子组合阶段执行，此时往作用域里 add 会打断正在进行的迭代 → CME 崩微信。
+            // 正确用法：直接在本作用域内展开（与 keywordItems 等其它扩展一致）。
+            AiModelPicker(task = task, onChange = onChange)
             // 当前 AI 模型提示
             val currentAiModel = ChatAnalysisModelStore.selectedModel()
             item(key = "ai_model_hint") {

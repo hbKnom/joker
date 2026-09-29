@@ -119,7 +119,12 @@ object MonetResourceResolver {
         }.onFailure {
             WeLogger.w(TAG, "可视化资源编排失败，本次只注入颜色（其余照常）", it)
         }.getOrDefault(MonetOverlayPlan())
-        val plan = authored.copy(colors = colors)
+        // 【Round45】角标兜底：不受 MONET_RULES 覆盖的「未读角标品牌红」按值+名自动识别并重着色。
+        // 用户实机反复反馈「底栏导航角标 / 顶部对话分组栏角标 / 会话头像右上角实心点永远是红色」，
+        // 而这类资源历史上没有指纹可写进规则表。这里在**已建好的资源图**上多扫一遍即可，
+        // 不额外增加任何启动期 hook 或 IO；命中失败只降级成「保持原色」。
+        val badgeColors = MonetBadgeRecolor.targets(graph, palette)
+        val plan = authored.copy(colors = colors + badgeColors)
         val unresolved = MonetStructureMatcher.roleIds - resolved.keys
         @Suppress("UNUSED_EXPRESSION") palette
         val bindings = MonetBindings(

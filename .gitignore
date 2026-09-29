@@ -61,3 +61,4 @@ docs/superpowers/
 
 # Extension-pack build outputs (./x extensions pack/lock)
 dist/
+Joker-*-release.zip

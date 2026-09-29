@@ -172,7 +172,14 @@ fun SegmentedColumn(
     content: SegmentedColumnScope.() -> Unit
 ) {
     val scope = SegmentedColumnScope().apply(content)
-    val allItems = scope.items
+    // 【Round45 · 崩溃根治】必须快照成不可变 List。
+    // content 构建完 items 之后，每个 item 的 content lambda 会在下面 Layout 的**子组合阶段**
+    // 才被调用；若某个 item 的 content 里又调用了 SegmentedColumnScope.item(...)
+    // （典型：AiModelPicker 这类「作用域扩展」），就会在 `allItems.forEachIndexed`
+    // 的迭代器存活期间往同一个 ArrayList 里 add → 主线程 ConcurrentModificationException
+    // → 直接崩掉宿主微信（2026-09-29 18:47:51 崩溃日志实证：TaskEditor → SegmentedColumn）。
+    // 快照后迭代对象与外界引用彻底解耦，任何"迟到 add"都只被忽略而不会崩进程。
+    val allItems = scope.items.toList()
 
     if (allItems.isEmpty()) return
 

@@ -327,6 +327,17 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
                     }
                 }
             }
+            // 【Round45】手指还在滑动时，这一拍**只做队列维护、不碰任何卡片渲染**。
+            // Round43 已经把「周期补扫」挡在滑动之外，但等待中的卡片仍会在滑动帧里
+            // 被反复 showCard 重建 —— 行被滑动手势反复换绑，此刻重建就是用户看到的
+            // 「上下滑动聊天记录，分析卡片容器会自动刷新 / 串来串去」，同时把测量与绘制
+            // 全压在主线程手指上（卡顿）。队列补投（上面那段）已经跑完，所以「每条被选定的
+            // 消息都要被分析」这条不受影响：停住后的下一拍立刻把所有卡片补齐。
+            if (YanwaiBubble.anyListScrolling()) {
+                scheduleTick()
+                tickCount++
+                return
+            }
             for (view in awaiting.toList()) {
                 val row = rowFor(view)
                 if (row == null) {
