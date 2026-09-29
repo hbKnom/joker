@@ -362,7 +362,7 @@ data class BlockMessagesRules(
  */
 object BlockMessagesRuntime : ApiFeature(), IResolveDex {
 
-    override val technicalId: String = "屏蔽消息服务"
+    override val technicalId = "屏蔽消息服务"
     override val nameRes: Int = R.string.feature_chat_block_messages_name
     override val categoryIds: List<String> = listOf(FeatureCategoryIds.API)
     override val descriptionRes: Int = R.string.feature_chat_block_messages_description

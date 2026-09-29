@@ -6,7 +6,7 @@
     <string name="chat_analysis_extra_dims_card">維度包 · 時間</string>
     <string name="chat_analysis_extra_dims_badge">%1$d 項維度</string>
     <string name="chat_analysis_extra_dims_title">時間維度包</string>
-    <string name="chat_analysis_extra_dims_desc">時間包 4 個維度：活躍日曆與趨勢、回應速度、活躍密度與連續、連擊與輪次。全部在同一次掃描裡算完，關掉只是不輸出這一包。</string>
+    <string name="chat_analysis_extra_dims_desc">時間包 1 個維度塊，塊內含 4 項分析：活躍日曆與趨勢、回應速度、活躍密度與連續、連擊與輪次。全部在同一次掃描裡算完，關掉只是不輸出這一塊。</string>
     <string name="chat_analysis_extra_dims_list_title">本包包含的維度</string>
 
     <string name="chat_analysis_dim_density">發言密度</string>
@@ -19,7 +19,7 @@
     <string name="chat_analysis_dims17_card">維度包 · 關係</string>
     <string name="chat_analysis_dims17_badge">%1$d 項維度</string>
     <string name="chat_analysis_dims17_title">關係維度包</string>
-    <string name="chat_analysis_dims17_desc">關係包 4 個維度：接話·提問·默契、複讀與重複、回覆速度榜、個人作息雷達。全部在同一次掃描裡算完，關掉只是不輸出這一包。</string>
+    <string name="chat_analysis_dims17_desc">關係包 1 個維度塊，塊內含 4 項分析：接話·提問·默契、複讀與重複、回覆速度榜、個人作息雷達。全部在同一次掃描裡算完，關掉只是不輸出這一塊。</string>
     <string name="chat_analysis_dims17_list_title">本包包含的維度</string>
 
     <string name="chat_analysis_dim_concentration">活躍集中度</string>
@@ -34,7 +34,7 @@
     <string name="chat_analysis_dims18_card">維度包 · 語言</string>
     <string name="chat_analysis_dims18_badge">%1$d 項維度</string>
     <string name="chat_analysis_dims18_title">語言維度包</string>
-    <string name="chat_analysis_dims18_desc">語言包 4 個維度：情緒詞雷達、打字習慣、約定與提醒、時段話量畫像。全部在同一次掃描裡算完，關掉只是不輸出這一包。</string>
+    <string name="chat_analysis_dims18_desc">語言包 1 個維度塊，塊內含 4 項分析：打字習慣、約定與提醒、時段話量畫像、用詞廣度。全部在同一次掃描裡算完，關掉只是不輸出這一塊。</string>
     <string name="chat_analysis_dims18_list_title">本包包含的維度</string>
 
     <string name="chat_analysis_dim_revoke">撤回與系統事件</string>

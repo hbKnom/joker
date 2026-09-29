@@ -110,11 +110,13 @@ object ChatAnalysisPng {
      * 画布底部收尾留白。
      *
      * 第 23 轮由 88 提到 104：用户反馈"每张图片底部总是溢出 / 压线"。
-     * 分页导出的最后一张图，页脚品牌条之下必须留出一段完整空白才算"图有下边界"——
-     * 88px 在手机上（1440 宽画布按 3x 屏看 ≈ 29dp）仍然显得贴边，104px（≈ 35dp）
-     * 与卡片之间的 CARD_GAP 视觉重量对齐，底边才像是"设计留白"而不是"被裁掉"。
+     * 第 41 轮再由 104 提到 128：分页导出的**每一页**（不只最后一张）页底都要有完整收尾，
+     * 页脚品牌条之下 104px（≈ 35dp）在实机上仍显得贴边；128px（≈ 43dp）才与
+     * 卡片之间的 CARD_GAP 视觉重量真正对齐，底边看起来是"设计留白"而不是"被裁掉"。
+     * 该常量参与 [CARD_SPLIT_MAX_H] / 每页内容下界 / 页脚落点三处几何，改大只会让
+     * 每页可放内容更少（页数更多），不会把任何内容画到画布之外。
      */
-    private const val BOTTOM_PAD = 104
+    private const val BOTTOM_PAD = 128
 
     /** 条形行 / 单行键值行高 */
     private const val ROW_H = 88
@@ -1673,7 +1675,7 @@ object ChatAnalysisPng {
             else maxOf(contentBottom + CARD_GAP, pageOrigin + pageHeight - BOTTOM_PAD - FOOTER_H)
 
             // 本页内容是不是在卡片中途被打断（断点不是任何一条条目边界）
-            val splits = splitsInsideItem(itemTops, contentBottom, contentEnd)
+            val splits = splitsInsideItem(items, itemTops, contentBottom, contentEnd)
 
             val bmp = Bitmap.createBitmap(W, pageHeight, Bitmap.Config.ARGB_8888)
             try {
@@ -1837,13 +1839,33 @@ object ChatAnalysisPng {
         return ""
     }
 
-    /** 本页内容是否在卡片内部被拦腰截断（断点不是任何一条条目边界，也不是整幅内容的末尾）。 */
-    private fun splitsInsideItem(itemTops: IntArray, contentBottom: Int, contentEnd: Int): Boolean {
+    /**
+     * 本页内容是否在卡片内部被拦腰截断。
+     *
+     * 判据是「严格落在某张卡片的内部区间」：`top < contentBottom < top + height`。
+     * 于是三种干净边界都不会被误判：
+     *  - 断在条目**顶部**（`contentBottom == top`）：上一张卡完整收尾；
+     *  - 断在条目**底部**（`contentBottom == top + height`）：这张卡完整收尾；
+     *  - 断在两张卡之间的间距（[gapBefore]）里：同样是完整卡片收尾。
+     * 只有真正劈开一张卡片（KPI 只画了半格、没有下边框与圆角）才需要补
+     * 「本节未完 · 见下页」。
+     *
+     * 旧判据只比「条目顶部」是否相等，于是「完整卡片收尾」与「断在间距里」两种最常态的
+     * 分页收尾都会被判成截断 —— 每张分页图的页底都多出一句「本节未完 · 见下页」和一条
+     * 渐隐细线，实机观感就是用户反馈的「每张图底部都多出一块 / 像溢出」。
+     */
+    private fun splitsInsideItem(
+        items: List<Item>,
+        itemTops: IntArray,
+        contentBottom: Int,
+        contentEnd: Int,
+    ): Boolean {
         if (contentBottom >= contentEnd) return false
-        for (t in itemTops) {
-            if (t == contentBottom) return false
+        for (i in items.indices) {
+            val top = itemTops[i]
+            if (contentBottom > top && contentBottom < top + itemHeight(items[i])) return true
         }
-        return true
+        return false
     }
 
     /**

@@ -6,7 +6,7 @@
     <string name="chat_analysis_extra_dims_card">Dimension pack · Time</string>
     <string name="chat_analysis_extra_dims_badge">%1$d dimensions</string>
     <string name="chat_analysis_extra_dims_title">Time dimension pack</string>
-    <string name="chat_analysis_extra_dims_desc">4 time dimensions: activity calendar and trend, reply speed, activity density and continuity, bursts and rounds. All computed inside the same scan; turning it off just omits this pack.</string>
+    <string name="chat_analysis_extra_dims_desc">1 dimension block with 4 analyses: activity calendar and trend, reply speed, activity density and continuity, bursts and rounds. All computed inside the same scan; turning it off just omits this block.</string>
     <string name="chat_analysis_extra_dims_list_title">Dimensions in this pack</string>
 
     <string name="chat_analysis_dim_density">Speech density</string>
@@ -19,7 +19,7 @@
     <string name="chat_analysis_dims17_card">Dimension pack · Relation</string>
     <string name="chat_analysis_dims17_badge">%1$d dimensions</string>
     <string name="chat_analysis_dims17_title">Relation dimension pack</string>
-    <string name="chat_analysis_dims17_desc">4 relation dimensions: who picks up and asks, repeats and copycats, reply-speed ranking, per-person rhythm radar. All computed inside the same scan; turning it off just omits this pack.</string>
+    <string name="chat_analysis_dims17_desc">1 dimension block with 4 analyses: who picks up and asks, repeats and copycats, reply-speed ranking, per-person rhythm radar. All computed inside the same scan; turning it off just omits this block.</string>
     <string name="chat_analysis_dims17_list_title">Dimensions in this pack</string>
 
     <string name="chat_analysis_dim_concentration">Hourly concentration</string>
@@ -34,7 +34,7 @@
     <string name="chat_analysis_dims18_card">Dimension pack · Language</string>
     <string name="chat_analysis_dims18_badge">%1$d dimensions</string>
     <string name="chat_analysis_dims18_title">Language dimension pack</string>
-    <string name="chat_analysis_dims18_desc">4 language dimensions: emotion word radar, typing habits, plans and reminders, hourly volume profile. All computed inside the same scan; turning it off just omits this pack.</string>
+    <string name="chat_analysis_dims18_desc">1 dimension block with 4 analyses: typing habits, plans and reminders, hourly volume profile, vocabulary breadth. All computed inside the same scan; turning it off just omits this block.</string>
     <string name="chat_analysis_dims18_list_title">Dimensions in this pack</string>
 
     <string name="chat_analysis_dim_revoke">Recalls &amp; system events</string>
