@@ -1,5 +1,6 @@
 package dev.joker.utils.monet
 
+import dev.joker.preferences.WePrefs
 import dev.joker.utils.WeLogger
 
 /**
@@ -30,6 +31,30 @@ import dev.joker.utils.WeLogger
 internal object MonetBadgeRecolor {
 
     private const val TAG = "MonetBadgeRecolor"
+
+    /**
+     * 【第 47 轮】「角标跟随莫奈色」开关（默认**关闭**）。
+     *
+     * 为什么必须默认关：第 46 轮实机反馈「微信里所有实心圆点全没了」—— 不只是会话列表
+     * 未读角标，连聊天里未播放语音的小红点、发现页/朋友圈的红点也一起消失。
+     * 这三处红点分属宿主完全不同的绘制路径，唯一能同时影响它们的就是本文件：它按
+     * 「值 == 微信品牌红」在**宿主的资源表里全局改写**颜色条目，而微信的品牌红被
+     * 几十处 UI 复用（会话角标 / 语音未读点 / 朋友圈红点 / 各种提示点…）。
+     * 一旦被改写的那一条是某个红点 drawable 依赖的色，那个红点就没了。
+     *
+     * 结论：自动取色角标收益（颜色好看一点）远小于风险（红点消失 = 用户以为丢消息）。
+     * 因此**默认不碰任何宿主红点资源**；想要莫奈色角标的用户在莫奈设置里显式打开，
+     * 打开后仍受下面三道校验保护（只改「本身是字面量色 + 名字/值双证据 + 对比度足够」的条目）。
+     */
+    const val KEY_ENABLED = "monet_badge_recolor"
+
+    fun isEnabled(): Boolean = runCatching {
+        WePrefs.getBoolOrDef(KEY_ENABLED, false)
+    }.getOrDefault(false)
+
+    fun setEnabled(on: Boolean) {
+        runCatching { WePrefs.putBool(KEY_ENABLED, on) }
+    }
 
     /** 一次最多改写多少条角标颜色（防止某个版本里「大红色」被滥用成几十条而把包撑肿）。 */
     private const val MAX_TARGETS = 60
@@ -112,6 +137,7 @@ internal object MonetBadgeRecolor {
      * 全程 `runCatching` 兜底：扫描失败只是「角标保持原色」，绝不能影响其余角色的解析。
      */
     fun targets(graph: MonetResourceGraph, palette: Palette): List<ColorTarget> {
+        if (!isEnabled()) return emptyList()
         return runCatching {
             val hits = ArrayList<Pair<MonetResourceNode, Boolean>>() // node to 是否名证据命中
             graph.allNodes().forEach { node ->
@@ -119,6 +145,10 @@ internal object MonetBadgeRecolor {
                 val name = node.key.name.lowercase()
                 if (NAME_BLOCKLIST.any { name.contains(it) }) return@forEach
                 if (NAME_TEXT_BLOCKLIST.any { name.contains(it) }) return@forEach
+
+                // 【第 47 轮】只改「当前就是一个字面量颜色」的条目：把 selector / 引用型
+                // 颜色条目改写成字面量，等于把宿主 drawable 的取色链掐断 —— 那就是红点消失。
+                if (!node.hasLiteralColor()) return@forEach
 
                 val byName = NAME_HINTS.any { name.contains(it) }
                 val byValue = node.hasLiteralBadgeRed()
@@ -133,8 +163,13 @@ internal object MonetBadgeRecolor {
             // 【第 46 轮】不再无脑写 primaryLight/primaryDark：如果主色与「面」色的明度太接近，
             // 角标底色就会和会话行背景糊在一起 —— 实机观感就是「角标是空的 / 看不见」。
             // 这里做一次明度差守卫，不够对比时改用同源的深/浅强调色（仍是莫奈色，只是更有对比）。
-            val lightColor = badgeColor(palette.primaryLight, palette.surfaceLight, palette.accent1_700)
-            val nightColor = badgeColor(palette.primaryDark, palette.surfaceDark, palette.accent1_300)
+            val lightColor = badgeColorOrNull(palette.primaryLight, palette.surfaceLight, palette.accent1_700)
+            val nightColor = badgeColorOrNull(palette.primaryDark, palette.surfaceDark, palette.accent1_300)
+            if (lightColor == null || nightColor == null) {
+                // 主色/强调色都不合格（透明、或与面色糊在一起）→ 宁可一条都不改。
+                WeLogger.w(TAG, "角标重着色：没有合格的角标色（守校验全部未过），本次保持宿主原色")
+                return@runCatching emptyList()
+            }
             val picked = hits.take(MAX_TARGETS).map { (node, _) ->
                 ColorTarget(
                     binding = node.binding(),
@@ -164,10 +199,22 @@ internal object MonetBadgeRecolor {
      * 明度差 ≥ 0.22 时用莫奈主色本身（用户要的就是「角标跟主色」）；
      * 否则退回同源的深/浅强调色 —— 宁可角标颜色深一点/浅一点，也**绝不能糊到看不出来**。
      */
-    private fun badgeColor(primary: Int, surface: Int, fallback: Int): Int {
-        val delta = luminance(primary) - luminance(surface)
-        return if (delta >= MIN_BADGE_LUMINANCE_DELTA || -delta >= MIN_BADGE_LUMINANCE_DELTA) primary
-        else fallback
+    private fun badgeColorOrNull(primary: Int, surface: Int, fallback: Int): Int? {
+        if (isOpaque(primary) && contrastEnough(primary, surface)) return primary
+        if (isOpaque(fallback) && contrastEnough(fallback, surface)) return fallback
+        // 【第 47 轮】两个候选都不合格时返回 null（= 不写），而不是硬塞一个可能糊掉的颜色。
+        // 旧实现只算「明度差」，主色为 0（token 缺失/解析失败）时会直接返回 0x00000000，
+        // 那是个**完全透明**的角标色 —— 实机上就是「角标全空、看不见」。
+        return null
+    }
+
+    /** 必须完全不透明：半透明色写到红点底色上 = 红点变淡甚至消失。 */
+    private fun isOpaque(argb: Int): Boolean = ((argb ushr 24) and 0xFF) == 0xFF
+
+    /** 与「面」色的明度差必须够大，否则角标糊进背景里看不见。 */
+    private fun contrastEnough(color: Int, surface: Int): Boolean {
+        val delta = luminance(color) - luminance(surface)
+        return delta >= MIN_BADGE_LUMINANCE_DELTA || -delta >= MIN_BADGE_LUMINANCE_DELTA
     }
 
     /** 相对亮度（0..1，sRGB 简化式，够用来判断「糊没糊在一起」）。 */
@@ -185,6 +232,12 @@ internal object MonetBadgeRecolor {
             if (value is MonetResourceValue.Literal) return value.data.toInt()
         }
         return 0
+    }
+
+    /** 该 color 条目当前是否是「一个字面量颜色」（引用型 / selector 一律不动）。 */
+    private fun MonetResourceNode.hasLiteralColor(): Boolean = values.any { configured ->
+        val value = configured.value
+        value is MonetResourceValue.Literal && value.valueType.startsWith("COLOR")
     }
 
     /** 该 color 条目的值是否恰好是角标红。 */

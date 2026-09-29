@@ -456,7 +456,7 @@ object BlockMessages : ClickableFeature() {
                                 iconPlaceholder = false,
                                 title = "屏蔽时同时标记为已读",
                                 description = "命中屏蔽的消息不再计入未读（列表不再堆红点）。" +
-                                    "关闭后仅「不弹通知」。",
+                                    "默认关闭：只吞通知、不动未读角标。",
                                 checked = markRead,
                                 onCheckedChange = {
                                     markRead = it
@@ -1284,11 +1284,13 @@ object BlockMessagesExtraPrefs {
     /**
      * 命中屏蔽规则时，是否顺带把该会话标记为已读。
      *
-     * 默认 true —— 用户对「屏蔽消息」的直觉期待是「我不想看到它」，
-     * 只吞通知的话消息仍会在列表里堆未读红点，用户就会认为「没生效」。
-     * 关掉后行为退回旧的「仅不弹通知」。
+     * 【第 47 轮】默认从 true 改成 **false**：第 46 轮实机反馈「明明有消息进来，
+     * 会话列表角标全部是空的」，日志侧证据是宿主自己的未读总数长期为 0
+     * （`saveTotalUnreadMsg 0` / `getUnreadConversationCursor ... []`）—— 消息被
+     * 「屏蔽时顺带标记已读」静默清掉了未读。用户要的是「屏蔽通知」，不是「清掉我的未读」，
+     * 所以默认改成只吞通知；需要「屏蔽即已读」的可以显式打开（配置页有开关）。
      */
-    var markReadOnBlock: Boolean by prefOption("block_messages_mark_read", true)
+    var markReadOnBlock: Boolean by prefOption("block_messages_mark_read", false)
 }
 
 /** 一条被拦截的记录（仅内存，供配置页展示）。 */

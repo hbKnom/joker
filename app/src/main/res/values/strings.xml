@@ -4230,6 +4230,7 @@
     <string name="yanwai_recent">Recent verdicts</string>
     <string name="yanwai_recent_empty">No verdict yet in this session.</string>
 
+    <string name="monet_badge_recolor">Unread badges follow Monet colors (off keeps WeChat red)</string>
     <string name="monet_error_colors">Unread badges and error colors</string>
     <string name="monet_color_source_summary">Follows the Joker theme (dynamic wallpaper color or seed color). Change it in Joker settings → Theme.</string>
     <string name="monet_resolve_title">Analyzing WeChat resources</string>

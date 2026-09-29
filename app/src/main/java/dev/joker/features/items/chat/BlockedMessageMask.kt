@@ -6,15 +6,19 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorFilter
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import android.util.LruCache
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageView
 import dev.joker.R
 import dev.joker.dexkit.abc.IResolveDex
 import dev.joker.dexkit.dsl.dexMethod
@@ -26,12 +30,15 @@ import dev.joker.features.core.SwitchFeature
 import dev.joker.preferences.hotPrefOption
 import dev.joker.reflekt.utils.Modifiers
 import dev.joker.reflekt.reflekt
+import dev.joker.utils.HostInfo
 import dev.joker.utils.WeLogger
 import java.io.File
 import java.io.InputStream
+import java.lang.ref.WeakReference
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.Executors
+import kotlin.math.abs
 
 /**
  * 屏蔽消息 · 聊天界面遮盖（Round44 新增 / Round45 大改）
@@ -234,6 +241,7 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
         val density = runCatching { view.resources.displayMetrics.density }.getOrDefault(2f)
         drawable.radius = 14f * density
 
+        drawable.rowRef = WeakReference(view)
         val revealedNow = msgId > 0 && synchronized(revealed) { revealed.containsKey(msgId) }
         val state = MaskHolder(drawable, msgId, revealedNow)
         active[view] = state
@@ -260,6 +268,11 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
         view.post {
             runCatching {
                 if (active[view] !== state) return@runCatching
+                // 宿主行内头像：此刻行已经量好，正是定位宿主头像视图的最佳时机。
+                // 找不到也没关系：draw 每帧都会再读一次弱引用，宿主异步加载完成即可用。
+                if (showSender) {
+                    MaskHostAvatar.viewOf(view)?.let { state.drawable.hostAvatarRef = WeakReference(it) }
+                }
                 state.drawable.setBounds(0, 0, view.width, view.height)
                 // 只在「遮罩仍在」时消费 ACTION_DOWN 用于切换显示/遮盖；其余一律放行给宿主。
                 if (clickToReveal) {
@@ -330,12 +343,32 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
         /** 真实头像（可为空 → 退化成首字彩色圆）。 */
         var avatar: Bitmap? = null
 
+        /** 宿主行视图（弱引用）：draw 时用它校正 bounds（行变高后遮罩必须跟着变高）。 */
+        var rowRef: WeakReference<View>? = null
+
+        /** 宿主行里宿主**自己已经加载好**的头像视图（弱引用）。零解码复用，优先于自行解码。 */
+        var hostAvatarRef: WeakReference<ImageView>? = null
+
         /** 完全**不透明**的底色：用户明确要求「密不透风，不想遮盖后还能看到消息内容」。 */
         private val bgColor: Int = when (themeIndex) {
             1 -> 0xFFFFFFFF.toInt()                 // 纯白卡片
             2 -> 0xFF1B1B1F.toInt()                 // 深色卡片
             else -> if (nightMode) 0xFF1B1B1F.toInt() else 0xFFFFFFFF.toInt()
         }
+
+        /** 【第 47 轮】卡片底色改成极淡的纵向渐变（上浅下深），比纯平色有层次且零额外绘制成本。 */
+        private val bgTop: Int = blend(bgColor, if (isDarkBg) 0xFFFFFFFF.toInt() else 0xFF000000.toInt(), 0.04f)
+        private val bgBottom: Int = blend(bgColor, if (isDarkBg) 0xFFFFFFFF.toInt() else 0xFF000000.toInt(), 0.10f)
+
+        /** 左侧竖向点缀条颜色（跟随深浅主题的强调色，给整行一个「被屏蔽」的视觉锚点）。 */
+        private val accentColor: Int = when (themeIndex) {
+            1 -> 0xFF7A7A80.toInt()
+            2 -> 0xFFB9B4FF.toInt()
+            else -> if (isDarkBg) 0xFFB9B4FF.toInt() else 0xFF5B5BD6.toInt()
+        }
+
+        private var gradient: LinearGradient? = null
+        private var gradientHeight = -1
 
         private val isDarkBg: Boolean = run {
             val r = Color.red(bgColor)
@@ -353,6 +386,25 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
             style = Paint.Style.STROKE
             strokeWidth = 2f
         }
+        private val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = accentColor
+            style = Paint.Style.FILL
+        }
+        /** 头像外圈：亮底给白环，暗底给一层淡描边，让头像从卡片上「浮」起来。 */
+        private val avatarRingPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = if (isDarkBg) 0x22FFFFFF else 0xFFFFFFFF.toInt()
+            style = Paint.Style.STROKE
+        }
+        private val avatarHaloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = if (isDarkBg) 0x14FFFFFF else 0x0F000000
+            style = Paint.Style.FILL
+        }
+        private val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = accentColor
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+        }
+        private val chevronPath = Path()
         private val hintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = if (isDarkBg) 0xFF8E8E93.toInt() else 0xFF9A9AA0.toInt()
         }
@@ -377,23 +429,58 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
         private val clipPath = Path()
 
         override fun draw(canvas: Canvas) {
+            // 【第 47 轮】bounds 自愈：绑定时宿主行往往还没量好（宽高为 0 / 只有上半截），
+            // 旧实现只在那一帧 setBounds 一次，之后行变高也永远盖不全 —— 实机观感就是
+            // 「遮罩只盖住头像那一行，下面的消息正文照样看得见」。这里每帧对齐一次，
+            // 成本只是一次宽高比较（无分配）。
+            rowRef?.get()?.let { row ->
+                val w = row.width
+                val h = row.height
+                if (w > 0 && h > 0 && (bounds.width() != w || bounds.height() != h)) {
+                    setBounds(0, 0, w, h)
+                }
+            }
             val b = bounds
             if (b.isEmpty) return
             rect.set(b.left.toFloat(), b.top.toFloat(), b.right.toFloat(), b.bottom.toFloat())
             val r = radius.coerceAtMost(b.height() / 3f)
+
+            // 纵向渐变底：只在高度变化时重建 shader（draw 里零分配）。
+            if (gradient == null || gradientHeight != b.height()) {
+                gradientHeight = b.height()
+                gradient = LinearGradient(
+                    0f, b.top.toFloat(), 0f, b.bottom.toFloat(),
+                    bgTop, bgBottom, Shader.TileMode.CLAMP,
+                )
+                bgPaint.shader = gradient
+            }
             canvas.drawRoundRect(rect, r, r, bgPaint)
             canvas.drawRoundRect(rect, r, r, borderPaint)
 
             val h = b.height().toFloat()
             val density = if (h > 0f) (h / 48f).coerceIn(1.2f, 4f) else 2f
 
+            // 左侧竖向点缀条：让「这一行被屏蔽了」在快速滑动时也能一眼扫到。
+            val barW = (3f * density).coerceAtMost(b.width() / 60f)
+            val barInset = (8f * density).coerceAtMost(h * 0.18f)
+            canvas.drawRoundRect(
+                RectF(
+                    b.left + barInset,
+                    b.top + barInset,
+                    b.left + barInset + barW,
+                    b.bottom - barInset,
+                ),
+                barW / 2f, barW / 2f, accentPaint,
+            )
+
             if (senderName.isNotEmpty()) {
-                val avatarR = (h * 0.26f).coerceIn(16f * density, 30f * density)
-                val cx = b.left + 12f * density + avatarR
+                val avatarR = (h * 0.24f).coerceIn(16f * density, 30f * density)
+                val cx = b.left + barInset + barW + 10f * density + avatarR
                 val cy = b.exactCenterY()
-                drawAvatar(canvas, cx, cy, avatarR)
+                drawAvatar(canvas, cx, cy, avatarR, density)
 
                 val textX = cx + avatarR + 10f * density
+                hintPaint.textAlign = Paint.Align.LEFT
                 namePaint.textSize = (h * 0.135f).coerceIn(22f, 40f)
                 hintPaint.textSize = (h * 0.105f).coerceIn(18f, 32f)
                 val name = if (senderName.length > 14) senderName.take(14) + "…" else senderName
@@ -404,12 +491,34 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
                     cy - (namePaint.descent() + namePaint.ascent()) / 2f - namePaint.textSize * 0.42f,
                     namePaint,
                 )
+                // 提示行前画一个「斜杠圆」小图标（画出来的，不吃资源、不新增字符串）。
+                val glyphR = (hintPaint.textSize * 0.34f)
+                val glyphCy = cy + hintPaint.textSize * 0.62f
+                glyphPaint.strokeWidth = glyphR * 0.28f
+                canvas.drawCircle(textX + glyphR, glyphCy - glyphR * 0.18f, glyphR, glyphPaint)
+                canvas.drawLine(
+                    textX,
+                    glyphCy + glyphR * 0.5f,
+                    textX + glyphR * 2f,
+                    glyphCy - glyphR * 0.85f,
+                    glyphPaint,
+                )
                 canvas.drawText(
                     hint,
-                    textX,
+                    textX + glyphR * 2f + 6f * density,
                     cy - (hintPaint.descent() + hintPaint.ascent()) / 2f + hintPaint.textSize * 0.62f,
                     hintPaint,
                 )
+
+                // 右侧「可点开」指示：一个细箭头（画出来，零资源）。
+                val chR = (h * 0.055f).coerceIn(7f * density, 13f * density)
+                val chCx = b.right - barInset - chR
+                chevronPath.reset()
+                chevronPath.moveTo(chCx - chR * 0.5f, cy - chR)
+                chevronPath.lineTo(chCx + chR * 0.5f, cy)
+                chevronPath.lineTo(chCx - chR * 0.5f, cy + chR)
+                glyphPaint.strokeWidth = (2f * density).coerceAtLeast(2f)
+                canvas.drawPath(chevronPath, glyphPaint)
             } else {
                 // 不显示发送者：居中的提示文字（底部仍完全不透明）
                 hintPaint.textAlign = Paint.Align.CENTER
@@ -423,7 +532,29 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
             }
         }
 
-        private fun drawAvatar(canvas: Canvas, cx: Float, cy: Float, r: Float) {
+        private fun drawAvatar(canvas: Canvas, cx: Float, cy: Float, r: Float, density: Float) {
+            // 外圈光晕 + 描边：先把头像「托」起来，再画头像本体。
+            canvas.drawCircle(cx, cy, r + 2.5f * density, avatarHaloPaint)
+            avatarRingPaint.strokeWidth = (1.5f * density).coerceAtLeast(1.5f)
+
+            // 【第 47 轮】第一优先：直接复用宿主这一行里**已经加载好的头像 drawable**。
+            // 为什么这是最优解：宿主自己就是把头像画在这儿，它一定有正确的解码结果
+            // （包括 wcf:// 虚拟路径、加密缓存等我们摸不到的路径），我们只需把它画进
+            // 自己的圆里 —— 零文件 IO、零解码、零额外内存，也不存在「解码失败退化成首字圆」。
+            val host = hostRefDrawable()
+            if (host != null) {
+                canvas.save()
+                clipPath.reset()
+                clipPath.addCircle(cx, cy, r, Path.Direction.CW)
+                canvas.clipPath(clipPath)
+                dstRect.set(cx - r, cy - r, cx + r, cy + r)
+                host.setBounds(dstRect.left.toInt(), dstRect.top.toInt(), dstRect.right.toInt(), dstRect.bottom.toInt())
+                host.draw(canvas)
+                canvas.restore()
+                canvas.drawCircle(cx, cy, r, avatarRingPaint)
+                return
+            }
+
             val bmp = avatar
             if (bmp != null && !bmp.isRecycled) {
                 canvas.save()
@@ -434,6 +565,7 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
                 dstRect.set(cx - r, cy - r, cx + r, cy + r)
                 canvas.drawBitmap(bmp, srcRect, dstRect, avatarBitmapPaint)
                 canvas.restore()
+                canvas.drawCircle(cx, cy, r, avatarRingPaint)
             } else {
                 // 退化方案：首字彩色圆（零 IO、零解码，头像就绪后自动替换）
                 val seed = senderName.hashCode()
@@ -450,8 +582,32 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
                         avatarTextPaint,
                     )
                 }
+                canvas.drawCircle(cx, cy, r, avatarRingPaint)
             }
         }
+
+        /**
+         * 宿主行内头像 drawable 的**副本**（弱引用读取 + 只在宿主换了 drawable 时复制一次）。
+         *
+         * 为什么要副本：直接给宿主的 drawable `setBounds` 会改到宿主自己的绘制状态
+         * （宿主每帧也要用它画真实头像位），副本的 constantState 与原对象共享位图，
+         * 内存开销近乎为零。
+         */
+        private fun hostRefDrawable(): Drawable? {
+            val view = hostAvatarRef?.get() ?: return null
+            val src = runCatching { view.drawable }.getOrNull() ?: return null
+            // 明显是「空位图占位」的直接放弃，交给下一级兜底（首字圆），别画成一片空白。
+            if (src is android.graphics.drawable.BitmapDrawable && src.bitmap == null) return null
+            // 纯色占位（微信还没加载出头像时的灰底）没有复用价值，直接走下一级兜底。
+            if (src is android.graphics.drawable.ColorDrawable) return null
+            if (src === lastHostSource) return hostCopy
+            lastHostSource = src
+            hostCopy = runCatching { src.constantState?.newDrawable() }.getOrNull() ?: src
+            return hostCopy
+        }
+
+        private var lastHostSource: Drawable? = null
+        private var hostCopy: Drawable? = null
 
         /**
          * 宿主/框架可能调用 setAlpha 做淡入淡出 —— 这里**忽略**它：底色必须恒为完全不透明，
@@ -462,6 +618,89 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
         override fun setColorFilter(colorFilter: ColorFilter?) = Unit
 
         override fun getOpacity(): Int = PixelFormat.OPAQUE
+
+        /** 按 [ratio] 把 [overlay] 混进 [base]（用来生成同色系的渐变上下端，零资源）。 */
+        private fun blend(base: Int, overlay: Int, ratio: Float): Int {
+            val r = mix(Color.red(base), Color.red(overlay), ratio)
+            val g = mix(Color.green(base), Color.green(overlay), ratio)
+            val b = mix(Color.blue(base), Color.blue(overlay), ratio)
+            return Color.argb(255, r, g, b)
+        }
+
+        private fun mix(a: Int, b: Int, ratio: Float): Int =
+            (a + ((b - a) * ratio)).toInt().coerceIn(0, 255)
+    }
+
+    /**
+     * 【第 47 轮】在宿主行里定位**宿主自己的头像视图**。
+     *
+     * 用户实机反馈：遮盖层里群成员头像一直出不来，只能退化成首字彩圆。第 46 轮的
+     * 多来源解码（真实路径 / `wcf://` 虚拟路径）在这台机器上仍然全部失败
+     * （日志：`avatar: decode failed for 'wxid_…' (candidates=2)`）——因为新版微信的头像
+     * 走的是宿主内部的加密缓存与 VFS，外部代码很难稳定复现。
+     *
+     * 换个思路：宿主**自己**已经把这张头像画在这一行里了（用户看得到微信原生头像），
+     * 我们只需要把它的 drawable 拿过来画进遮盖层的圆里 —— 零 IO、零解码、恒定成本，
+     * 而且永远与微信显示的头像一致。
+     *
+     * 定位规则（只做一次，结果按行缓存）：行视图树里**最靠左**的那个「近似正方形且
+     * 边长在 24dp ~ 72dp」的 ImageView —— 微信聊天行的头像恰好满足这三个条件
+     * （气泡里的图片/表情要么更大要么明显偏右）。
+     */
+    private object MaskHostAvatar {
+
+        private val cache = Collections.synchronizedMap(WeakHashMap<View, ImageView>())
+
+        fun viewOf(row: View): ImageView? {
+            cache[row]?.let { if (it.isAttachedToWindow) return it }
+            val found = runCatching { locate(row) }.getOrNull() ?: return null
+            cache[row] = found
+            return found
+        }
+
+        private fun locate(row: View): ImageView? {
+            val density = row.resources.displayMetrics.density
+            val minPx = (24f * density).toInt()
+            val maxPx = (72f * density).toInt()
+            var best: ImageView? = null
+            var bestLeft = Int.MAX_VALUE
+            var depthGuard = 0
+
+            fun walk(view: View, depth: Int) {
+                if (depth > 8 || depthGuard > 120) return
+                depthGuard++
+                if (view is ImageView && view.visibility == View.VISIBLE) {
+                    val w = view.width
+                    val h = view.height
+                    val square = abs(w - h) <= (w / 2)
+                    if (w in minPx..maxPx && h in minPx..maxPx && square) {
+                        val left = runCatching { offsetLeft(row, view) }.getOrDefault(Int.MAX_VALUE)
+                        if (left < bestLeft) {
+                            bestLeft = left
+                            best = view
+                        }
+                    }
+                }
+                if (view is ViewGroup) {
+                    for (i in 0 until view.childCount) walk(view.getChildAt(i), depth + 1)
+                }
+            }
+
+            walk(row, 0)
+            return best
+        }
+
+        /** 目标视图相对行左边缘的横向偏移（拿不到就退化成「越深越靠右」，不影响正确性）。 */
+        private fun offsetLeft(row: View, target: View): Int {
+            var x = 0
+            var cur: View? = target
+            while (cur != null && cur !== row) {
+                x += cur.left
+                val parent = cur.parent
+                cur = if (parent is View) parent else null
+            }
+            return x
+        }
     }
 
     /**
@@ -580,6 +819,24 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
                     if (File(path).isFile) BitmapFactory.decodeFile(path)?.let { return it }
                 }
             }
+            // 【第 47 轮】虚拟路径 → 真实文件兜底：登录后的头像在磁盘上其实是
+            // `<dataDir>/avatar/<xx>/<yy>/user_<md5>.png`，而 img_flag 给的是
+            // `wcf://avatar/<xx>/<yy>/user_<md5>.png` —— 两者只差一个根目录。
+            // 宿主 VFS 那条路一旦解析不到方法（不同微信版本混淆差异），这里还能救回来。
+            val roots = avatarRoots()
+            if (roots.isNotEmpty()) {
+                candidates.forEach { candidate ->
+                    val rel = candidate.substringAfter("://", "").trimStart('/', '\\')
+                    if (rel.isEmpty()) return@forEach
+                    roots.forEach { root ->
+                        runCatching {
+                            val file = File(root, rel)
+                            if (file.isFile) BitmapFactory.decodeFile(file.absolutePath)?.let { return it }
+                        }
+                    }
+                }
+            }
+
             val read = vfsRead()
             if (read == null) {
                 WeLogger.d(TAG, "avatar: VFS reader unavailable for '$wxid'")
@@ -595,6 +852,16 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
             WeLogger.d(TAG, "avatar: decode failed for '$wxid' (candidates=${candidates.size})")
             return null
         }
+
+        /** 可能的头像根目录（宿主数据目录下的几个候选）。惰性求值，只算一次。 */
+        private val rootsLazy: List<File> by lazy {
+            runCatching {
+                val dataDir = HostInfo.application.filesDir.parentFile ?: return@lazy emptyList()
+                listOf(dataDir, File(dataDir, "MicroMsg"), File(dataDir, "files")).distinct()
+            }.getOrDefault(emptyList())
+        }
+
+        private fun avatarRoots(): List<File> = rootsLazy
 
         private fun scaleDown(src: Bitmap): Bitmap {
             val max = 96

@@ -248,6 +248,14 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
             getItemMethodByAdapter.putIfAbsent(adapter.javaClass, resolved) ?: resolved
         }
 
+    /** bind 日志限流：1 条/秒。 */
+    private companion object {
+        const val BIND_LOG_INTERVAL_MILLIS = 1000L
+    }
+
+    @Volatile private var lastBindLogAt = 0L
+    @Volatile private var bindLogSuppressed = 0
+
     fun getMsgInfoFromParam(param: HookParam): MessageInfo {
         val holder = param.thisObject!!
         val chattingDataAdapter = chattingDataAdapterFieldOf(holder).get(holder)!!
@@ -258,13 +266,24 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
         // 这里每条消息 bind 都会被调用（实测 1000+ 条/分钟），必须挂在「详细日志」开关后面：
         // 无条件打日志 = 滚动时每帧多一次字符串拼接 + 一次日志文件写入，是可见的掉帧来源。
         if (WeLogger.verboseEnabled) {
+            // 【第 47 轮】这条日志每条消息 bind 都会走到（实测 1000+ 条/分钟）。
+            // 详细日志打开时它是滚动掉帧 + 日志文件暴涨的主因之一，因此限流到 1 条/秒，
+            // 其余同类折叠计数（诊断所需的「bind 参数是否与 getItem 一致」结论不受影响）。
+            val now = System.currentTimeMillis()
+            if (now - lastBindLogAt < BIND_LOG_INTERVAL_MILLIS) {
+                bindLogSuppressed++
+                return@runCatching msgInfo
+            }
+            lastBindLogAt = now
             runCatching {
                 WeLogger.d(
                     TAG,
                     "bind args=${param.args.size} a0=${param.args[0]?.javaClass?.simpleName} " +
                         "a1=${param.args[1]?.javaClass?.simpleName} a2=${param.args[2]} " +
-                        "getItem talker=${msgInfo.talker} sender=${msgInfo.sender} type=${msgInfo.typeCode}"
+                        "getItem talker=${msgInfo.talker} sender=${msgInfo.sender} type=${msgInfo.typeCode}" +
+                        if (bindLogSuppressed > 0) " (已折叠 $bindLogSuppressed 条同类)" else ""
                 )
+                bindLogSuppressed = 0
             }
         }
         return msgInfo

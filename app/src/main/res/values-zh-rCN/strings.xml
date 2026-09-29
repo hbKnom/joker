@@ -4253,6 +4253,7 @@
     <string name="yanwai_recent">最近解读</string>
     <string name="yanwai_recent_empty">本次运行还没有解读记录。</string>
 
+    <string name="monet_badge_recolor">未读角标跟随莫奈色（关闭则保持微信红）</string>
     <string name="monet_error_colors">未读角标与错误色</string>
     <string name="monet_color_source_summary">跟随 Joker 主题（动态壁纸取色或种子颜色），可在 Joker 设置 → 主题中修改。</string>
     <string name="monet_resolve_title">正在分析微信资源</string>

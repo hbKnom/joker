@@ -36,6 +36,9 @@ object WeDatabaseListenerApi : ApiFeature() {
 
     private const val TAG = "WeDatabaseListenerApi"
 
+    /** 热路径日志折叠窗口：同签名 2 秒内只落一条。 */
+    private const val LOG_SIGNATURE_WINDOW_MILLIS = 2000L
+
     private val insertListeners = CopyOnWriteArrayList<IInsertListener>()
     private val updateListeners = CopyOnWriteArrayList<IUpdateListener>()
     private val queryListeners = CopyOnWriteArrayList<IQueryListener>()
@@ -84,6 +87,10 @@ object WeDatabaseListenerApi : ApiFeature() {
         }.joinToString(", ")
     }
 
+    /** 同一签名（方法 + 表 + SQL 前缀）在窗口内只落一条日志。 */
+    private val logSignatures = HashMap<String, Long>()
+    private val logSuppressed = java.util.concurrent.atomic.AtomicLong()
+
     private fun logWithStack(
         methodName: String,
         table: String,
@@ -96,11 +103,36 @@ object WeDatabaseListenerApi : ApiFeature() {
         // [WeLogger.verboseEnabled]（开关变化后再开微信生效），省掉每次一次 SQLite 读。
         if (!WeLogger.verboseEnabled) return
 
-        val argsInfo = formatArgs(args)
-        val resultStr = if (result != null) ", result=$result" else ""
-        val stackStr = ", stack=${WeLogger.currentStackTrace}"
+        // 【第 47 轮修卡顿 + 修日志噪音】本函数挂在宿主 rawQuery / update / insert 的
+        // **每一次调用**上，旧实现每次都做两件昂贵的事：
+        //   ① `WeLogger.currentStackTrace` —— new 出整个 StackTraceElement 数组再拼字符串；
+        //   ② 把上千字符的 ContentValues dump 分块写盘。
+        // 实机日志（用户开「详细日志 + 宿主日志转发」抓出来的那份）15 分钟就滚出
+        // 3000+ 行，7 个文件打满 28MB —— 既是卡顿来源，也是「日志里到处是错」的观感来源。
+        // 现在：同签名（方法+表+SQL 前缀）在 [LOG_SIGNATURE_WINDOW_MILLIS] 内只记一条，
+        // 且**只有该签名第一次出现时**才附带调用栈 —— 定位调用方够用，成本恒定。
+        val sql = (args.getOrNull(0) as? String)?.take(40)
+        val signature = "$methodName|$table|$sql"
+        val now = System.currentTimeMillis()
+        val last = logSignatures[signature]
+        if (last != null && now - last < LOG_SIGNATURE_WINDOW_MILLIS) {
+            logSuppressed.incrementAndGet()
+            return
+        }
+        val firstSight = last == null
+        if (logSignatures.size > 512) logSignatures.clear()   // 兜底：绝不无界增长
+        logSignatures[signature] = now
 
-        WeLogger.logChunkedD(TAG, "[$methodName] table=$table$resultStr, args=[$argsInfo]$stackStr")
+        val argsInfo = if (firstSight) formatArgs(args).take(600) else formatArgs(args).take(200)
+        val resultStr = if (result != null) ", result=$result" else ""
+        val stackStr = if (firstSight) ", stack=${WeLogger.currentStackTrace}" else ""
+        val skipped = logSuppressed.getAndSet(0)
+
+        WeLogger.logChunkedD(
+            TAG,
+            "[$methodName] table=$table$resultStr, args=[$argsInfo]$stackStr" +
+                if (skipped > 0) " (近窗口内已折叠 $skipped 条同类日志)" else ""
+        )
     }
 
     // ==================== Insert Hook ====================

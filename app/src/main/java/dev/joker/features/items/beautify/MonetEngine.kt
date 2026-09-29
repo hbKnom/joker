@@ -65,6 +65,7 @@ import dev.joker.utils.monet.MonetBubbleStyle
 import dev.joker.utils.monet.MonetColors
 import dev.joker.utils.monet.MonetDexEvidenceCollector
 import dev.joker.utils.monet.MonetDexEvidenceProvider
+import dev.joker.utils.monet.MonetBadgeRecolor
 import dev.joker.utils.monet.MonetResourceKey
 import dev.joker.utils.monet.MonetResourceValue
 import dev.joker.utils.monet.MonetResourceResolver
@@ -184,6 +185,15 @@ object MonetEngine : ClickableFeature() {
     const val KEY_BUBBLE_STYLE = "monet_bubble_style"
     const val KEY_MULTI_SCENE_CORNERS = "monet_multi_scene_corners"
     const val KEY_ERROR_COLORS = "monet_error_colors"
+
+    /**
+     * 【第 47 轮】「未读角标跟随莫奈色」——默认**关**（宿主红点保持微信原生红）。
+     *
+     * 第 46 轮实机反馈：打开后微信里所有实心圆点消失（会话未读角标、聊天内语音未读点、
+     * 朋友圈红点）。原因是自动取色只能按「值 == 品牌红」在宿主资源表里全局改写颜色条目，
+     * 而品牌红被几十处 UI 复用，命中哪一条不可控。默认关 = 一条宿主资源都不碰。
+     */
+    var badgeRecolor: Boolean by prefOption(MonetBadgeRecolor.KEY_ENABLED, false)
 
     private var bubbleStyleName by prefOption(KEY_BUBBLE_STYLE, MonetBubbleStyle.MODERN.name)
     private var multiSceneCornersPref by prefOption(KEY_MULTI_SCENE_CORNERS, false)
@@ -1447,6 +1457,10 @@ object MonetEngine : ClickableFeature() {
                     }
                     ToggleRow(stringResource(R.string.monet_error_colors), MonetEngine.errorColors) {
                         MonetEngine.errorColors = it
+                    }
+
+                    ToggleRow(stringResource(R.string.monet_badge_recolor), MonetEngine.badgeRecolor) {
+                        MonetEngine.badgeRecolor = it
                     }
 
                     Spacer(Modifier.height(8.dp))

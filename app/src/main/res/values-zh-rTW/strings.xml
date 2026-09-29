@@ -4185,6 +4185,7 @@
     <string name="yanwai_recent">最近解讀</string>
     <string name="yanwai_recent_empty">本次運行還沒有解讀記錄。</string>
 
+    <string name="monet_badge_recolor">未讀角標跟隨莫奈色（關閉則保持微信紅）</string>
     <string name="monet_error_colors">未讀角標與錯誤色</string>
     <string name="monet_color_source_summary">跟隨 Joker 主題（動態壁紙取色或種子顏色），可在 Joker 設定 → 主題中修改。</string>
     <string name="monet_resolve_title">正在分析微信資源</string>
