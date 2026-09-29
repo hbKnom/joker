@@ -4263,4 +4263,40 @@
     <string name="custom_conv_priority_low">低</string>
     <string name="custom_conv_priority_default">預設</string>
     <string name="custom_conv_priority_high">高</string>
+
+    <string name="chat_auto_reply_ai_provider">AI 供應商 / 模型</string>
+    <string name="chat_auto_reply_ai_provider_hint">直接選「聊天分析 → AI 模型」裡已設定的項目；切換它就等於切換模型供應商。</string>
+    <string name="chat_auto_reply_ai_follow_chat_analysis">跟隨聊天分析目前模型</string>
+    <string name="chat_auto_reply_ai_new_provider">＋ 新增模型供應商</string>
+    <string name="chat_auto_reply_ai_default_provider_name">新供應商</string>
+    <string name="chat_auto_reply_ai_new_provider_hint">填寫名稱 / Base URL / API Key / 模型後儲存；也可以先「取得模型清單」從供應商線上取回全部模型再選。</string>
+    <string name="chat_auto_reply_ai_field_name">名稱</string>
+    <string name="chat_auto_reply_ai_field_base_url">Base URL</string>
+    <string name="chat_auto_reply_ai_field_api_key">API Key</string>
+    <string name="chat_auto_reply_ai_field_model">模型</string>
+    <string name="chat_auto_reply_ai_fetch_models">取得模型清單</string>
+    <string name="chat_auto_reply_ai_model_list">供應商模型（共 %1$d 個）</string>
+    <string name="chat_auto_reply_ai_test_model">測試選取模型</string>
+    <string name="chat_auto_reply_ai_busy">處理中…</string>
+    <string name="chat_auto_reply_ai_fetch_empty">供應商沒有回傳任何模型</string>
+    <string name="chat_auto_reply_ai_fetch_ok">已取得 %1$d 個模型</string>
+    <string name="chat_auto_reply_ai_fetch_fail">取得失敗：%1$s</string>
+    <string name="chat_auto_reply_ai_test_ok">測試通過，已填入：%1$s</string>
+    <string name="chat_auto_reply_ai_test_fail">測試失敗：%1$s</string>
+    <string name="chat_auto_reply_ai_filled">已選取模型：%1$s</string>
+    <string name="chat_auto_reply_ai_save_provider">儲存供應商</string>
+    <string name="chat_auto_reply_ai_saved_provider">已儲存供應商：%1$s</string>
+    <string name="chat_auto_reply_ai_actions">取得 / 測試</string>
+    <string name="chat_auto_reply_ai_pick_new_provider_hint">還沒有可用模型 —— 請在上方選「＋ 新增模型供應商」，或到「聊天分析 → AI 模型」設定。</string>
+    <string name="chat_auto_reply_ai_error_no_model">請先設定 AI 模型（聊天分析 → AI 模型）</string>
+    <string name="chat_auto_reply_ai_context_turns">AI 上下文輪數（0–30）</string>
+    <string name="chat_auto_reply_ai_context_turns_hint">把該會話最近 N 輪對話一併提供給模型，回覆才貼合上下文。0 = 只送目前這則訊息。</string>
+    <string name="chat_auto_reply_ai_max_chars">回覆長度上限（字元）</string>
+    <string name="chat_auto_reply_ai_max_chars_hint">超過上限會截斷，避免長篇大論式的生硬回覆。</string>
+    <string name="chat_auto_reply_ai_avoid_repeat">避免重複上一則回覆</string>
+    <string name="chat_auto_reply_ai_avoid_repeat_hint">產生的回覆與自己上一則完全相同則丟棄，避免跳針。</string>
+
+    <string name="custom_notify_mentions_only_desc">只有被 @ 時才提醒，其餘訊息一律靜音。</string>
+    <string name="custom_notify_dnd_silent">勿擾會話直接靜音</string>
+    <string name="custom_notify_dnd_silent_desc">預設關閉：微信本身已會靜音勿擾會話、並保留「@我」提醒。開啟後本功能會把這類通知一併丟棄。</string>
 </resources>

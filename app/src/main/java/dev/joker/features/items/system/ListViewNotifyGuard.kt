@@ -50,21 +50,51 @@ object ListViewNotifyGuard : SwitchFeature() {
 
     private const val TAG = "ListViewNotifyGuard"
 
-    /** `AbsListView.mItemCount`：声明在父类上，直接按 `ListView` 找会抛 NoSuchField */
+    /** `AdapterView.mItemCount`：沿父类链找到的声明处字段。 */
     @Volatile
     private var itemCountField: java.lang.reflect.Field? = null
+
+    /**
+     * 沿父类链找 `mItemCount` 的**声明处**。
+     *
+     * 【Round43 实机修复】旧实现写的是 `AbsListView::class.java.getDeclaredField("mItemCount")`，
+     * 而 `getDeclaredField` **只查本类声明的成员、不查父类**；这个字段实际声明在
+     * `android.widget.AdapterView`（package-private，配合 `getCount()` 使用），
+     * 于是每次都在这里抛 `NoSuchFieldException` —— 实机日志里那条
+     * `AbsListView.mItemCount not found, guard disabled` 就是把整个防护关掉的元凶。
+     *
+     * 现在逐级向上找，命中处即为声明类；同时按级 `setAccessible(true)`，
+     * 顺带绕开「按非 SDK 类名签名直接取成员」在部分 ROM 上被拦成 `NoSuchFieldException` 的情况。
+     */
+    private fun findItemCountField(): java.lang.reflect.Field? {
+        var cls: Class<*>? = AbsListView::class.java
+        while (cls != null && cls != Any::class.java) {
+            val found = runCatching { cls.getDeclaredField("mItemCount") }.getOrNull()
+            if (found != null) {
+                runCatching { found.isAccessible = true }
+                return found
+            }
+            cls = cls.superclass
+        }
+        return null
+    }
 
     /** 只在第一次成功纠正时打一条日志，之后静默 —— 这是每帧都可能命中的热路径 */
     @Volatile
     private var loggedFirstResync = false
 
     override fun onEnable() {
-        val field = runCatching {
-            AbsListView::class.java.getDeclaredField("mItemCount").apply { isAccessible = true }
-        }.onFailure {
-            WeLogger.e(TAG, "AbsListView.mItemCount not found, guard disabled", it)
-        }.getOrNull() ?: return
+        val field = findItemCountField()
+        if (field == null) {
+            // 不再只说一句 "not found" 就静默禁用：把查找过的类名打出来，下次能从日志直接定位。
+            WeLogger.e(
+                TAG,
+                "mItemCount not found on AbsListView/AdapterView chain, guard disabled",
+            )
+            return
+        }
         itemCountField = field
+        WeLogger.i(TAG, "mItemCount resolved on ${field.declaringClass.name}")
 
         runCatching {
             ListView::class.reflekt()

@@ -293,7 +293,8 @@ object CustomConversationNotifications : ClickableFeature(), IResolveDex {
             }
 
             AlertDialogContent(
-                title = { Text(wxId) },
+                    textScrolls = true,
+                    title = { Text(wxId) },
                 text = {
                     SegmentedColumn {
                         item(key = "sound") {

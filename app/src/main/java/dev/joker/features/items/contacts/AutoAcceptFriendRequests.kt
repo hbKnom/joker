@@ -132,6 +132,14 @@ object AutoAcceptFriendRequests : ClickableFeature() {
     /** 打招呼延迟，毫秒。 */
     internal var autoAcceptGreetDelayMs: Long by prefOption("auto_accept_greet_delay_ms", 0L)
 
+    /**
+     * 【Round43】申请里没有 ticket 时，是否跳过而不尝试通过。
+     *
+     * 默认 false = **尝试通过**。旧实现遇到无 ticket 直接放弃，而不少版本的申请
+     * 并不带 ticket（或字段名不同），表现就是「功能开了却从来不通过」。
+     */
+    internal var autoAcceptRequireTicket: Boolean by prefOption("auto_accept_require_ticket", false)
+
     /** 每个申请人只自动处理一次的护栏（防重复插入触发重复通过）。 */
     internal val handledApplicants = HashSet<String>()
 
@@ -175,6 +183,65 @@ object AutoAcceptFriendRequests : ClickableFeature() {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    //  运行期自证（Round43 新增）
+    //
+    //  用户实机反馈「开了功能配置完依旧还是不生效，无法使用」。本功能此前在
+    //  日志里**一条输出都没有**（连「收到好友申请」都没有），用户无法判断到底是
+    //  「没人加我」还是「监听根本没挂上」还是「type 码不对」。这里补三样：
+    //    ① 事件计数：解析到多少条申请、真正通过多少条、失败多少条；
+    //    ② 最近 5 条明细（wxid / ticket 有无 / 结果）；
+    //    ③ message 表插入 **type 码 TOP5 统计** —— 下一轮日志就能直接告出
+    //       好友申请在本机微信版本里到底是哪个 type（旧实现硬编码 37，如果
+    //       实际不是 37，功能就永远静默）。
+    // ═══════════════════════════════════════════════════════════════
+
+    /** 解析到的好友申请条数。 */
+    internal val seenCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** 真正通过条数。 */
+    internal val acceptedCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** 处理失败 / 缺信息条数。 */
+    internal val failedCount = java.util.concurrent.atomic.AtomicInteger(0)
+
+    private val recentEvents = ArrayDeque<String>()
+
+    private val insertTypeStats = HashMap<Int, Int>()
+
+    internal fun recordEvent(line: String) {
+        synchronized(recentEvents) {
+            recentEvents.addFirst(line)
+            while (recentEvents.size > 5) recentEvents.removeLast()
+        }
+    }
+
+    internal fun recentEventLines(): List<String> = synchronized(recentEvents) { recentEvents.toList() }
+
+    /** 记一次 message 表插入的 type 码（供诊断展示）。 */
+    internal fun recordInsertType(type: Int) {
+        synchronized(insertTypeStats) {
+            insertTypeStats[type] = (insertTypeStats[type] ?: 0) + 1
+        }
+    }
+
+    /** 插入 type 码统计（按次数倒序）。 */
+    internal fun insertTypeLines(): List<String> = synchronized(insertTypeStats) {
+        insertTypeStats.entries
+            .sortedByDescending { it.value }
+            .take(5)
+            .map { (type, count) -> "type=$type ×$count" }
+    }
+
+    internal fun resetDiagnostics() {
+        seenCount.set(0)
+        acceptedCount.set(0)
+        failedCount.set(0)
+        synchronized(recentEvents) { recentEvents.clear() }
+        synchronized(insertTypeStats) { insertTypeStats.clear() }
+        synchronized(handledApplicants) { handledApplicants.clear() }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     //  配置界面（Round41 新增）
     //
     //  用户实机反馈「开了开关却没有地方配置、无法验证生效」：本类原来只是
@@ -193,7 +260,8 @@ object AutoAcceptFriendRequests : ClickableFeature() {
             var greetDelayMs by remember { mutableStateOf(autoAcceptGreetDelayMs.toString()) }
 
             AlertDialogContent(
-                title = { Text(technicalId) },
+                    textScrolls = true,
+                    title = { Text(technicalId) },
                 text = {
                     SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
                         item(key = "auto_accept") {
@@ -262,6 +330,52 @@ object AutoAcceptFriendRequests : ClickableFeature() {
                                     singleLine = true,
                                 )
                             }
+                        }
+                        // 【Round43】无 ticket 也尝试通过 / 运行状态自证
+                        item(key = "require_ticket") {
+                            var requireTicket by remember { mutableStateOf(autoAcceptRequireTicket) }
+                            SwitchWidget(
+                                iconPlaceholder = false,
+                                title = "无 ticket 时跳过",
+                                description = "默认关：申请里没有 ticket 也照样尝试通过" +
+                                    "（wxid 已唯一确定申请人，失败只会被服务端拒绝，不会误通过他人）。" +
+                                    "打开后则严格按旧行为，缺 ticket 只记录。",
+                                checked = requireTicket,
+                                onCheckedChange = {
+                                    requireTicket = it
+                                    autoAcceptRequireTicket = it
+                                },
+                            )
+                        }
+                        item(key = "diag") {
+                            val seen = AutoAcceptFriendRequests.seenCount.get()
+                            val accepted = AutoAcceptFriendRequests.acceptedCount.get()
+                            val failed = AutoAcceptFriendRequests.failedCount.get()
+                            val events = AutoAcceptFriendRequests.recentEventLines()
+                            val types = AutoAcceptFriendRequests.insertTypeLines()
+                            BaseWidget(
+                                iconPlaceholder = false,
+                                title = "运行状态：解析 $seen · 通过 $accepted · 失败 $failed",
+                                description = buildString {
+                                    if (events.isEmpty()) {
+                                        append("监听已挂载，暂无事件。让对方发一次好友申请，命中即会出现在这里。")
+                                    } else {
+                                        append(events.joinToString("\n"))
+                                    }
+                                    if (types.isNotEmpty()) {
+                                        append("\n消息表插入类型：")
+                                        append(types.joinToString(" "))
+                                    }
+                                },
+                                onClick = { AutoAcceptFriendRequests.resetDiagnostics() },
+                                trailingContent = {
+                                    Text(
+                                        text = "重置",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                },
+                            )
                         }
                         item(key = "hint") {
                             Text(
@@ -362,11 +476,17 @@ object AutoAcceptFriendRequests : ClickableFeature() {
                     (if (request.ticket.isNullOrEmpty()) "（无 ticket，仅记录）" else "") +
                     "（自动通过未开启，当前仅记录）",
             )
+            recordEvent("仅记录（未开启自动通过） · ${request.wxid}")
             return
         }
 
-        if (request.ticket.isNullOrEmpty()) {
+        // 【Round43】ticket 缺失时不再直接放弃：wxid 已经唯一确定申请人，
+        // 尝试通过最多被服务端拒绝（不会误通过别人），失败只记一次日志。
+        // 想恢复旧的「无 ticket 就不动手」行为，把「无 ticket 也尝试通过」关掉即可。
+        if (request.ticket.isNullOrEmpty() && autoAcceptRequireTicket) {
             WeLogger.w(TAG, "通过好友申请失败: ticket 为空 wxid=${request.wxid}（仅记录）")
+            failedCount.incrementAndGet()
+            recordEvent("缺 ticket 已跳过 · ${request.wxid}")
             return
         }
 
@@ -374,7 +494,11 @@ object AutoAcceptFriendRequests : ClickableFeature() {
         executor.schedule(
             {
                 runCatching { accept(request) }
-                    .onFailure { WeLogger.e(TAG, "accept ${request.wxid} failed", it) }
+                    .onFailure {
+                        failedCount.incrementAndGet()
+                        recordEvent("通过失败 · ${request.wxid} · ${it.javaClass.simpleName}")
+                        WeLogger.e(TAG, "accept ${request.wxid} failed", it)
+                    }
             },
             delay,
             TimeUnit.MILLISECONDS,
@@ -383,8 +507,10 @@ object AutoAcceptFriendRequests : ClickableFeature() {
 
     /** 真正通过：调用协议层 verifyUser。 */
     private fun accept(request: FriendRequest) {
-        val ticket = request.ticket ?: return
+        val ticket = request.ticket.orEmpty()
         WeContactApi.verifyUser(request.wxid, ticket, request.scene, 0)
+        acceptedCount.incrementAndGet()
+        recordEvent("已通过 · ${request.wxid} · scene=${request.scene}")
         WeLogger.i(TAG, "已通过好友申请：wxid=${request.wxid} scene=${request.scene}")
         onAccepted(request)
     }
@@ -462,7 +588,21 @@ internal val autoAcceptFriendRequestsInsertListener = WeDatabaseListenerApi.IIns
     if (table != "message") return@IInsertListener
 
     val type = runCatching { values.getAsInteger("type") }.getOrNull() ?: return@IInsertListener
-    if (type != MessageType.FRIEND_VERIFY.code) return@IInsertListener
+
+    // 【Round43】先把「本机微信 message 表到底插入哪些 type」记下来 ——
+    // 旧实现硬编码 type=37（FRIEND_VERIFY），一旦本机版本的申请不是 37，
+    // 整个功能就会静默失效，而日志里连一行都不会有，无从排查。
+    runCatching { AutoAcceptFriendRequests.recordInsertType(type) }
+
+    val content = runCatching { values.getAsString("content") }.getOrNull()
+
+    // 触发条件放宽：type 命中 37，**或者**正文出现好友申请特征串
+    // （不同微信版本 / 不同来源会把申请写成 type=10000 的 sysmsg 或其它码）。
+    val looksLikeVerify = type == MessageType.FRIEND_VERIFY.code ||
+        (content != null && content.contains("<verify", ignoreCase = true)) ||
+        (content != null && content.contains("verifyticket", ignoreCase = true)) ||
+        (content != null && content.contains("encryptusername", ignoreCase = true))
+    if (!looksLikeVerify) return@IInsertListener
 
     val talker = runCatching { values.getAsString("talker") }.getOrNull()?.takeIf { it.isNotEmpty() }
         ?: return@IInsertListener
@@ -473,11 +613,25 @@ internal val autoAcceptFriendRequestsInsertListener = WeDatabaseListenerApi.IIns
     }
     if (!firstTime) return@IInsertListener
 
-    val content = runCatching { values.getAsString("content") }.getOrNull()
     val request = runCatching {
         AutoAcceptFriendRequests.parseFriendRequest(content, talker)
-    }.getOrNull() ?: return@IInsertListener
+    }.getOrNull() ?: run {
+        AutoAcceptFriendRequests.failedCount.incrementAndGet()
+        AutoAcceptFriendRequests.recordEvent("解析失败 · talker=$talker · type=$type")
+        return@IInsertListener
+    }
+
+    AutoAcceptFriendRequests.seenCount.incrementAndGet()
+    WeLogger.i(
+        "AutoAcceptFriendRequests",
+        "收到好友申请：type=$type talker=$talker " +
+            "ticket=${if (request.ticket.isNullOrEmpty()) "无" else "有"} scene=${request.scene}",
+    )
 
     runCatching { AutoAcceptFriendRequests.handleRequest(request) }
-        .onFailure { WeLogger.w("AutoAcceptFriendRequests", "handle friend request failed", it) }
+        .onFailure {
+            AutoAcceptFriendRequests.failedCount.incrementAndGet()
+            AutoAcceptFriendRequests.recordEvent("处理异常 · ${request.wxid} · ${it.javaClass.simpleName}")
+            WeLogger.w("AutoAcceptFriendRequests", "handle friend request failed", it)
+        }
 }

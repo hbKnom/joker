@@ -4258,4 +4258,40 @@
     <string name="custom_conv_priority_low">Low</string>
     <string name="custom_conv_priority_default">Default</string>
     <string name="custom_conv_priority_high">High</string>
+
+    <string name="chat_auto_reply_ai_provider">AI provider / model</string>
+    <string name="chat_auto_reply_ai_provider_hint">Pick any model already configured in Chat analysis → AI model. Switching it switches the provider.</string>
+    <string name="chat_auto_reply_ai_follow_chat_analysis">Follow Chat analysis selection</string>
+    <string name="chat_auto_reply_ai_new_provider">＋ New provider</string>
+    <string name="chat_auto_reply_ai_default_provider_name">New provider</string>
+    <string name="chat_auto_reply_ai_new_provider_hint">Fill in name / Base URL / API Key / model and save. You can fetch the model list from the provider first.</string>
+    <string name="chat_auto_reply_ai_field_name">Name</string>
+    <string name="chat_auto_reply_ai_field_base_url">Base URL</string>
+    <string name="chat_auto_reply_ai_field_api_key">API Key</string>
+    <string name="chat_auto_reply_ai_field_model">Model</string>
+    <string name="chat_auto_reply_ai_fetch_models">Fetch models</string>
+    <string name="chat_auto_reply_ai_model_list">Provider models (%1$d)</string>
+    <string name="chat_auto_reply_ai_test_model">Test model</string>
+    <string name="chat_auto_reply_ai_busy">Working…</string>
+    <string name="chat_auto_reply_ai_fetch_empty">Provider returned no model</string>
+    <string name="chat_auto_reply_ai_fetch_ok">Fetched %1$d models</string>
+    <string name="chat_auto_reply_ai_fetch_fail">Fetch failed: %1$s</string>
+    <string name="chat_auto_reply_ai_test_ok">Test passed, saved: %1$s</string>
+    <string name="chat_auto_reply_ai_test_fail">Test failed: %1$s</string>
+    <string name="chat_auto_reply_ai_filled">Selected model: %1$s</string>
+    <string name="chat_auto_reply_ai_save_provider">Save provider</string>
+    <string name="chat_auto_reply_ai_saved_provider">Provider saved: %1$s</string>
+    <string name="chat_auto_reply_ai_actions">Fetch / test</string>
+    <string name="chat_auto_reply_ai_pick_new_provider_hint">No usable model yet — choose ＋ New provider above, or configure one in Chat analysis → AI model.</string>
+    <string name="chat_auto_reply_ai_error_no_model">Configure an AI model first (Chat analysis → AI model)</string>
+    <string name="chat_auto_reply_ai_context_turns">AI context turns (0-30)</string>
+    <string name="chat_auto_reply_ai_context_turns_hint">Send the last N turns of this conversation together with the new message so replies fit the context. 0 = only the new message.</string>
+    <string name="chat_auto_reply_ai_max_chars">Reply length limit (chars)</string>
+    <string name="chat_auto_reply_ai_max_chars_hint">Replies longer than this are trimmed, keeping them chat-natural.</string>
+    <string name="chat_auto_reply_ai_avoid_repeat">Avoid repeating last reply</string>
+    <string name="chat_auto_reply_ai_avoid_repeat_hint">Discard a generated reply identical to your previous one.</string>
+
+    <string name="custom_notify_mentions_only_desc">Notify only for mentions; other messages stay silent.</string>
+    <string name="custom_notify_dnd_silent">Silence muted chats entirely</string>
+    <string name="custom_notify_dnd_silent_desc">Off by default: WeChat already silences muted chats and keeps @-me alerts. Turn this on to drop those notifications entirely.</string>
 </resources>

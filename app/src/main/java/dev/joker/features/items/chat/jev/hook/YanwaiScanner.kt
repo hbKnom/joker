@@ -381,8 +381,11 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
             if (keep) {
                 scheduleTick()
                 tickCount++
-                // 有未结清的行时，顺手周期性补扫一次（抓没有绑定回调的漏网消息）
-                if (tickCount % RESCAN_EVERY_TICKS == 0) rescan()
+                // 有未结清的行时，顺手周期性补扫一次（抓没有绑定回调的漏网消息）。
+                // 【Round43】滚动中不补扫：滑动帧里整屏重扫是纯浪费（行不停换绑、
+                // 快照下一帧就过期），而由此触发的卡片重建/重排全压在手指上 ——
+                // 用户反馈的「上下滑动聊天记录会自动刷新」就出在这。停住再扫。
+                if (tickCount % RESCAN_EVERY_TICKS == 0 && !YanwaiBubble.anyListScrolling()) rescan()
             }
     }
 

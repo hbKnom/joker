@@ -126,6 +126,19 @@ internal data class AutoReplyTask(
     val aiSystemPrompt: String = "",
     val aiTemperature: Double = 0.7,
     val aiMaxTokens: Int = 500,
+
+    /**
+     * 【Round43】AI 回复自然度扩展。
+     *
+     * 用户反馈：AI 回复「比较单调、功能单一」，希望更自然、上下文更正确。原实现只把**单条**
+     * 原消息丢给模型（无历史），模型无从判断语境，只能干巴巴回一句。这里补三件：
+     *  - [aiContextTurns]：把该会话最近 N 轮对话一并带上（0 = 只发单条，兼容旧行为）；
+     *  - [aiMaxChars]：单条回复字符上限，防「长篇大论式」不自然回复；
+     *  - [aiAvoidRepeat]：与「自己上一条发的内容」完全相同则丢弃/重试，避免复读机。
+     */
+    val aiContextTurns: Int = 6,
+    val aiMaxChars: Int = 200,
+    val aiAvoidRepeat: Boolean = true,
     /**
      * 【Round31】可选指定 AI 模型名（与 ChatAnalysisModelStore 的 name 字段对应）：
      *   - 空字符串 "" = 用 ChatAnalysisModelStore.selectedModel()（聊天分析选中的）
@@ -188,6 +201,7 @@ internal object AutoReplySettings {
     fun showMainDialog(context: Context) {
         showComposeDialog(context) {
             AlertDialogContent(
+                textScrolls = true,
                 title = { Text(stringResource(R.string.chat_auto_reply_title)) },
                 text = {
                     SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
@@ -239,6 +253,7 @@ internal object AutoReplySettings {
             val models = runCatching { ChatAnalysisModelStore.loadModels() }.getOrDefault(emptyList())
             val selected = runCatching { ChatAnalysisModelStore.selectedModel() }.getOrNull()
             AlertDialogContent(
+                textScrolls = true,
                 title = { Text("AI 自动回复") },
                 text = {
                     SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
@@ -283,6 +298,7 @@ internal object AutoReplySettings {
             val localizedContext by rememberUpdatedState(LocalJokerLocalizedContext.current)
 
             AlertDialogContent(
+                textScrolls = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight(),
@@ -393,6 +409,7 @@ internal object AutoReplySettings {
             val groupGlobalSettings = stringResource(R.string.chat_auto_reply_group_global_settings)
 
             AlertDialogContent(
+                textScrolls = true,
                 title = { Text(groupName) },
                 text = {
                     SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
@@ -516,6 +533,7 @@ internal object AutoReplySettings {
             val localizedContext by rememberUpdatedState(LocalJokerLocalizedContext.current)
 
             AlertDialogContent(
+                textScrolls = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight(),
@@ -569,6 +587,7 @@ internal object AutoReplySettings {
             val validationError = validateTask(draft)
 
             AlertDialogContent(
+                textScrolls = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight(),
@@ -872,18 +891,10 @@ internal object AutoReplySettings {
                     onCheckedChange = { onChange(task.copy(useAi = it)) },
                 )
             }
-            // 【Round31】可选 AI 模型名（覆盖聊天分析的 selected）
-            item(key = "ai_model_name") {
-                BaseSupportingWidget(
-                    title = stringResource(R.string.chat_auto_reply_ai_model_name),
-                    description = stringResource(R.string.chat_auto_reply_ai_model_name_hint),
-                ) {
-                    InlineTaskTextField(
-                        value = task.aiModelName,
-                        onValueChange = { onChange(task.copy(aiModelName = it)) },
-                    )
-                }
-            }
+            // 【Round43】AI 模型选择器（取代 Round31 的手输文本框）
+            // 用户反馈原话：「居然要手动输入模型，而不是自动获取所有并选择指定模型测试后填入，
+            // 同时无法变化模型提供商」。详见 AutoReplyAiModelPicker.kt。
+            AiModelPicker(task = task, onChange = onChange)
             // 当前 AI 模型提示
             val currentAiModel = ChatAnalysisModelStore.selectedModel()
             item(key = "ai_model_hint") {
@@ -924,6 +935,48 @@ internal object AutoReplySettings {
                             },
                         )
                     }
+                }
+                // 【Round43】上下文 / 长度 / 去重 —— 让回复「更自然、上下文更正确」
+                item(key = "ai_context_turns") {
+                    BaseSupportingWidget(
+                        title = stringResource(R.string.chat_auto_reply_ai_context_turns),
+                        description = stringResource(R.string.chat_auto_reply_ai_context_turns_hint),
+                    ) {
+                        InlineTaskTextField(
+                            value = task.aiContextTurns.toString(),
+                            keyboardType = KeyboardType.Number,
+                            onValueChange = { raw ->
+                                val digits = raw.filter(Char::isDigit).take(2)
+                                val parsed = digits.toIntOrNull()?.coerceIn(0, 30) ?: task.aiContextTurns
+                                onChange(task.copy(aiContextTurns = parsed))
+                            },
+                        )
+                    }
+                }
+                item(key = "ai_max_chars") {
+                    BaseSupportingWidget(
+                        title = stringResource(R.string.chat_auto_reply_ai_max_chars),
+                        description = stringResource(R.string.chat_auto_reply_ai_max_chars_hint),
+                    ) {
+                        InlineTaskTextField(
+                            value = task.aiMaxChars.toString(),
+                            keyboardType = KeyboardType.Number,
+                            onValueChange = { raw ->
+                                val digits = raw.filter(Char::isDigit).take(4)
+                                val parsed = digits.toIntOrNull()?.coerceIn(10, 2000) ?: task.aiMaxChars
+                                onChange(task.copy(aiMaxChars = parsed))
+                            },
+                        )
+                    }
+                }
+                item(key = "ai_avoid_repeat") {
+                    SwitchWidget(
+                        iconPlaceholder = false,
+                        title = stringResource(R.string.chat_auto_reply_ai_avoid_repeat),
+                        description = stringResource(R.string.chat_auto_reply_ai_avoid_repeat_hint),
+                        checked = task.aiAvoidRepeat,
+                        onCheckedChange = { onChange(task.copy(aiAvoidRepeat = it)) },
+                    )
                 }
             }
 
@@ -1162,18 +1215,36 @@ internal object AutoReplySettings {
                 }
             }
         }
-        when (task.reply.type) {
-            AutoReplyType.TEXT -> if (task.reply.text.isBlank()) {
-                return stringResource(R.string.chat_auto_reply_error_text_empty)
+        if (task.useAi) {
+            // 【Round43】开启「使用 AI 回复」后，回复内容由 AI 现场生成，
+            // 固定文本/媒体路径与语音时长都不再是必填项。
+            //
+            // 修的是用户实机截图里的死锁：只打开「使用 AI 回复」、固定文本留空时，
+            // 弹窗一直红字提示「文本回复内容不能为空」并且「确定」按钮变灰 ——
+            // AI 回复任务根本无法保存。此处只保留「必须有一个可用的 AI 模型」这一条硬校验。
+            val model = ChatAnalysisModelStore.selectedModel()
+                ?: ChatAnalysisModelStore.loadModels().firstOrNull()
+            val override = task.aiModelName.trim()
+                .takeIf { it.isNotBlank() }
+                ?.let { name -> ChatAnalysisModelStore.loadModels().firstOrNull { it.name == name } }
+            val effective = override ?: model
+            if (effective == null || effective.baseUrl.isBlank() || effective.model.isBlank()) {
+                return stringResource(R.string.chat_auto_reply_ai_error_no_model)
             }
-            AutoReplyType.IMAGE, AutoReplyType.VIDEO, AutoReplyType.VOICE -> if (task.reply.path.isBlank()) {
-                return stringResource(R.string.chat_auto_reply_error_path_empty)
+        } else {
+            when (task.reply.type) {
+                AutoReplyType.TEXT -> if (task.reply.text.isBlank()) {
+                    return stringResource(R.string.chat_auto_reply_error_text_empty)
+                }
+                AutoReplyType.IMAGE, AutoReplyType.VIDEO, AutoReplyType.VOICE -> if (task.reply.path.isBlank()) {
+                    return stringResource(R.string.chat_auto_reply_error_path_empty)
+                }
             }
-        }
-        if (task.reply.type == AutoReplyType.VOICE) {
-            val duration = task.reply.voiceDurationMs.toIntOrNull()
-            if (duration == null || duration < 1 || duration > 60000) {
-                return stringResource(R.string.chat_auto_reply_error_voice_duration)
+            if (task.reply.type == AutoReplyType.VOICE) {
+                val duration = task.reply.voiceDurationMs.toIntOrNull()
+                if (duration == null || duration < 1 || duration > 60000) {
+                    return stringResource(R.string.chat_auto_reply_error_voice_duration)
+                }
             }
         }
         val delay = task.delayMs.toLongOrNull()

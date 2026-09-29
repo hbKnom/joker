@@ -604,6 +604,22 @@ object YanwaiBubble {
      * @return 是否还有卡片需要继续跑兜底节拍 —— 扫描器据此决定要不要继续排下一拍，
      *         因此这里必须如实返回（宁可多跑几拍，也不要留下「既没画出来也没人管」的卡）。
      */
+    /**
+     * 当前是否有宿主列表正在滚动。
+     *
+     * 【Round43】给 [YanwaiScanner] 的**周期整屏重扫**做降频用。用户实机反馈：
+     * 「在聊天会话里面的上下滑动聊天记录会自动刷新」—— 这一条指的就是滚动帧里还在跑
+     * 整屏补扫：滑动中每一帧行都在换绑，扫出来的快照下一帧就过期（纯浪费），
+     * 而由此触发的卡片重建/重排又全部压在手指上。列表停着才补扫，一并解决
+     * 「滑动时自动刷新」与「渲染频繁」。
+     *
+     * 找不到列表（或宿主列表实现拿不到 scrollState）一律按「没在滚动」返回 —— 退化成
+     * 旧行为，宁可多扫一次，也绝不因为判定失败而让卡片不再更新。
+     */
+    fun anyListScrolling(): Boolean = runCatching {
+        layers.keys.any { scrollStateOf(it) != 0 }
+    }.getOrDefault(false)
+
     fun prune(): Boolean {
         for (row in cards.keys.toList()) {
             if (!row.isAttachedToWindow) clear(row)

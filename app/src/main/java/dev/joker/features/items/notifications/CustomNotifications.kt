@@ -192,6 +192,21 @@ object CustomNotifications : ClickableFeature(), IResolveDex {
     /** 提示音模式。存枚举名。 */
     internal var soundModeName: String by prefOption("custom_notify_sound", SoundMode.FOLLOW.name)
 
+    /**
+     * 【Round43】免打扰会话是否直接静默（连微信自己的静默通知都不要）。
+     *
+     * 默认 **false = 不接管**。旧实现在此处是默认接管的（`!ignoreWechatDnd` 时
+     * 只要 `isDnd(talker)` 为真就把通知整个丢掉），副作用是**把「免打扰群里 @我」
+     * 的提醒也一起吞了** —— 用户实机反馈「开了自定义通知之后有些消息的通知就不显示了」，
+     * 根因就在这里：微信自己已经会静默免打扰会话，并且保留了 @我 例外，
+     * 我们不应该抢在它前面一刀切。想要更激进的行为再手动打开本开关。
+     */
+    internal var dndSilent: Boolean by prefOption("custom_notify_dnd_silent", false)
+
+    /** @deprecated 语义已废弃（旧键一旦为 false 会误吞免打扰会话的 @我 提醒），改由 [dndSilent] 表达。 */
+    @Suppress("unused")
+    internal var ignoreWechatDnd: Boolean by prefOption("custom_notify_ignore_dnd", false)
+
     /** 振动模式。存枚举名。 */
     internal var vibrationModeName: String by prefOption("custom_notify_vibrate", VibrationMode.FOLLOW.name)
 
@@ -255,10 +270,20 @@ object CustomNotifications : ClickableFeature(), IResolveDex {
             suppressCurrent.remove()
         }
 
-        // ② 轻推送：只标记抑制意图，不改动原方法语义。
+        // ② 轻推送：【Round43】只在**真的命中规则**时才标记抑制意图。
+        //
+        //    旧实现是无条件 `suppressCurrent.set(true)` —— 而微信在后台收到新消息时走的正是
+        //    这条轻推送路径，于是「随便哪条通知」都会在 NotificationManager.notify 出口被丢掉。
+        //    用户看到的现象就是「开了自定义通知之后通知不显示了」，本轮反馈的根因之一。
+        //    现在：能从参数里认出会话 → 按规则判定；认不出来 → 一律不抑制（退回微信原生行为）。
         runCatching {
             methodNotifyForLightPush.hookBefore {
-                suppressCurrent.set(true)
+                val talker = args.firstOrNull { arg ->
+                    arg is String && arg.looksLikeNotificationTalker()
+                } as? String
+                suppressCurrent.set(
+                    talker != null && shouldSuppress(NotifyContext(talker, "")),
+                )
             }
         }.onFailure { WeLogger.w(TAG, "notifyForLightPush 委托不可用，轻推送过滤降级", it) }
 
@@ -320,11 +345,14 @@ object CustomNotifications : ClickableFeature(), IResolveDex {
             return true
         }
 
-        // 微信免打扰：用户未开启「忽略免打扰」时，尊重微信原有免打扰语义。
-        if (!ignoreWechatDnd) {
+        // 微信免打扰：【Round43】默认**不接管**。
+        // 微信自身已会静默免打扰会话，并保留「@我」例外；旧实现抢在它前面把通知整个丢掉，
+        // 副作用是连「免打扰群里 @我」的提醒也一起吞了（用户反馈「有些消息通知不显示」）。
+        // 只有用户显式打开「免打扰会话直接静默」才在这里兜一刀。
+        if (dndSilent) {
             val dnd = runCatching { WeConversationApi.isDnd(context.talker) }.getOrDefault(false)
             if (dnd) {
-                WeLogger.d(TAG, "会话处于免打扰：${context.talker}")
+                WeLogger.d(TAG, "免打扰会话直接静默：${context.talker}")
                 return true
             }
         }
@@ -387,6 +415,21 @@ object CustomNotifications : ClickableFeature(), IResolveDex {
     private fun isNotificationsEvolvedActive(): Boolean = runCatching {
         NotificationsEvolved.isEnabled
     }.getOrDefault(false)
+
+    /**
+     * 【Round43】轻推送参数里「像会话 id」的字符串。
+     *
+     * 只认强特征（`@chatroom` 结尾 / `wxid_` 开头 / `@openim` 等），
+     * 认不出来就当作没有会话 —— 宁可漏拦，也不能像旧实现那样无条件把通知丢掉。
+     */
+    private fun String.looksLikeNotificationTalker(): Boolean {
+        if (length !in 5..64) return false
+        if (startsWith("message_channel")) return false
+        return endsWith("@chatroom") ||
+            startsWith("wxid_") ||
+            endsWith("@openim") ||
+            (contains('@') && !contains(' '))
+    }
 
     // ═══════════════════════════════════════════════════════════════
     //  样式微调（只改可写字段，不重建 Notification）
@@ -475,7 +518,6 @@ object CustomNotifications : ClickableFeature(), IResolveDex {
     override fun onClick(context: ComponentActivity) {
         showComposeDialog(context) {
             var mentions by remember { mutableStateOf(mentionsOnly) }
-            var ignoreDnd by remember { mutableStateOf(ignoreWechatDnd) }
             var quickReply by remember { mutableStateOf(quickReplyEnabled) }
             var markRead by remember { mutableStateOf(markReadEnabled) }
             var mute by remember {
@@ -491,13 +533,15 @@ object CustomNotifications : ClickableFeature(), IResolveDex {
             }
 
             AlertDialogContent(
-                title = { Text(stringResource(R.string.feature_notifications_custom_notifications_name)) },
+                    textScrolls = true,
+                    title = { Text(stringResource(R.string.feature_notifications_custom_notifications_name)) },
                 text = {
                     SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
                         item(key = "mentions_only") {
                             SwitchWidget(
                                 iconPlaceholder = false,
                                 title = stringResource(R.string.custom_notify_mentions_only),
+                                description = stringResource(R.string.custom_notify_mentions_only_desc),
                                 checked = mentions,
                                 onCheckedChange = {
                                     mentions = it
@@ -505,14 +549,19 @@ object CustomNotifications : ClickableFeature(), IResolveDex {
                                 },
                             )
                         }
-                        item(key = "ignore_dnd") {
+                        // 【Round43】语义修正：旧开关「忽略微信免打扰」的实际效果是反的
+                        // （默认就会把免打扰会话的通知整个丢掉，连 @我 提醒一起吞）。
+                        // 现在换成显式的「免打扰会话直接静默」，默认关闭 = 完全不接管免打扰。
+                        item(key = "dnd_silent") {
+                            var dndSilentState by remember { mutableStateOf(dndSilent) }
                             SwitchWidget(
                                 iconPlaceholder = false,
-                                title = stringResource(R.string.custom_notify_ignore_dnd),
-                                checked = ignoreDnd,
+                                title = stringResource(R.string.custom_notify_dnd_silent),
+                                description = stringResource(R.string.custom_notify_dnd_silent_desc),
+                                checked = dndSilentState,
                                 onCheckedChange = {
-                                    ignoreDnd = it
-                                    ignoreWechatDnd = it
+                                    dndSilentState = it
+                                    dndSilent = it
                                 },
                             )
                         }

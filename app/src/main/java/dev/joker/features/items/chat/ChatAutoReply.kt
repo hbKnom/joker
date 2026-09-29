@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import dev.joker.R
+import dev.joker.features.api.core.WeDatabaseApi
 import dev.joker.features.api.core.WeDatabaseListenerApi
 import dev.joker.features.api.core.WeMessageApi
 import dev.joker.features.api.core.models.MessageInfo
@@ -212,30 +213,112 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
             return fallbackToFixedReply(task, talker)
         }
 
-        // 2) system prompt：用户自定义 > 默认 Hchat 风格提示
+        // 2) system prompt：用户自定义 > 默认自然聊天提示
+        // 【Round43】默认提示词升级：模型现在能看到会话上下文（见 buildUserPrompt），
+        // 因此提示词里明确要求「结合上下文、口语化、不重复、不暴露自己是 AI」。
         val sys = task.aiSystemPrompt.takeIf { it.isNotBlank() }
-            ?: buildDefaultSystemPrompt(talker)
-        val userPrompt = buildUserPrompt(content, talker)
+            ?: buildDefaultSystemPrompt(task, talker)
         val maxTokens = task.aiMaxTokens.coerceIn(64, 4096)
+
+        // 【Round43】带上该会话最近 N 轮对话 —— 这是「上下文更正确」的关键：
+        // 原实现只把当前这一条丢给模型，模型看不到上文，只能干巴巴回一句。
+        val history = runCatching { loadRecentContext(talker, task.aiContextTurns) }
+            .getOrDefault(emptyList())
+        val userPrompt = buildUserPrompt(content, talker, history)
 
         // 3) 调用 AI（非流式 plain，超时由 longClient 180s 控制）
         return try {
-            val text = ChatAnalysisAi.plain(config, sys, userPrompt)
+            val first = ChatAnalysisAi.plain(config, sys, userPrompt)
             if (gen != generation.get()) {
                 WeLogger.i(TAG, "AI reply completed but feature already disabled, skip send")
-                false
-            } else if (text.isNullOrBlank()) {
-                WeLogger.w(TAG, "AI reply empty: 降级为固定文本")
-                fallbackToFixedReply(task, talker)
-            } else {
-                val cleaned = text.trim().take(2000) // 截断保护：微信单条文本上限 2000 字符
-                WeMessageApi.sendText(talker, cleaned)
+                return false
             }
+            var cleaned = sanitizeReply(first, task.aiMaxChars)
+            if (cleaned.isBlank()) {
+                WeLogger.w(TAG, "AI reply empty: 降级为固定文本")
+                return fallbackToFixedReply(task, talker)
+            }
+
+            // 4)【Round43】去重：生成的回复与自己上一条完全相同 → 让模型换个说法再生成一次；
+            //    仍然相同则放弃本条（不发比复读更好），避免「复读机」观感。
+            if (task.aiAvoidRepeat && isSameAsLastOwnText(talker, cleaned)) {
+                val retry = runCatching {
+                    ChatAnalysisAi.plain(
+                        config,
+                        sys,
+                        userPrompt + "\n\n（注意：上一句和之前说过的一模一样了，请换一种说法，不要重复。）",
+                    )
+                }.getOrNull()
+                val second = sanitizeReply(retry, task.aiMaxChars)
+                if (second.isNotBlank() && !isSameAsLastOwnText(talker, second)) {
+                    cleaned = second
+                } else {
+                    WeLogger.i(TAG, "AI reply 与上一条重复，已放弃本条发送")
+                    return false
+                }
+            }
+            WeMessageApi.sendText(talker, cleaned)
         } catch (e: Throwable) {
             WeLogger.e(TAG, "AI reply failed: 降级为固定文本", e)
             fallbackToFixedReply(task, talker)
         }
     }
+
+    // ── 【Round43】AI 回复自然度：上下文 / 清洗 / 去重 ─────────────────
+
+    /**
+     * 读取该会话最近 [turns] 轮「文本」消息（按时间正序），喂给模型做上下文。
+     *
+     * 约束：
+     *   - 只取文本消息（语音/图片/系统消息对模型无意义，反而干扰）；
+     *   - 每条裁到 120 字符，整段最多 1200 字符，避免把 token 预算烧在历史上；
+     *   - 数据库访问包在 runCatching 里（拿不到历史 ≠ 回复失败，降级为无上下文）。
+     */
+    private fun loadRecentContext(talker: String, turns: Int): List<Pair<Boolean, String>> {
+        if (turns <= 0) return emptyList()
+        val limit = (turns + 1).coerceAtMost(31)
+        val rows = WeDatabaseApi.getMessages(talker, 1, limit)
+        if (rows.isEmpty()) return emptyList()
+        return rows.asReversed() // SQL 是倒序取最新，这里翻回时间正序
+            .filter { it.typeCode == MessageType.TEXT.code }
+            .map { it.isSend == 1 to plainTextOf(it.content, 120) }
+            .filter { (_, text) -> text.isNotBlank() }
+    }
+
+    /** 原始 content 可能是 XML（引用/链接/表情等），这里只抠出可读文本。 */
+    private fun plainTextOf(raw: String, limit: Int): String {
+        var t = raw
+        if (t.contains('<')) {
+            // 分享卡片/链接类消息把正文放在 <title> 里，优先取它；取不到就退回「剥标签」。
+            val title = Regex("<title>(.*?)</title>", RegexOption.DOT_MATCHES_ALL)
+                .find(t)?.groupValues?.getOrNull(1)
+            t = title ?: t.replace(Regex("<[^>]{1,200}>"), " ")
+        }
+        t = t.replace(Regex("\\s+"), " ").trim()
+        return if (t.length > limit) t.take(limit) + "…" else t
+    }
+
+    /** 生成结果清洗：去掉包裹引号/markdown/多余换行，并按任务配置截断。 */
+    private fun sanitizeReply(raw: String?, maxChars: Int): String {
+        var t = raw.orEmpty().trim()
+        if (t.isEmpty()) return ""
+        t = t.removePrefix("```").removeSuffix("```").trim()
+        t = t.replace(Regex("^[\"'「『]+"), "").replace(Regex("[\"'」』]+$"), "")
+        t = t.replace(Regex("\\s*\\n+\\s*"), " ")
+        t = t.replace(Regex("[ \t]{2,}"), " ")
+        t = t.trim()
+        val cap = maxChars.coerceIn(10, 2000)
+        if (t.length > cap) t = t.take(cap).trimEnd()
+        return t
+    }
+
+    /** 本条生成的文本是否与「自己最近发过的一条文本」完全相同。 */
+    private fun isSameAsLastOwnText(talker: String, text: String): Boolean = runCatching {
+        WeDatabaseApi.getMessages(talker, 1, 8)
+            .firstOrNull { it.isSend == 1 && it.typeCode == MessageType.TEXT.code }
+            ?.content
+            ?.trim() == text
+    }.getOrDefault(false)
 
     private fun fallbackToFixedReply(task: AutoReplyTask, talker: String): Boolean {
         val reply = task.reply
@@ -258,14 +341,48 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         }
     }
 
-    private fun buildDefaultSystemPrompt(talker: String): String =
-        "你是一个友好的聊天助手，正在微信中和对方对话。请用简短、自然、口语化的方式回复，" +
-            "1-3 句话以内，不要使用 markdown 标题/列表/代码块。"
+    private fun buildDefaultSystemPrompt(
+        @Suppress("UNUSED_PARAMETER") task: AutoReplyTask,
+        talker: String,
+    ): String {
+        val isGroup = talker.isGroupChatWxId
+        val identity = if (isGroup) {
+            "你在一个微信群聊里，以群成员口吻接话"
+        } else {
+            "你在和一个朋友一对一聊天"
+        }
+        return "你是一个真实的微信用户，$identity。回复要求：" +
+            "① 先读懂上面的对话上下文，接得上话、答得对题；" +
+            "② 口语化、短句，1-2 句，像朋友随手回的消息；" +
+            "③ 不要重复上一句说过的话，不要复述对方原文；" +
+            "④ 不要用 markdown（标题/列表/代码块/加粗），不要用书面语套话；" +
+            "⑤ 绝不要提到自己是 AI、模型或助手，也不要解释你在做什么。"
+    }
 
-    private fun buildUserPrompt(content: String, talker: String): String {
-        // 复用 ChatAutoReply.renderTemplate 的 {content}/{talker}/{name} 占位符
+    /**
+     * 【Round43】用户提示词：附带该会话最近若干轮对话。
+     *
+     * 格式刻意贴近人类阅读顺序（时间正序 + 「我/对方」标签），
+     * 让模型能直接判断「现在轮到谁、上文聊了什么」。
+     */
+    private fun buildUserPrompt(
+        content: String,
+        talker: String,
+        history: List<Pair<Boolean, String>>,
+    ): String {
         val user = sender(talker)
-        return "原消息：${content.trim()}\n\n会话：${talker}${if (user.isNotEmpty()) "（发送者：$user）" else ""}\n\n请回复："
+        val sb = StringBuilder()
+        if (history.isNotEmpty()) {
+            sb.append("最近对话（时间正序，「我」= 你自己）：\n")
+            history.forEach { (isSend, text) ->
+                sb.append(if (isSend) "我：" else "对方：").append(text).append('\n')
+            }
+            sb.append('\n')
+        }
+        sb.append("对方刚发来的新消息：").append(content.trim())
+        if (user.isNotEmpty() && talker.isGroupChatWxId) sb.append("（发送者：").append(user).append("）")
+        sb.append("\n\n请只输出你要回复的那一句话，不要任何前缀或解释。")
+        return sb.toString()
     }
 
     /**

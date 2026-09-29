@@ -67,8 +67,10 @@ import dev.joker.ui.content.m3.SegmentedColumn
 import dev.joker.ui.content.m3.SwitchWidget
 import dev.joker.ui.utils.showComposeDialog
 import dev.joker.utils.TargetProcess
+import dev.joker.features.api.core.WeConversationApi
 import dev.joker.utils.WeLogger
 import dev.joker.utils.android.showToast
+import dev.joker.utils.strings.isGroupChatWxId
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -103,31 +105,65 @@ object BlockMessages : ClickableFeature() {
      * @param sender 发送人 wxid（可能为空字符串）
      * @param content 消息内容
      */
-    fun shouldBlock(talker: String, sender: String, content: String): Boolean {
+    fun shouldBlock(talker: String, sender: String, content: String): Boolean =
+        matchReason(talker, sender, content) != null
+
+    /**
+     * 命中判定 + 命中原因（Round43 拆出来，配置页要显示「为什么拦了这条」）。
+     *
+     * @return null = 放行；否则返回中文原因标签。
+     */
+    fun matchReason(talker: String, sender: String, content: String): String? {
         val rules = BlockMessagesRules.current
         // 规则为空 = 放行
         if (rules.talkers.isEmpty() && rules.keywords.isEmpty() && rules.senderKeywords.isEmpty()) {
-            return false
+            return null
         }
 
         // 白名单模式：仅名单内的会话放行；talker 不在名单 = 屏蔽；keywords/senderKeywords 不参与。
         if (BlockMessagesWhitelistPrefs.useWhitelist) {
-            if (talker.isEmpty()) return true  // 无 talker 在白名单模式下默认屏蔽
-            return !rules.talkers.contains(talker)
+            if (talker.isEmpty()) return "白名单外"  // 无 talker 在白名单模式下默认屏蔽
+            return if (!rules.talkers.contains(talker)) "白名单外" else null
         }
 
         // 黑名单会话
-        if (talker.isNotEmpty() && rules.talkers.contains(talker)) return true
+        if (talker.isNotEmpty() && rules.talkers.contains(talker)) return "会话名单"
         // 发送人黑名单
         if (sender.isNotEmpty() && rules.senderKeywords.any { sender.contains(it, ignoreCase = true) }) {
-            return true
+            return "发送人"
         }
         // 关键词
         if (rules.keywords.isNotEmpty() && content.isNotEmpty()) {
             val lowered = content.lowercase()
-            if (rules.keywords.any { lowered.contains(it.lowercase()) }) return true
+            if (rules.keywords.any { lowered.contains(it.lowercase()) }) return "关键词"
         }
-        return false
+        return null
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  命中记录（Round43 新增：让「到底有没有生效」可见）
+    // ═══════════════════════════════════════════════════════════════
+    //
+    // 用户实机反馈「开了功能配置完依旧还是不生效，无法使用」——而日志里其实一直在拦。
+    // 问题出在「拦截完全不可见」：通知被吞掉之后用户没有任何反馈渠道，只能靠猜。
+    // 这里在内存里保留最近若干条命中记录（不进 DB、不做持久化，重启即清），
+    // 配置页顶部直接显示，用户发条测试消息就能立刻看到「已拦截 N 条」。
+    private const val MAX_HITS = 20
+
+    private val hits = ArrayDeque<BlockHit>()
+
+    /** 记录一次拦截（供配置页展示）。线程安全：`dealNotify` 可能在非主线程回调。 */
+    fun recordHit(hit: BlockHit) {
+        synchronized(hits) {
+            hits.addFirst(hit)
+            while (hits.size > MAX_HITS) hits.removeLast()
+        }
+    }
+
+    fun recentHits(): List<BlockHit> = synchronized(hits) { hits.toList() }
+
+    fun resetHits() {
+        synchronized(hits) { hits.clear() }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -147,7 +183,8 @@ object BlockMessages : ClickableFeature() {
             var senders by remember { mutableStateOf(initial.senderKeywords.joinToString("\n")) }
 
             AlertDialogContent(
-                title = { Text(technicalId) },
+                    textScrolls = true,
+                    title = { Text(technicalId) },
                 text = {
                     SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
                         item(key = "mode") {
@@ -203,10 +240,56 @@ object BlockMessages : ClickableFeature() {
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
                             )
                         }
+                        // 【Round43】屏蔽时顺带标记已读 —— 只吞通知的话列表里仍堆未读红点，
+                        // 用户会认为「功能没生效」，这也是本轮反馈的主要来源之一。
+                        item(key = "mark_read") {
+                            var markRead by remember { mutableStateOf(BlockMessagesExtraPrefs.markReadOnBlock) }
+                            SwitchWidget(
+                                iconPlaceholder = false,
+                                title = "屏蔽时同时标记为已读",
+                                description = "命中屏蔽的消息不再计入未读（列表不再堆红点）。" +
+                                    "关闭后仅「不弹通知」。",
+                                checked = markRead,
+                                onCheckedChange = {
+                                    markRead = it
+                                    BlockMessagesExtraPrefs.markReadOnBlock = it
+                                },
+                            )
+                        }
+                        // 【Round43】拦截记录 —— 让「到底有没有生效」一眼可见。
+                        item(key = "hits") {
+                            val history = BlockMessages.recentHits()
+                            BaseWidget(
+                                iconPlaceholder = false,
+                                title = "最近拦截记录（${history.size}）",
+                                description = if (history.isEmpty()) {
+                                    "暂无记录。保存规则后让对方发一条消息，命中即会出现在这里。"
+                                } else {
+                                    history.take(6).joinToString("\n") { hit ->
+                                        val t = java.text.SimpleDateFormat(
+                                            "HH:mm:ss",
+                                            java.util.Locale.getDefault(),
+                                        ).format(java.util.Date(hit.time))
+                                        "[$t] ${hit.talker} · ${hit.reason}" +
+                                            (if (hit.markedRead) " · 已读" else "")
+                                    }
+                                },
+                                onClick = { BlockMessages.resetHits() },
+                                trailingContent = {
+                                    Text(
+                                        text = "重置记录",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                },
+                            )
+                        }
                         item(key = "hint") {
                             Text(
-                                text = "说明：本功能在微信「发出通知前」拦下命中的消息，" +
-                                    "消息仍会正常进入聊天列表；不命中任何规则时一切照旧。",
+                                text = "说明：本功能在微信「发出通知前」拦下命中的消息。" +
+                                    "命中维度 = 会话名单 / 发送人（群消息取「昵称:」前缀）/ 关键词；" +
+                                    "开启白名单模式时则相反：只有名单内的会话能提醒。" +
+                                    "未开启「同时标记为已读」时，消息仍会正常进入聊天列表并计未读。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -391,13 +474,56 @@ object BlockMessagesRuntime : ApiFeature(), IResolveDex {
         methodDealNotify.hookBefore(100) {
             val talker = args[1] as? String ?: return@hookBefore
             val rawContent = args[2] as? String ?: ""
-            // dealNotify 没有 sender 入参，这里只用会话与正文做判定。
-            if (!BlockMessages.shouldBlock(talker = talker, sender = "", content = rawContent)) {
-                return@hookBefore
+
+            // 【Round43】dealNotify 没有 sender 入参，但群消息的通知正文是「昵称: 正文」格式，
+            // 从里面把发送人抠出来喂给规则引擎 —— 否则「发送人名单」永远命中不了
+            // （旧实现恒传 sender = ""，用户配了发送人规则也永远不会生效）。
+            val sender = groupSenderOf(talker, rawContent)
+            val content = if (sender.isNotEmpty()) {
+                rawContent.substringAfter(':', rawContent).substringAfter('：', rawContent).trim()
+            } else {
+                rawContent
             }
-            WeLogger.i(TAG, "suppressing notification from $talker (matches block rule)")
+
+            val reason = BlockMessages.matchReason(talker = talker, sender = sender, content = content)
+                ?: return@hookBefore
+
+            // 1) 吞掉通知
             result = null
+
+            // 2) 顺带标记已读（默认开）——「屏蔽」的直觉是「我不想看到它」，
+            //    只吞通知的话列表里还是会堆未读红点，用户就会认为功能没生效。
+            val marked = if (BlockMessagesExtraPrefs.markReadOnBlock) {
+                runCatching { WeConversationApi.markAsRead(talker) }.isSuccess
+            } else {
+                false
+            }
+
+            BlockMessages.recordHit(
+                BlockHit(
+                    talker = talker,
+                    reason = reason,
+                    preview = content.take(40),
+                    markedRead = marked,
+                    time = System.currentTimeMillis(),
+                ),
+            )
+            WeLogger.i(
+                TAG,
+                "suppressing notification from $talker (reason=$reason, markedRead=$marked)",
+            )
         }
+    }
+
+    /**
+     * 群消息通知正文形如「群昵称: 正文」，提取发送人昵称片段；
+     * 私聊/无冒号时返回空串（此时规则里只有会话与关键词会参与判定）。
+     */
+    private fun groupSenderOf(talker: String, rawContent: String): String {
+        if (!talker.isGroupChatWxId) return ""
+        val idx = rawContent.indexOfFirst { it == ':' || it == '：' }
+        if (idx <= 0 || idx > 40) return ""
+        return rawContent.substring(0, idx).trim()
     }
 
     override fun onDisable() {
@@ -414,3 +540,32 @@ object BlockMessagesRuntime : ApiFeature(), IResolveDex {
 object BlockMessagesWhitelistPrefs {
     var useWhitelist: Boolean by prefOption("block_messages_use_whitelist", false)
 }
+
+/**
+ * 【Round43】屏蔽消息的附加行为偏好。
+ */
+object BlockMessagesExtraPrefs {
+
+    /**
+     * 命中屏蔽规则时，是否顺带把该会话标记为已读。
+     *
+     * 默认 true —— 用户对「屏蔽消息」的直觉期待是「我不想看到它」，
+     * 只吞通知的话消息仍会在列表里堆未读红点，用户就会认为「没生效」。
+     * 关掉后行为退回旧的「仅不弹通知」。
+     */
+    var markReadOnBlock: Boolean by prefOption("block_messages_mark_read", true)
+}
+
+/** 一条被拦截的记录（仅内存，供配置页展示）。 */
+data class BlockHit(
+    /** 会话 id。 */
+    val talker: String,
+    /** 命中的维度：会话 / 白名单外 / 关键词 / 发送人。 */
+    val reason: String,
+    /** 被拦截消息的正文摘要。 */
+    val preview: String,
+    /** 是否顺带标记了已读。 */
+    val markedRead: Boolean,
+    /** 拦截时刻（`SystemClock.elapsedRealtime()` 无关，用墙钟即可）。 */
+    val time: Long,
+)
