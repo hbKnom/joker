@@ -270,20 +270,21 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
             // 详细日志打开时它是滚动掉帧 + 日志文件暴涨的主因之一，因此限流到 1 条/秒，
             // 其余同类折叠计数（诊断所需的「bind 参数是否与 getItem 一致」结论不受影响）。
             val now = System.currentTimeMillis()
-            if (now - lastBindLogAt < BIND_LOG_INTERVAL_MILLIS) {
-                bindLogSuppressed++
-                return@runCatching msgInfo
-            }
-            lastBindLogAt = now
-            runCatching {
-                WeLogger.d(
-                    TAG,
-                    "bind args=${param.args.size} a0=${param.args[0]?.javaClass?.simpleName} " +
-                        "a1=${param.args[1]?.javaClass?.simpleName} a2=${param.args[2]} " +
-                        "getItem talker=${msgInfo.talker} sender=${msgInfo.sender} type=${msgInfo.typeCode}" +
-                        if (bindLogSuppressed > 0) " (已折叠 $bindLogSuppressed 条同类)" else ""
-                )
+            if (now - lastBindLogAt >= BIND_LOG_INTERVAL_MILLIS) {
+                lastBindLogAt = now
+                val suppressed = bindLogSuppressed
                 bindLogSuppressed = 0
+                runCatching {
+                    WeLogger.d(
+                        TAG,
+                        "bind args=${param.args.size} a0=${param.args[0]?.javaClass?.simpleName} " +
+                            "a1=${param.args[1]?.javaClass?.simpleName} a2=${param.args[2]} " +
+                            "getItem talker=${msgInfo.talker} sender=${msgInfo.sender} type=${msgInfo.typeCode}" +
+                            if (suppressed > 0) " (已折叠 $suppressed 条同类)" else ""
+                    )
+                }
+            } else {
+                bindLogSuppressed++
             }
         }
         return msgInfo

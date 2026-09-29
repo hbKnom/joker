@@ -356,9 +356,18 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
             else -> if (nightMode) 0xFF1B1B1F.toInt() else 0xFFFFFFFF.toInt()
         }
 
+        private val isDarkBg: Boolean = run {
+            val r = Color.red(bgColor)
+            val g = Color.green(bgColor)
+            val b = Color.blue(bgColor)
+            (r * 0.299f + g * 0.587f + b * 0.114f) < 140f
+        }
+
         /** 【第 47 轮】卡片底色改成极淡的纵向渐变（上浅下深），比纯平色有层次且零额外绘制成本。 */
-        private val bgTop: Int = blend(bgColor, if (isDarkBg) 0xFFFFFFFF.toInt() else 0xFF000000.toInt(), 0.04f)
-        private val bgBottom: Int = blend(bgColor, if (isDarkBg) 0xFFFFFFFF.toInt() else 0xFF000000.toInt(), 0.10f)
+        private val bgTop: Int =
+            blend(bgColor, if (isDarkBg) 0xFFFFFFFF.toInt() else 0xFF000000.toInt(), 0.04f)
+        private val bgBottom: Int =
+            blend(bgColor, if (isDarkBg) 0xFFFFFFFF.toInt() else 0xFF000000.toInt(), 0.10f)
 
         /** 左侧竖向点缀条颜色（跟随深浅主题的强调色，给整行一个「被屏蔽」的视觉锚点）。 */
         private val accentColor: Int = when (themeIndex) {
@@ -369,13 +378,6 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
 
         private var gradient: LinearGradient? = null
         private var gradientHeight = -1
-
-        private val isDarkBg: Boolean = run {
-            val r = Color.red(bgColor)
-            val g = Color.green(bgColor)
-            val b = Color.blue(bgColor)
-            (r * 0.299f + g * 0.587f + b * 0.114f) < 140f
-        }
 
         private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = bgColor
