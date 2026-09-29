@@ -23,6 +23,7 @@ import android.content.ContextWrapper
 import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -117,12 +118,13 @@ object ChatFunctionSwitch : ClickableFeature() {
     // ═══════════════════════════════════════════════════════════════
 
     private fun showChatFunctionMenu(context: Context) {
+        // 必须用 filterIsInstance 而不是 filter { it is ClickableFeature }：
+        // filter 不做类型收窄，lambda 之后的 feature 仍是 BaseFeature，
+        // 于是 feature.onClick(activity) 会报 Unresolved reference 'onClick'
+        // （CI run 36514971450 的真实报错）。
         val candidates = FeaturesProvider.ALL_FEATURES
-            .filter { feature ->
-                feature !== this &&
-                    feature is ClickableFeature &&
-                    FeatureCategoryIds.CHAT in feature.categoryIds
-            }
+            .filterIsInstance<ClickableFeature>()
+            .filter { feature -> feature !== this && FeatureCategoryIds.CHAT in feature.categoryIds }
             .distinctBy { it.technicalId }
             .sortedBy { it.technicalId }
 
