@@ -57,6 +57,7 @@ import dev.joker.features.api.core.WeDatabaseApi
 import dev.joker.features.core.ApiFeature
 import dev.joker.features.core.ClickableFeature
 import dev.joker.features.core.FeatureCategoryIds
+import dev.joker.preferences.HotPrefs
 import dev.joker.preferences.WePrefs
 import dev.joker.preferences.WePrefs.Companion.prefOption
 import dev.joker.ui.content.AlertDialogContent
@@ -113,15 +114,37 @@ object BlockMessages : ClickableFeature() {
      *
      * @return null = 放行；否则返回中文原因标签。
      */
-    fun matchReason(talker: String, sender: String, content: String): String? {
-        val rules = BlockMessagesRules.current
+    fun matchReason(talker: String, sender: String, content: String): String? =
+        matchReason(
+            rules = BlockMessagesRules.current,
+            useWhitelist = BlockMessagesWhitelistPrefs.useWhitelist,
+            talker = talker,
+            sender = sender,
+            content = content,
+        )
+
+    /**
+     * 【Round44】热路径重载：调用方自备规则快照与白名单开关。
+     *
+     * 聊天界面「屏蔽消息遮盖」逐条 bind 都会调用它，如果走上面那个重载，
+     * 每一行都会重新解析一次 `block_messages_rules_json`（JSON）—— 那是热路径上的性能事故。
+     * 调用方（[BlockedMessageMask]）用 HotPrefs 缓存原始串、只在串变化时重新 parse，
+     * 再把快照传进来。语义与上面完全一致，两个入口共用这一份实现。
+     */
+    fun matchReason(
+        rules: BlockMessagesRules,
+        useWhitelist: Boolean,
+        talker: String,
+        sender: String,
+        content: String,
+    ): String? {
         // 规则为空 = 放行
         if (rules.talkers.isEmpty() && rules.keywords.isEmpty() && rules.senderKeywords.isEmpty()) {
             return null
         }
 
         // 白名单模式：仅名单内的会话放行；talker 不在名单 = 屏蔽；keywords/senderKeywords 不参与。
-        if (BlockMessagesWhitelistPrefs.useWhitelist) {
+        if (useWhitelist) {
             if (talker.isEmpty()) return "白名单外"  // 无 talker 在白名单模式下默认屏蔽
             return if (!rules.talkers.contains(talker)) "白名单外" else null
         }
@@ -421,6 +444,9 @@ data class BlockMessagesRules(
                 put("senders", JSONArray(rules.senderKeywords))
             }
             WePrefs.putString(KEY, json.toString())
+            // 【Round44】「屏蔽消息遮盖」按热路径走 HotPrefs 缓存读同一个 key，
+            // 本进程写入后立即失效缓存，保证「改完规则马上回聊天」看到的就是新规则。
+            HotPrefs.invalidate(KEY)
         }
 
         private fun readArray(array: JSONArray?): List<String> {
@@ -538,7 +564,18 @@ object BlockMessagesRuntime : ApiFeature(), IResolveDex {
  * - useWhitelist=false → 黑名单模式（默认）：仅名单内的 talker 屏蔽
  */
 object BlockMessagesWhitelistPrefs {
-    var useWhitelist: Boolean by prefOption("block_messages_use_whitelist", false)
+    private const val KEY = "block_messages_use_whitelist"
+
+    /**
+     * 【Round44】读走 WePrefs（即时、永远最新），写顺带失效 HotPrefs 缓存 ——
+     * 「屏蔽消息遮盖」在每条消息 bind 上走 hotPrefOption 读同一个 key。
+     */
+    var useWhitelist: Boolean
+        get() = WePrefs.getBoolOrDef(KEY, false)
+        set(value) {
+            WePrefs.putBool(KEY, value)
+            HotPrefs.invalidate(KEY)
+        }
 }
 
 /**

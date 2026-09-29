@@ -1034,6 +1034,9 @@
     <!-- 【第 28 轮 WeKit1945 整合】Hchat 4 自动化占位（SwitchFeature 默认关闭，等用户后续激活） -->
     <string name="feature_chat_block_messages_name">屏蔽消息</string>
     <string name="feature_chat_block_messages_description">按会话/关键词/发送人规则在微信处理新消息前丢弃（Hchat 4）。</string>
+    <string name="feature_chat_block_messages_mask_name">屏蔽消息遮盖</string>
+    <string name="feature_chat_block_messages_mask_description">在聊天列表里直接盖住命中屏蔽规则的对方消息，点一下该行才显示原文。与「屏蔽消息」的通知拦截互补，互不影响。</string>
+    <string name="chat_block_messages_mask_hint">已屏蔽 - 点击查看</string>
     <string name="feature_contacts_auto_accept_friend_requests_name">自动通过好友申请</string>
     <string name="feature_contacts_auto_accept_friend_requests_description">好友请求被通过后自动打标签/写备注/打招呼（Hchat 4）。</string>
     <string name="feature_notifications_custom_notifications_name">自定义通知</string>

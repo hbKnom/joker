@@ -1072,6 +1072,9 @@
     <!-- 【第 28 轮 WeKit1945 整合】Hchat 4 自动化占位（SwitchFeature 默认关闭，等用户后续激活） -->
     <string name="feature_chat_block_messages_name">Block messages</string>
     <string name="feature_chat_block_messages_description">Drop incoming messages matching per-session keyword / sender rules before WeChat processes them (Hchat 4).</string>
+    <string name="feature_chat_block_messages_mask_name">Blocked message mask</string>
+    <string name="feature_chat_block_messages_mask_description">Cover the incoming messages matched by your block rules right inside the chat list; tap a covered row to reveal it. Works alongside notification blocking.</string>
+    <string name="chat_block_messages_mask_hint">Blocked - tap to view</string>
     <string name="feature_contacts_auto_accept_friend_requests_name">Auto-accept friend requests</string>
     <string name="feature_contacts_auto_accept_friend_requests_description">Automatically label / set remark / greet new friends when their request is accepted (Hchat 4).</string>
     <string name="feature_notifications_custom_notifications_name">Custom notifications</string>
