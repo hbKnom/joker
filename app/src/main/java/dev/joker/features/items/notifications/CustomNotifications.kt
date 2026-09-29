@@ -85,7 +85,7 @@ import java.util.Calendar
  */
 object CustomNotifications : ClickableFeature(), IResolveDex {
 
-    override val technicalId: String = "自定义通知"
+    override val technicalId = "自定义通知"
     override val nameRes: Int = R.string.feature_notifications_custom_notifications_name
     override val categoryIds: List<String> = listOf(FeatureCategoryIds.NOTIFICATIONS)
     override val descriptionRes: Int =

@@ -66,7 +66,7 @@ import dev.joker.utils.WeLogger
  */
 object CustomConversationNotifications : ClickableFeature(), IResolveDex {
 
-    override val technicalId: String = "自定义对话通知"
+    override val technicalId = "自定义对话通知"
     override val nameRes: Int = R.string.feature_notifications_custom_conversation_notifications_name
     override val categoryIds: List<String> = listOf(FeatureCategoryIds.NOTIFICATIONS)
     override val descriptionRes: Int =
