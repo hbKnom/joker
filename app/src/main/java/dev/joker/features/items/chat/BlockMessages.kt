@@ -227,6 +227,13 @@ object BlockMessages : ClickableFeature() {
             var talkers by remember { mutableStateOf(initial.talkers.toSet()) }
             var keywords by remember { mutableStateOf(initial.keywords.joinToString("\n")) }
             var senders by remember { mutableStateOf(initial.senderKeywords.joinToString("\n")) }
+            // 【Round45b】关键词总开关的草稿必须提升到本层（这里才是可组合作用域，才 remember 得了）。
+            // 之前把它 remember 在 `item(key = "keyword_switch") { }` 内部，导致下面控制
+            // 「关键词输入框」显隐时只能读持久化值 —— 而持久化值不是 snapshot state，
+            // 拨动开关不会让 SegmentedColumn 重组，输入框显隐与开关状态对不上（要重开
+            // 对话框才同步）。提升到本层后 `if (keywordOn)` 会被登记成 SegmentedColumn 的
+            // 依赖，开关与输入框实时联动；顺带省掉一次 per-recomposition 的 JSON 解析。
+            var keywordOn by remember { mutableStateOf(initial.keywordEnabled) }
 
             AlertDialogContent(
                 textScrolls = true,
@@ -255,7 +262,7 @@ object BlockMessages : ClickableFeature() {
                                 description = desc,
                                 onClick = {
                                     // 先落盘当前草稿，选完会话回来不丢关键词/发送人的编辑
-                                    persistRules(talkers, keywords, senders, whitelist)
+                                    persistRules(talkers, keywords, senders, whitelist, keywordOn)
                                     onDismiss()
                                     showContactsPicker(context)
                                 },
@@ -282,7 +289,7 @@ object BlockMessages : ClickableFeature() {
                                 },
                                 onClick = {
                                     // 先落盘当前草稿，切换页面回来不丢编辑
-                                    persistRules(talkers, keywords, senders, whitelist)
+                                    persistRules(talkers, keywords, senders, whitelist, keywordOn)
                                     onDismiss()
                                     showTalkerRulePicker(context)
                                 },
@@ -297,12 +304,11 @@ object BlockMessages : ClickableFeature() {
                         }
                         // 【Round45】关键词维度总开关：关掉后「会话名单」里的人 = 全部消息遮盖。
                         item(key = "keyword_switch") {
-                            var keywordOn by remember { mutableStateOf(BlockMessagesRules.current.keywordEnabled) }
                             SwitchWidget(
                                 iconPlaceholder = false,
                                 title = "启用关键词遮盖",
                                 description = "开启：只有命中关键词的消息才被遮盖/屏蔽；" +
-                                    "关闭：会话名单里的人「所有消息」一律遮盖/屏蔽（关键词输入框隐藏）。",
+                                    "关闭：会话名单里的人「所有消息」一律遮盖/屏蔽（关键词输入框自动收起）。",
                                 checked = keywordOn,
                                 onCheckedChange = {
                                     keywordOn = it
@@ -310,7 +316,7 @@ object BlockMessages : ClickableFeature() {
                                 },
                             )
                         }
-                        if (BlockMessagesRules.current.keywordEnabled) {
+                        if (keywordOn) {
                             item(key = "keywords") {
                                 OutlinedTextField(
                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
@@ -339,7 +345,7 @@ object BlockMessages : ClickableFeature() {
                                 title = "从群成员中选择",
                                 description = "先选一个群，再勾选要遮盖的成员，自动填入上面的发送人名单。",
                                 onClick = {
-                                    persistRules(talkers, keywords, senders, whitelist)
+                                    persistRules(talkers, keywords, senders, whitelist, keywordOn)
                                     onDismiss()
                                     showGroupMembersPicker(context)
                                 },
@@ -458,7 +464,7 @@ object BlockMessages : ClickableFeature() {
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        persistRules(talkers, keywords, senders, whitelist)
+                        persistRules(talkers, keywords, senders, whitelist, keywordOn)
                         showToast(context, "屏蔽消息规则已保存（当前 ${talkers.size} 个会话）")
                         onDismiss()
                     }) { Text("保存") }
