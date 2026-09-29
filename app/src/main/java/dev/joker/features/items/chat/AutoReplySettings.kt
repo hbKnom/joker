@@ -894,14 +894,14 @@ internal object AutoReplySettings {
             // 【Round43】AI 模型选择器（取代 Round31 的手输文本框）
             // 用户反馈原话：「居然要手动输入模型，而不是自动获取所有并选择指定模型测试后填入，
             // 同时无法变化模型提供商」。详见 AutoReplyAiModelPicker.kt。
-            // 注意：必须包在 item { } 里 —— SegmentedColumnScope 的 item content 才是
-            // @Composable 上下文，直接裸调会报
-            // 「@Composable invocations can only happen from the context of a @Composable function」。
-            // 【Round45 · 崩溃修复】AiModelPicker 本身是 SegmentedColumnScope 的扩展、体内自己
-            // 调用 item(...)。若再套一层 item { }，它的内容 lambda 会在 SegmentedColumn 的
-            // Layout 子组合阶段执行，此时往作用域里 add 会打断正在进行的迭代 → CME 崩微信。
-            // 正确用法：直接在本作用域内展开（与 keywordItems 等其它扩展一致）。
-            AiModelPicker(task = task, onChange = onChange)
+            // 【Round45 · 唯一正确写法】必须**包在 item { } 里**：
+            //  · 裸调会报「@Composable invocations can only happen from the context of a
+            //    @Composable function」—— SegmentedColumn 的 content lambda 不是可组合上下文；
+            //  · 而 AiModelPicker 内部已不再自己调用 item(...)，所以包进 item { } 也不会在
+            //    子组合阶段往 SegmentedColumnScope 里 add → 根治 2026-09-29 的 CME 崩溃。
+            item(key = "ai_model_picker") {
+                AiModelPicker(task = task, onChange = onChange)
+            }
             // 当前 AI 模型提示
             val currentAiModel = ChatAnalysisModelStore.selectedModel()
             item(key = "ai_model_hint") {

@@ -49,7 +49,6 @@ import dev.joker.ui.content.Button
 import dev.joker.ui.content.m3.BaseSupportingWidget
 import dev.joker.ui.content.m3.DropDownMenuWidget
 import dev.joker.ui.content.m3.DropdownOption
-import dev.joker.ui.content.m3.SegmentedColumnScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -63,10 +62,24 @@ internal const val AI_PICKER_FOLLOW = ""
 /**
  * 自动回复任务编辑器里的「AI 模型」区块。
  *
- * 必须在 [SegmentedColumnScope] 内调用（与其它设置项拼在同一张卡片列表里）。
+ * 【Round45 · 关键调用契约】本函数**不是** SegmentedColumnScope 扩展、内部也**不**调用
+ * `item(...)`。调用方唯一正确写法是：
+ * ```
+ * item(key = "ai_model_picker") { AiModelPicker(task = task, onChange = onChange) }
+ * ```
+ * 两条路都被实证堵死：
+ *  · 裸调（不包 `item { }`）：`SegmentedColumn` 的 content lambda 不是 @Composable 上下文，
+ *    直接报「@Composable invocations can only happen from the context of a @Composable function」
+ *    （CI run 36562264215 / AutoReplySettings.kt:904 实证）。
+ *  · 作为 scope 扩展在体内 `item(...)` 再被包进 `item { }`：add 发生在 Layout 的子组合阶段，
+ *    会打断 `SegmentedColumn` 正在进行的 items 迭代 → 主线程 ConcurrentModificationException，
+ *    直接崩掉宿主微信（2026-09-29 18:47:51 崩溃日志实证）。
+ * 因此：只登记 1 个 item，本区块的全部 UI 与 remember 状态都收在这一个 item 的 content 里。
+ * 与 `timeRangeItems` / `keywordItems` / `delayItems`（PaymentSettingsUi.kt）同属一个家族，
+ * 区别是它们无需跨子块共享状态，故可以一格一块。
  */
 @Composable
-internal fun SegmentedColumnScope.AiModelPicker(
+internal fun AiModelPicker(
     task: AutoReplyTask,
     onChange: (AutoReplyTask) -> Unit,
 ) {
@@ -162,8 +175,15 @@ internal fun SegmentedColumnScope.AiModelPicker(
         }
     }
 
+    // 【Round45 · 结构性修复】所有子块必须落在**同一个 item 的 composable content** 里。
+    // Column + spacedBy 让「下拉 / 新建 / 测试」各自保留卡片观感，同时避免在子组合阶段
+    // 往 SegmentedColumnScope 里 add（那正是 2026-09-29 崩溃日志里的 CME 根因）。
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
     // ── ① 提供商 / 模型下拉 ────────────────────────────────────────
-    item(key = "ai_provider") {
+    run {
         val options = buildList {
             add(DropdownOption(AI_PICKER_FOLLOW, stringResource(R.string.chat_auto_reply_ai_follow_chat_analysis)))
             storeModels.forEach { m ->
@@ -196,7 +216,7 @@ internal fun SegmentedColumnScope.AiModelPicker(
 
     // ── ④ 新建提供商（当场填 / 保存 / 拉取） ───────────────────────
     if (pickedName == AI_PICKER_NEW_PROVIDER) {
-        item(key = "ai_new_provider") {
+        run {
             BaseSupportingWidget(
                 title = stringResource(R.string.chat_auto_reply_ai_new_provider),
                 description = stringResource(R.string.chat_auto_reply_ai_new_provider_hint),
@@ -273,7 +293,7 @@ internal fun SegmentedColumnScope.AiModelPicker(
 
     // ── ② ③ 拉取 / 测试（针对已存在的提供商） ──────────────────────
     if (activeConfig != null && pickedName != AI_PICKER_NEW_PROVIDER) {
-        item(key = "ai_actions") {
+        run {
             BaseSupportingWidget(
                 title = stringResource(R.string.chat_auto_reply_ai_actions),
                 description = "${activeConfig.name} · ${activeConfig.model}",
@@ -312,7 +332,7 @@ internal fun SegmentedColumnScope.AiModelPicker(
 
     // ── 未配置任何提供商时的提示 ────────────────────────────────────
     if (activeConfig == null && pickedName != AI_PICKER_NEW_PROVIDER) {
-        item(key = "ai_no_provider") {
+        run {
             BaseSupportingWidget(
                 title = stringResource(R.string.chat_auto_reply_ai_no_model),
             ) {
@@ -327,6 +347,7 @@ internal fun SegmentedColumnScope.AiModelPicker(
                 }
             }
         }
+    }
     }
 }
 
