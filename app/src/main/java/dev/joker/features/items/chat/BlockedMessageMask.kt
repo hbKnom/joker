@@ -14,6 +14,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.drawable.Drawable
+import android.os.SystemClock
 import android.util.LruCache
 import android.view.MotionEvent
 import android.view.View
@@ -92,6 +93,13 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
     override val defaultEnabled: Boolean = true
 
     private const val TAG = "BlockedMessageMask"
+
+    /** 【第 48 轮】宿主头像补定位：最多试几次、每次最小间隔（毫秒）。 */
+    private const val HOST_LOOKUP_MAX = 4
+    private const val HOST_LOOKUP_INTERVAL_MS = 320L
+
+    /** 【第 48 轮】解码失败后的重试间隔（毫秒）：失败不再永久拉黑。 */
+    private const val FAILED_RETRY_MS = 60_000L
 
     /** 与「屏蔽消息」共用同一份规则存储（只读；热路径走内存缓存，跨进程最坏 1s 收敛）。 */
     private var rulesJson by hotPrefOption("block_messages_rules_json", "")
@@ -345,9 +353,25 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
 
         /** 宿主行视图（弱引用）：draw 时用它校正 bounds（行变高后遮罩必须跟着变高）。 */
         var rowRef: WeakReference<View>? = null
+            set(value) {
+                if (value?.get() !== field?.get()) {
+                    // 【第 48 轮】换行 / 换消息：宿主头像的补定位状态必须跟着重置，
+                    // 否则这一次绑定的第一帧就已经是「试满 4 次」，真头像永远补不上。
+                    hostAvatarRef = null
+                    hostLookupTries = 0
+                    lastHostLookupAt = 0L
+                    lastHostSource = null
+                    hostCopy = null
+                }
+                field = value
+            }
 
         /** 宿主行里宿主**自己已经加载好**的头像视图（弱引用）。零解码复用，优先于自行解码。 */
         var hostAvatarRef: WeakReference<ImageView>? = null
+
+        /** 【第 48 轮】宿主头像的补定位节流状态（拿不到真头像时按间隔再试几次）。 */
+        private var hostLookupTries = 0
+        private var lastHostLookupAt = 0L
 
         /** 完全**不透明**的底色：用户明确要求「密不透风，不想遮盖后还能看到消息内容」。 */
         private val bgColor: Int = when (themeIndex) {
@@ -596,6 +620,34 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
          * 内存开销近乎为零。
          */
         private fun hostRefDrawable(): Drawable? {
+            currentHostDrawable()?.let { return it }
+            // 【第 48 轮】宿主头像没就绪（还没定位到 / 还没加载出来）不是「永久结论」：
+            // 每次绘制都按节流补一次定位，宿主把头像画出来之后遮罩上立刻就是真头像。
+            relocateHostIfDue()
+            return currentHostDrawable()
+        }
+
+        /** 节流补定位：最多 [HOST_LOOKUP_MAX] 次、每次间隔 [HOST_LOOKUP_INTERVAL_MS]。 */
+        private fun relocateHostIfDue() {
+            if (hostLookupTries >= HOST_LOOKUP_MAX) return
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastHostLookupAt < HOST_LOOKUP_INTERVAL_MS) return
+            lastHostLookupAt = now
+            val first = hostLookupTries == 0
+            hostLookupTries++
+            val row = rowRef?.get() ?: return
+            // 第一次保留缓存（视图身份通常不变），之后再找不到就强制重新定位
+            // （宿主重绑/换肤后可能换掉了头像视图，缓存里那个永远拿不到真实头像）。
+            val view = runCatching { MaskHostAvatar.viewOf(row, force = !first) }.getOrNull()
+            if (view != null) hostAvatarRef = WeakReference(view)
+            // 宿主是异步把头像加载进那个 ImageView 的，它不会带着我们的 overlay 一起重绘，
+            // 所以这里补一次行重绘（上限 4 次、间隔 320ms，且只在遮罩仍挂着时）。
+            if (view == null || currentHostDrawable() == null) {
+                runCatching { row.postDelayed({ runCatching { row.invalidate() } }, HOST_LOOKUP_INTERVAL_MS) }
+            }
+        }
+
+        private fun currentHostDrawable(): Drawable? {
             val view = hostAvatarRef?.get() ?: return null
             val src = runCatching { view.drawable }.getOrNull() ?: return null
             // 明显是「空位图占位」的直接放弃，交给下一级兜底（首字圆），别画成一片空白。
@@ -653,32 +705,74 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
 
         private val cache = Collections.synchronizedMap(WeakHashMap<View, ImageView>())
 
-        fun viewOf(row: View): ImageView? {
+        /**
+         * 取这一行的宿主头像视图。
+         *
+         * [force] = true 时丢弃缓存重新定位：宿主行在重绑/换肤后可能换掉了头像视图，
+         * 而缓存里那个虽然还 attached、却永远拿不到真实头像（drawable 一直是占位色）。
+         */
+        fun viewOf(row: View, force: Boolean = false): ImageView? {
+            if (force) cache.remove(row)
             cache[row]?.let { if (it.isAttachedToWindow) return it }
             val found = runCatching { locate(row) }.getOrNull() ?: return null
             cache[row] = found
             return found
         }
 
+        /**
+         * 定位宿主行内的头像视图（第 48 轮重写）。
+         *
+         * 第 47 轮在「绑定的那一帧」量尺寸，而那时宿主行的子视图宽高常常还是 0
+         * （RecyclerView 尚未量完 / 行刚 inflate），于是 `w in minPx..maxPx` 全部落空、
+         * 返回 null —— 遮罩层就永久退化成首字彩圆。用户截图里「群成员头像加载不出来」
+         * 主要就是这一条（定位失败），其次才是解码。
+         *
+         * 现在三条改进：
+         *  ① 尺寸优先取实测值，取不到退到 `layoutParams`；两者都没有（还没量）时，
+         *     按「有没有真实位图 / 类名像不像头像」判定，不再一票否决；
+         *  ② 打分排序：有真实位图的优先，其次最靠左（群聊里最左就是发送者头像）；
+         *  ③ 找不到时**不写缓存**，下一次绘制还能再试（配合 draw 里的节流重定位）。
+         */
         private fun locate(row: View): ImageView? {
             val density = row.resources.displayMetrics.density
-            val minPx = (24f * density).toInt()
-            val maxPx = (72f * density).toInt()
+            val minPx = (18f * density).toInt()
+            val maxPx = (96f * density).toInt()
             var best: ImageView? = null
-            var bestLeft = Int.MAX_VALUE
+            var bestScore = Int.MAX_VALUE
             var depthGuard = 0
 
+            /** 单边尺寸：实测优先，其次 layoutParams；都拿不到返回 0（未知）。 */
+            fun edgeOf(v: View, measured: Int, fromLp: Int): Int {
+                if (measured > 0) return measured
+                return if (fromLp > 0) fromLp else 0
+            }
+
             fun walk(view: View, depth: Int) {
-                if (depth > 8 || depthGuard > 120) return
+                if (depth > 8 || depthGuard > 200) return
                 depthGuard++
                 if (view is ImageView && view.visibility == View.VISIBLE) {
-                    val w = view.width
-                    val h = view.height
-                    val square = abs(w - h) <= (w / 2)
-                    if (w in minPx..maxPx && h in minPx..maxPx && square) {
+                    val lp = view.layoutParams
+                    val w = edgeOf(view, view.width, lp?.width ?: 0)
+                    val h = edgeOf(view, view.height, lp?.height ?: 0)
+                    val known = w > 0 && h > 0
+                    val real = hasRealBitmap(view)
+                    val avatarish = view.javaClass.name.contains("Avatar", ignoreCase = true)
+                    if (known) {
+                        val square = abs(w - h) <= (maxOf(w, h) / 2)
+                        if (w in minPx..maxPx && h in minPx..maxPx && square) {
+                            val left = runCatching { offsetLeft(row, view) }.getOrDefault(Int.MAX_VALUE)
+                            val score = (if (real) 0 else 100_000) + left.coerceAtMost(99_000)
+                            if (score < bestScore) {
+                                bestScore = score
+                                best = view
+                            }
+                        }
+                    } else if (real || avatarish) {
+                        // 还没量到尺寸，但它已经有真实位图 / 类名就是头像视图 → 明显优于「首字圆」。
                         val left = runCatching { offsetLeft(row, view) }.getOrDefault(Int.MAX_VALUE)
-                        if (left < bestLeft) {
-                            bestLeft = left
+                        val score = (if (real) 0 else 100_000) + 200_000 + left.coerceAtMost(99_000)
+                        if (score < bestScore) {
+                            bestScore = score
                             best = view
                         }
                     }
@@ -691,6 +785,16 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
             walk(row, 0)
             return best
         }
+
+        /** 这个 ImageView 上是否已经是一张**真实位图**（而不是占位色 / 空 drawable）。 */
+        private fun hasRealBitmap(view: ImageView): Boolean = runCatching {
+            when (val d = view.drawable) {
+                is android.graphics.drawable.BitmapDrawable -> d.bitmap != null
+                null -> false
+                is android.graphics.drawable.ColorDrawable -> false
+                else -> d.intrinsicWidth > 0 && d.intrinsicHeight > 0
+            }
+        }.getOrDefault(false)
 
         /** 目标视图相对行左边缘的横向偏移（拿不到就退化成「越深越靠右」，不影响正确性）。 */
         private fun offsetLeft(row: View, target: View): Int {
@@ -753,7 +857,19 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
             override fun sizeOf(key: String, value: Bitmap) = value.byteCount / 1024
         }
 
-        private val failed = Collections.synchronizedSet(HashSet<String>())
+        /**
+         * 【第 48 轮】失败结果不再永久拉黑：宿主 VFS 解析器往往在启动早期还没就绪
+         * （DexKit 尚在解析、Resources 还没注入），一次抢跑失败就永久退化成首字圆。
+         * 现在记下失败时刻，[FAILED_RETRY_MS] 之后允许再试一次。
+         */
+        private val failedAt = Collections.synchronizedMap(HashMap<String, Long>())
+
+        private fun recentlyFailed(key: String): Boolean {
+            val at = failedAt[key] ?: return false
+            if (SystemClock.elapsedRealtime() - at < FAILED_RETRY_MS) return true
+            failedAt.remove(key)
+            return false
+        }
 
         private val executor = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "joker-mask-avatar").apply { isDaemon = true }
@@ -793,13 +909,14 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
         fun cached(key: String): Bitmap? = runCatching { cache.get(key) }.getOrNull()
 
         fun request(key: String, onReady: () -> Unit) {
-            if (key.isEmpty() || failed.contains(key) || cached(key) != null) return
+            if (key.isEmpty() || recentlyFailed(key) || cached(key) != null) return
             executor.execute {
                 val decoded = runCatching { decodeAvatar(key) }.getOrNull()
                 if (decoded == null) {
-                    failed.add(key)
+                    failedAt[key] = SystemClock.elapsedRealtime()
                     return@execute
                 }
+                failedAt.remove(key)
                 cache.put(key, scaleDown(decoded))
                 runCatching { onReady() }
             }
@@ -851,15 +968,66 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
                     }
                 }
             }
+            // 【第 48 轮】同一批候选再走一遍「返回 byte[]」的 VFS 读法：微信各版本的
+            // `MicroMsg.VFSFileOp` 有「返回 InputStream」与「返回 byte[]」两套签名，
+            // 只认前者时某些版本永远解不出头像（实机表现就是清一色首字圆）。
+            vfsReadBytes()?.let { bytesRead ->
+                candidates.forEach { candidate ->
+                    runCatching {
+                        val bytes = bytesRead.invoke(null, candidate) as? ByteArray ?: return@forEach
+                        if (bytes.isEmpty()) return@forEach
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { return it }
+                    }
+                }
+            }
             WeLogger.d(TAG, "avatar: decode failed for '$wxid' (candidates=${candidates.size})")
             return null
         }
 
-        /** 可能的头像根目录（宿主数据目录下的几个候选）。惰性求值，只算一次。 */
+        /** 同一批 VFS 读法里「返回 byte[]」的变体（惰性解析、失败不缓存）。 */
+        @Volatile private var vfsBytesResolved = false
+        @Volatile private var vfsBytesMethod: java.lang.reflect.Method? = null
+
+        private fun vfsReadBytes(): java.lang.reflect.Method? {
+            if (vfsBytesResolved) return vfsBytesMethod
+            val found = runCatching {
+                WeMessageApi.classVfs.reflekt().firstMethod {
+                    modifiers(Modifiers.STATIC)
+                    parameters(String::class)
+                    returnType = ByteArray::class
+                }.self
+            }.getOrNull()
+            if (found != null) {
+                vfsBytesMethod = found
+                vfsBytesResolved = true
+            }
+            return found
+        }
+
+        /**
+         * 可能的头像根目录（宿主数据目录下的几个候选）。惰性求值，只算一次。
+         *
+         * 【第 48 轮】补三类：`<data>/avatar`、`<data>/files/avatar`，以及**每个账号目录**下的
+         * `<data>/MicroMsg/<md5>/avatar`（微信把头像按「账号目录」分开存，只试 MicroMsg 根
+         * 会在多账号/新版本布局上全部落空）。目录探测只在后台线程做一次并缓存。
+         */
         private val rootsLazy: List<File> by lazy {
             runCatching {
+                val out = LinkedHashSet<File>()
                 val dataDir = HostInfo.application.filesDir.parentFile ?: return@lazy emptyList()
-                listOf(dataDir, File(dataDir, "MicroMsg"), File(dataDir, "files")).distinct()
+                out += dataDir
+                out += File(dataDir, "avatar")
+                out += File(dataDir, "files")
+                out += File(dataDir, "files/avatar")
+                val micro = File(dataDir, "MicroMsg")
+                out += micro
+                out += File(micro, "avatar")
+                runCatching { micro.listFiles() }.getOrNull()
+                    ?.asSequence()
+                    ?.filter { it.isDirectory }
+                    ?.take(4)
+                    ?.forEach { out += File(it, "avatar") }
+                out.filter { it.exists() }
             }.getOrDefault(emptyList())
         }
 

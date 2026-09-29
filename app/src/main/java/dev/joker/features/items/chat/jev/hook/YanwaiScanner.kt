@@ -81,6 +81,9 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
 
     private const val TAG = "YanwaiScanner"
 
+    /** 【第 48 轮】「同一行同一消息」被重绑的时间窗（毫秒）：卡片重建诊断探针用。 */
+    private const val REBIND_WINDOW_MS = 3_000L
+
     /**
      * 兜底节拍间隔。结果主要靠 [SignalAnalyzer.SettleListener] 推送回填，
      * 这一拍只负责「排队提示刷新 + 看门狗 + 布局未就绪的卡片重试」，1s 足够。
@@ -206,6 +209,31 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
      * 20 行的屏幕就是每拍 20 次反射 + 几百次比较。现在只在绑定/重绑时算一次。
      */
     private val inputs = java.util.Collections.synchronizedMap(java.util.WeakHashMap<View, Row>())
+
+    /** 【第 48 轮】卡片重建诊断探针的记账表（弱引用键，不持有行）。 */
+    private val rebindSeen =
+        java.util.Collections.synchronizedMap(java.util.WeakHashMap<View, Pair<String, Long>>())
+    private var rebindHit = 0
+
+    /**
+     * 【第 48 轮】「滑动导致分析卡片反复重建」的**证据探针**。
+     *
+     * 上一轮的结论是这一条**必须靠新包的运行日志才能定性**（旧日志区分不开「行正常重绑」与
+     * 「卡片被拆了又建」）。这里不改任何行为，只在「同一行在 [REBIND_WINDOW_MS] 内被再次
+     * 绑定到**同一条消息**」时记一笔 —— 这就是卡片被拆掉重建的直接证据（正常滚动的重绑
+     * 绑定的是**别的**消息，不会命中）。命中次数按 20 次一行、只在详细日志下输出。
+     */
+    private fun noteRebind(view: View, key: String) {
+        if (!MoodLog.verbose) return
+        val now = SystemClock.elapsedRealtime()
+        val prev = rebindSeen.put(view, key to now)
+        if (prev == null || prev.first != key) return
+        val gap = now - prev.second
+        if (gap >= REBIND_WINDOW_MS) return
+        rebindHit++
+        if (rebindHit % 20 != 1) return
+        MoodLog.i("潜语卡片重建探针：同一行同一消息在 ${gap}ms 内被重绑（累计 $rebindHit 次）")
+    }
 
     /**
      * 一行消息的分析输入、跳过原因，以及扩展洞察需要的「本屏素材」。
@@ -672,6 +700,7 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
             return
         }
         val key = input.key
+        noteRebind(view, key)
         if (row.note == null) {
             // 「队列满」必须登记等空位：否则这一行会同时从 awaiting / capacityWaiting /
             // deferred 里消失，卡片永久停在「正在分析…」而这一条永远不会被分析。

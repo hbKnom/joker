@@ -90,10 +90,17 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
 
     private const val TAG = "ChatAutoReply"
 
+    /** 【第 48 轮】同一条对方消息的去重窗口（毫秒）：两条通道都命中时不重复回复。 */
+    private const val INBOUND_DEDUPE_MS = 20_000L
+
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "ChatAutoReply").apply { isDaemon = true }
     }
     private val cooldowns = ConcurrentHashMap<String, Long>()
+
+    /** 【第 48 轮】同一条「对方消息」的去重时间戳（键 = 会话|发送者|正文）。 */
+    private val inboundSeen = ConcurrentHashMap<String, Long>()
+
     private val generation = AtomicLong()
 
     override fun onEnable() {
@@ -128,9 +135,10 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
                 val isPatMe = false
 
                 val gen = generation.get()
+                if (!claimInbound(talker, sender.orEmpty(), content)) return@hookAfter
                 executor.execute {
                     try {
-                        process(rules, talker, content, gen, isAtMe, isNotifyAll, isPatMe, isQuote)
+                        process(rules, talker, content, gen, sender.orEmpty(), isAtMe, isNotifyAll, isPatMe, isQuote)
                     } catch (e: Throwable) {
                         WeLogger.e(TAG, "auto reply processing failed", e)
                     }
@@ -170,14 +178,40 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         if (!rules.timeRange.matches()) return
 
         val isQuote = type == MessageType.QUOTE.code
+        if (!claimInbound(talker, sender.orEmpty(), content)) return
         val gen = generation.get()
         executor.execute {
             try {
-                process(rules, talker, content, gen, false, false, false, isQuote)
+                process(rules, talker, content, gen, sender.orEmpty(), false, false, false, isQuote)
             } catch (e: Throwable) {
                 WeLogger.e(TAG, "auto reply (db fallback) failed", e)
             }
         }
+    }
+
+    /**
+     * 【第 48 轮】同一条「对方消息」只处理一次。
+     *
+     * 为什么需要：同一条消息会走**两条**通道 —— `methodMsgInfoStorageInsertMessage.hookAfter`
+     * 与 DB 层 `onInsert`（兜底）。两条都命中时（任务没配冷却的话）会连发两条一模一样的回复，
+     * 用户看到的就是「重复回复、像复读机」。这里按「会话 + 发送者 + 正文」在时间窗内去重。
+     */
+    private fun claimInbound(talker: String, sender: String, content: String): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        val key = "$talker|$sender|$content".take(512)
+        val last = inboundSeen[key]
+        if (last != null && now - last < INBOUND_DEDUPE_MS) {
+            WeLogger.i(TAG, "同一条消息 ${now - last}ms 内已处理过，跳过（避免重复回复）")
+            return false
+        }
+        inboundSeen[key] = now
+        if (inboundSeen.size > 512) {
+            // 有界：先清过期的，仍然超量就整体清空（去重只是优化，丢了也不影响正确性）。
+            val cutoff = now - INBOUND_DEDUPE_MS
+            inboundSeen.entries.removeAll { it.value < cutoff }
+            if (inboundSeen.size > 512) inboundSeen.clear()
+        }
+        return true
     }
 
     private fun process(
@@ -185,6 +219,7 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         talker: String,
         content: String,
         gen: Long,
+        sender: String,
         isAtMe: Boolean,
         isNotifyAll: Boolean,
         isPatMe: Boolean,
@@ -216,13 +251,13 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
 
             // 【Round30】模板替换：{content}/{talker}/{name}
             val reply = task.reply
-            val resolvedText = renderTemplate(reply.text, content, talker, sender(talker))
+            val resolvedText = renderTemplate(reply.text, content, talker, replyName(sender, talker))
 
             // 【Round31】AI 回复分支：useAi=true 时不再发固定 reply 文本，
             // 而是调 ChatAnalysisAi.plain(selectedModel(), sys, prompt) 拿 AI 生成文本再发。
             // 模型配置复用 ChatAnalysisModelStore（与聊天分析功能共享）。
             val sent = if (task.useAi) {
-                sendAiReply(task, content, talker, gen)
+                sendAiReply(task, content, talker, gen, sender)
             } else when (reply.type) {
                 AutoReplyType.TEXT ->
                     resolvedText.isNotBlank() && WeMessageApi.sendText(talker, resolvedText)
@@ -260,6 +295,7 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         content: String,
         talker: String,
         gen: Long,
+        sender: String,
     ): Boolean {
         // 0) generation 检查：onDisable 后过期 gen 不再发
         if (gen != generation.get()) return false
@@ -273,7 +309,7 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
                 "AI reply skipped: 未在聊天分析里配置 AI 模型（或 baseUrl/apiKey/model 为空）" +
                     "，降级为 task.reply.text 固定文本",
             )
-            return fallbackToFixedReply(task, talker)
+            return fallbackToFixedReply(task, talker, sender)
         }
 
         // 2) system prompt：用户自定义 > 默认自然聊天提示
@@ -292,7 +328,7 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         // 原实现只把当前这一条丢给模型，模型看不到上文，只能干巴巴回一句。
         val history = runCatching { loadRecentContext(talker, task.aiContextTurns) }
             .getOrDefault(emptyList())
-        val userPrompt = buildUserPrompt(content, talker, history)
+        val userPrompt = buildUserPrompt(content, talker, history, sender)
 
         // 3) 调用 AI（非流式 plain，超时由 longClient 180s 控制）
         return try {
@@ -304,7 +340,7 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
             var cleaned = sanitizeReply(first, task.aiMaxChars)
             if (cleaned.isBlank()) {
                 WeLogger.w(TAG, "AI reply empty: 降级为固定文本")
-                return fallbackToFixedReply(task, talker)
+                return fallbackToFixedReply(task, talker, sender)
             }
 
             // 4)【Round43】去重：生成的回复与自己上一条完全相同 → 让模型换个说法再生成一次；
@@ -325,10 +361,14 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
                     return false
                 }
             }
+            // 【第 48 轮】拟人化停顿：AI 生成得太快、秒回反而像机器人。
+            // 只在该任务**没有**显式配置延迟时生效（用户设过延迟就以用户为准）。
+            humanPause(task, cleaned)
+            if (gen != generation.get()) return false
             WeMessageApi.sendText(talker, cleaned)
         } catch (e: Throwable) {
             WeLogger.e(TAG, "AI reply failed: 降级为固定文本", e)
-            fallbackToFixedReply(task, talker)
+            fallbackToFixedReply(task, talker, sender)
         }
     }
 
@@ -388,11 +428,11 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
             ?.trim() == text
     }.getOrDefault(false)
 
-    private fun fallbackToFixedReply(task: AutoReplyTask, talker: String): Boolean {
+    private fun fallbackToFixedReply(task: AutoReplyTask, talker: String, sender: String): Boolean {
         val reply = task.reply
         return when (reply.type) {
             AutoReplyType.TEXT -> {
-                val text = renderTemplate(reply.text, "", talker, sender(talker))
+                val text = renderTemplate(reply.text, "", talker, replyName(sender, talker))
                 text.isNotBlank() && WeMessageApi.sendText(talker, text)
             }
             AutoReplyType.IMAGE ->
@@ -424,7 +464,8 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
             "② 口语化、短句，1-2 句，像朋友随手回的消息；" +
             "③ 不要重复上一句说过的话，不要复述对方原文；" +
             "④ 不要用 markdown（标题/列表/代码块/加粗），不要用书面语套话；" +
-            "⑤ 绝不要提到自己是 AI、模型或助手，也不要解释你在做什么。"
+            "⑤ 绝不要提到自己是 AI、模型或助手，也不要解释你在做什么；" +
+            "⑥ 只针对对方这一条消息与上下文作答，答非所问不如简短确认一句再反问。"
     }
 
     /**
@@ -437,8 +478,9 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         content: String,
         talker: String,
         history: List<Pair<Boolean, String>>,
+        sender: String,
     ): String {
-        val user = sender(talker)
+        val user = senderLabel(talker, sender)
         val sb = StringBuilder()
         if (history.isNotEmpty()) {
             sb.append("最近对话（时间正序，「我」= 你自己）：\n")
@@ -454,6 +496,36 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
     }
 
     /**
+     * 【第 48 轮】群聊里给模型一个「谁在说话」的标签。
+     *
+     * 旧实现把发送者一律留空 —— 群聊里模型只知道「有人在说话」，于是回复容易出现
+     * 「答错人 / 指代不清」。这里优先取该成员的**群昵称**（拿不到退回 wxid），
+     * 只在群聊且确实有发送者时才查库（每-bind 都不走，只有真要回复时才查一次）。
+     */
+    private fun senderLabel(talker: String, sender: String): String {
+        if (!talker.isGroupChatWxId || sender.isEmpty()) return ""
+        return runCatching {
+            WeDatabaseApi.getGroupMemberDisplayName(talker, sender).takeIf { it.isNotBlank() }
+        }.getOrNull() ?: sender
+    }
+
+    /**
+     * 拟人化「打字停顿」：AI 秒回反而像机器人，按回复长度给一小段自然延迟。
+     *
+     * 只在该任务**没有**显式配置延迟（`delayMs` 为空或 0）时生效；
+     * 上限 4 秒，且带 ±25% 抖动（固定时长一多就又能被看出是程序）。
+     * 全程在后台单线程执行器上，主线程零阻塞。
+     */
+    private fun humanPause(task: AutoReplyTask, text: String) {
+        val configured = task.delayMs.toLongOrNull() ?: 0L
+        if (configured > 0) return
+        val base = 400L + text.length.coerceAtMost(60) * 45L
+        val jitter = 0.75 + Math.random() * 0.5
+        val waitMs = (base * jitter).toLong().coerceIn(300L, 4000L)
+        runCatching { Thread.sleep(waitMs) }
+    }
+
+    /**
      * 【Round30】Hchat 模板替换对齐：{content} → 原消息正文，{talker} → 会话 ID，
      * {name} → 发送者 ID（群聊时）/ talker（私聊时）。缺失占位符保留原样。
      */
@@ -463,5 +535,6 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
             .replace("{talker}", talker)
             .replace("{name}", name)
 
-    private fun sender(@Suppress("UNUSED_PARAMETER") talker: String): String = ""
+    /** `{name}` 的取值：群聊取发送者，私聊取会话本身。 */
+    private fun replyName(sender: String, talker: String): String = sender.ifEmpty { talker }
 }

@@ -59,6 +59,16 @@ internal object MonetBadgeRecolor {
     /** 一次最多改写多少条角标颜色（防止某个版本里「大红色」被滥用成几十条而把包撑肿）。 */
     private const val MAX_TARGETS = 60
 
+    /**
+     * 【第 48 轮】引擎级守卫：一条颜色**最多允许被几个资源消费**。
+     *
+     * 为什么必须有这一条：第 46 轮实机「微信里所有实心圆点全消失」的机制就是
+     * ——被改写的那条颜色其实是宿主**基础红**，会话角标、语音未读点、朋友圈红点、
+     * 各种提示点全都在引用它；改掉它等于把这些红点一次性抹掉。角标色是「专用色」，
+     * 引用者寥寥；被大量资源共用的色一定不是角标色，一律不碰。
+     */
+    private const val MAX_CONSUMERS = 6
+
     /** 角标底色与「面」色的最小明度差（低于它就换成同源的深/浅强调色）。 */
     private const val MIN_BADGE_LUMINANCE_DELTA = 0.22f
 
@@ -140,6 +150,8 @@ internal object MonetBadgeRecolor {
         if (!isEnabled()) return emptyList()
         return runCatching {
             val hits = ArrayList<Pair<MonetResourceNode, Boolean>>() // node to 是否名证据命中
+            var sharedSkipped = 0
+            var layoutSkipped = 0
             graph.allNodes().forEach { node ->
                 if (node.key.type != "color") return@forEach
                 val name = node.key.name.lowercase()
@@ -153,11 +165,27 @@ internal object MonetBadgeRecolor {
                 val byName = NAME_HINTS.any { name.contains(it) }
                 val byValue = node.hasLiteralBadgeRed()
                 if (!byName && !byValue) return@forEach
+                // 【第 48 轮 引擎级守卫】被多个资源共用的颜色不是角标色而是基础色；
+                // 被布局直接当 background 引用的颜色是「面」色。两类都不许改 ——
+                // 这两条就是「改一条、红点全灭」的根因。
+                val consumers = sharedConsumers(graph, node)
+                if (consumers > MAX_CONSUMERS) {
+                    sharedSkipped++
+                    return@forEach
+                }
+                if (consumedByLayout(graph, node)) {
+                    layoutSkipped++
+                    return@forEach
+                }
                 // 名证据命中但值不是角标红：仍要命中（有些版本角标色被换成了别的红/橙）
                 hits += node to byName
             }
             if (hits.isEmpty()) {
-                WeLogger.i(TAG, "未发现角标类颜色资源（本版本角标可能不是独立 color 资源）")
+                WeLogger.i(
+                    TAG,
+                    "未发现角标类颜色资源（本版本角标可能不是独立 color 资源）；" +
+                        "共用超限跳过 $sharedSkipped 条、被布局引用跳过 $layoutSkipped 条",
+                )
                 return@runCatching emptyList()
             }
             // 【第 46 轮】不再无脑写 primaryLight/primaryDark：如果主色与「面」色的明度太接近，
@@ -225,8 +253,7 @@ internal object MonetBadgeRecolor {
         return (0.2126f * r + 0.7152f * g + 0.0722f * b) / 255f
     }
 
-    /** 取该节点第一个字面量色值，仅供日志（拿不到就返回 0）。 */
-    private fun MonetResourceNode.representativeLiteral(): Int {
+    /** 取该节点第一个字面量色值，仅供日志（拿不到就返回 0）。 */    private fun MonetResourceNode.representativeLiteral(): Int {
         values.forEach { configured ->
             val value = configured.value
             if (value is MonetResourceValue.Literal) return value.data.toInt()
@@ -248,4 +275,28 @@ internal object MonetBadgeRecolor {
         if (!type.startsWith("COLOR") && !type.startsWith("INT")) return@any false
         BADGE_REDS.contains(value.data.toInt())
     }
+
+    /**
+     * 这条颜色被多少个**其它资源**引用（拿不到引用表时返回 0 = 不做限制）。
+     *
+     * 角标底色是专用色（引用者寥寥）；被一大票资源共用的必然是宿主基础色。
+     */
+    private fun sharedConsumers(graph: MonetResourceGraph, node: MonetResourceNode): Int =
+        runCatching { graph.incoming(node.id).size }.getOrDefault(0)
+
+    /**
+     * 这条颜色是否被 layout 直接消费（`android:background` / `textColor` 之类）。
+     *
+     * 被布局直接引用的颜色是「面」或「字」色，改它不会得到彩色角标，只会把宿主某块
+     * 背景/文字改掉 —— 第 46 轮「红点集体消失」的另一半原因就在这里。
+     */
+    private fun consumedByLayout(graph: MonetResourceGraph, node: MonetResourceNode): Boolean =
+        runCatching {
+            graph.incoming(node.id).any { id ->
+                when (graph.node(id)?.key?.type?.lowercase()) {
+                    "layout", "xml" -> true
+                    else -> false
+                }
+            }
+        }.getOrDefault(false)
 }
