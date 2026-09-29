@@ -12,6 +12,9 @@
     <string name="chat_analysis_dim_density">發言密度</string>
     <string name="chat_analysis_dim_trend">每日趨勢</string>
     <string name="chat_analysis_dim_latency">回應速度畫像</string>
+    <string name="chat_analysis_dim_pack_time">活躍節律與回應</string>
+    <string name="chat_analysis_dim_pack_relation">互動默契與習慣</string>
+    <string name="chat_analysis_dim_pack_language">語言與表達習慣</string>
     <string name="chat_analysis_dim_reply_fetch">被接話榜</string>
     <string name="chat_analysis_dim_topic_period">話題時段偏好</string>
     <string name="chat_analysis_dim_rhythm">作息畫像</string>

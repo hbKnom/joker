@@ -298,7 +298,7 @@ internal object AutoReplySettings {
             val localizedContext by rememberUpdatedState(LocalJokerLocalizedContext.current)
 
             AlertDialogContent(
-                textScrolls = true,
+                textScrolls = false,
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight(),
@@ -533,7 +533,7 @@ internal object AutoReplySettings {
             val localizedContext by rememberUpdatedState(LocalJokerLocalizedContext.current)
 
             AlertDialogContent(
-                textScrolls = true,
+                textScrolls = false,
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight(),
@@ -587,7 +587,7 @@ internal object AutoReplySettings {
             val validationError = validateTask(draft)
 
             AlertDialogContent(
-                textScrolls = true,
+                textScrolls = false,
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight(),

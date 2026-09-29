@@ -1337,10 +1337,10 @@ internal object ChatAnalysisUi {
                                 horizontalArrangement = Arrangement.spacedBy(ChipGap),
                                 verticalArrangement = Arrangement.spacedBy(ChipGap),
                             ) {
-                                DimensionChip(stringResource(R.string.chat_analysis_dim_trend))
-                                DimensionChip(stringResource(R.string.chat_analysis_dim_latency))
-                                DimensionChip(stringResource(R.string.chat_analysis_dim_density))
-                                DimensionChip(stringResource(R.string.chat_analysis_dim_rounds))
+                                // 【Round44】对外口径统一为「10 个维度块」：每个进阶包只展示 1 枚综合 chip，
+                                // 包内原子段位（活跃日历与趋势 / 回应速度 / 活跃密度与连续 / 连击与轮次）
+                                // 仍完整保留在报告里，但降为块内的二级标题，不再各占一枚 chip 造成"维度很多"的观感。
+                                DimensionChip(stringResource(R.string.chat_analysis_dim_pack_time))
                             }
                         }
                     }
@@ -1384,10 +1384,8 @@ internal object ChatAnalysisUi {
                                 horizontalArrangement = Arrangement.spacedBy(ChipGap),
                                 verticalArrangement = Arrangement.spacedBy(ChipGap),
                             ) {
-                                DimensionChip(stringResource(R.string.chat_analysis_dim_ask_reply))
-                                DimensionChip(stringResource(R.string.chat_analysis_dim_repeat))
-                                DimensionChip(stringResource(R.string.chat_analysis_dim_reply_rank))
-                                DimensionChip(stringResource(R.string.chat_analysis_dim_profile_radar))
+                                // 【Round44】同上：关系与习惯包收敛为一枚综合 chip。
+                                DimensionChip(stringResource(R.string.chat_analysis_dim_pack_relation))
                             }
                         }
                     }
@@ -1431,10 +1429,8 @@ internal object ChatAnalysisUi {
                                 horizontalArrangement = Arrangement.spacedBy(ChipGap),
                                 verticalArrangement = Arrangement.spacedBy(ChipGap),
                             ) {
-                                DimensionChip(stringResource(R.string.chat_analysis_dim_vocab_breadth))
-                                DimensionChip(stringResource(R.string.chat_analysis_dim_typing))
-                                DimensionChip(stringResource(R.string.chat_analysis_dim_appointment))
-                                DimensionChip(stringResource(R.string.chat_analysis_dim_hour_volume))
+                                // 【Round44】同上：语言与习惯包收敛为一枚综合 chip。
+                                DimensionChip(stringResource(R.string.chat_analysis_dim_pack_language))
                             }
                         }
                     }
@@ -1656,22 +1652,31 @@ internal object ChatAnalysisUi {
                             MetaChip("当前使用", ToneAccent)
                         }
                     },
+                    // 【Round44 修复】trailingContent 的 receiver 是 BoxScope（容器是 Box），
+                    // 原来「编辑 / 删除」两个 IconButton 直接并列会互相重叠：后声明的删除
+                    // 按钮完全盖住编辑按钮，用户只看到一个删除图标、点不到编辑。
+                    // 必须显式包一层 Row 才能并排显示。
                     trailingContent = {
-                        IconButton(
-                            onClick = { onEdit(model) },
-                            modifier = Modifier.size(IconTouchSize),
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Space4),
                         ) {
-                            Icon(MaterialSymbols.Outlined.Edit, "编辑模型")
-                        }
-                        IconButton(
-                            onClick = { onDelete(model) },
-                            modifier = Modifier.size(IconTouchSize),
-                        ) {
-                            Icon(
-                                MaterialSymbols.Outlined.Delete,
-                                "删除模型",
-                                tint = ToneDanger,
-                            )
+                            IconButton(
+                                onClick = { onEdit(model) },
+                                modifier = Modifier.size(IconTouchSize),
+                            ) {
+                                Icon(MaterialSymbols.Outlined.Edit, "编辑模型")
+                            }
+                            IconButton(
+                                onClick = { onDelete(model) },
+                                modifier = Modifier.size(IconTouchSize),
+                            ) {
+                                Icon(
+                                    MaterialSymbols.Outlined.Delete,
+                                    "删除模型",
+                                    tint = ToneDanger,
+                                )
+                            }
                         }
                     },
                 )

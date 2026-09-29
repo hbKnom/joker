@@ -12,6 +12,9 @@
     <string name="chat_analysis_dim_density">Speech density</string>
     <string name="chat_analysis_dim_trend">Daily trend</string>
     <string name="chat_analysis_dim_latency">Reply-speed profile</string>
+    <string name="chat_analysis_dim_pack_time">Activity rhythm and response</string>
+    <string name="chat_analysis_dim_pack_relation">Rapport and habits</string>
+    <string name="chat_analysis_dim_pack_language">Language habits</string>
     <string name="chat_analysis_dim_reply_fetch">Who gets replied to</string>
     <string name="chat_analysis_dim_topic_period">Topic time-of-day</string>
     <string name="chat_analysis_dim_rhythm">Daily rhythm</string>
