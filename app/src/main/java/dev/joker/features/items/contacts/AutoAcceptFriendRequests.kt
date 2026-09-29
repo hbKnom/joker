@@ -213,7 +213,7 @@ object AutoAcceptFriendRequests : SwitchFeature() {
     //  处理一条好友申请
     // ═══════════════════════════════════════════════════════════════
 
-    private fun handleRequest(request: FriendRequest) {
+    internal fun handleRequest(request: FriendRequest) {
         if (!autoAcceptAutoAccept) {
             WeLogger.i(
                 TAG,

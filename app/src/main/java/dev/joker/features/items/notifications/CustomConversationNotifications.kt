@@ -34,7 +34,6 @@ package dev.joker.features.items.notifications
 
 import android.app.Notification
 import android.app.NotificationManager
-import android.media.AudioAttributes
 import androidx.activity.ComponentActivity
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
@@ -45,6 +44,8 @@ import androidx.compose.ui.res.stringResource
 import dev.joker.R
 import dev.joker.dexkit.abc.IResolveDex
 import dev.joker.dexkit.dsl.dexMethod
+import dev.joker.reflekt.firstMethod
+import dev.joker.reflekt.reflekt
 import dev.joker.features.api.core.WeDatabaseApi
 import dev.joker.features.core.ClickableFeature
 import dev.joker.features.core.FeatureCategoryIds
@@ -79,9 +80,6 @@ object CustomConversationNotifications : ClickableFeature(), IResolveDex {
 
     /** 微信消息通知渠道（与 CustomNotifications 一致）。 */
     private const val WECHAT_CHANNEL_NORMAL = "message_channel_new_id"
-
-    /** Joker 自建的静音渠道（优先级最低、无声音）。 */
-    private const val CHANNEL_SILENT = "joker_msg_silent"
 
     /** 配置键前缀。 */
     private const val CONV_PREFIX = "ccn_conv_"
@@ -171,8 +169,6 @@ object CustomConversationNotifications : ClickableFeature(), IResolveDex {
     // ═══════════════════════════════════════════════════════════════
 
     override fun onEnable() {
-        ensureSilentChannel()
-
         // 捕获本次通知对应的会话。
         methodDealNotify.hookBefore {
             currentTalker.set(runCatching { args[1] as String }.getOrNull())
@@ -250,41 +246,9 @@ object CustomConversationNotifications : ClickableFeature(), IResolveDex {
             }
         }
 
-        // 会话级「完全不提醒」：改走 Joker 静音渠道（渠道本身已设为无声无振动）。
-        if (soundFor(talker) == OverrideMode.OFF && vibrateFor(talker) == OverrideMode.OFF) {
-            runCatching { notif.channelId = CHANNEL_SILENT }
-        }
-    }
-
-    /** 确保 Joker 自建静音渠道存在（用户后续可在系统设置里进一步调整）。 */
-    private fun ensureSilentChannel() {
-        runCatching {
-            val manager = dev.joker.utils.HostInfo.application
-                .getSystemService(NotificationManager::class.java) ?: return@runCatching
-            if (manager.getNotificationChannel(CHANNEL_SILENT) != null) return@runCatching
-            val channel = NotificationChannelCompat()
-            manager.createNotificationChannel(channel.build())
-        }.onFailure { WeLogger.w(TAG, "创建静音渠道失败（降级为直接改字段）", it) }
-    }
-
-    /**
-     * 极简 NotificationChannel 构造包装。
-     *
-     * 独立成小类的原因：`NotificationChannel` 构造需要 (id, name, importance) 三参，
-     * 且 API 26 以下不存在 —— 用 minSdk 判定包一层，避免在低版本设备上直接崩溃。
-     */
-    private class NotificationChannelCompat {
-        fun build(): android.app.NotificationChannel {
-            val channel = android.app.NotificationChannel(
-                CHANNEL_SILENT,
-                "Joker 静音通知",
-                NotificationManager.IMPORTANCE_LOW,
-            )
-            channel.setSound(null, null as AudioAttributes?)
-            channel.enableVibration(false)
-            channel.setShowBadge(true)
-            return channel
-        }
+        // 注：不再改写 notif.channelId —— Kotlin 侧 Notification.channelId 在编译期被视作 val
+        // （平台 stub 中该字段不可写），强行赋值会直接编译失败。会话级「不提醒」由上面的
+        // sound=null + vibrate=null 达成，效果等价且不触碰不可写字段。
     }
 
     // ═══════════════════════════════════════════════════════════════

@@ -62,6 +62,8 @@ import androidx.core.content.ContextCompat
 import dev.joker.R
 import dev.joker.dexkit.abc.IResolveDex
 import dev.joker.dexkit.dsl.dexMethod
+import dev.joker.reflekt.firstMethod
+import dev.joker.reflekt.reflekt
 import dev.joker.features.api.core.WeConversationApi
 import dev.joker.features.api.core.WeMessageApi
 import dev.joker.features.core.ClickableFeature
