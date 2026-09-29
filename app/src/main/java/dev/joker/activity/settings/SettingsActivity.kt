@@ -438,6 +438,8 @@ fun FeatureRow(
                     description = localizedDescription,
                     onClick = openConfig,
                     trailingDivider = true,
+                    // 主区域可点 → 显示箭头，明确「点这行能进配置页」
+                    configHint = true,
                     checked = checked,
                     onCheckedChange = { toggle(it) },
                 )

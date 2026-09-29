@@ -205,6 +205,70 @@ internal object AutoReplySettings {
                                 onClick = { showContactSelector(context) },
                             )
                         }
+                        // 【Round41】AI 自动回复可见性：AI 回复开关藏在「全局规则 → 任务编辑」里，
+                        // 用户实测找不到（以为没做 AI 自动回复）。这里给一个显式入口 + 当前模型状态。
+                        item {
+                            val model = runCatching { ChatAnalysisModelStore.selectedModel() }.getOrNull()
+                            val modelState = when {
+                                model == null -> "未配置 AI 模型"
+                                model.apiKey.isBlank() -> "模型「${model.name}」缺少 API Key"
+                                else -> "当前模型：${model.name}（${model.model}）"
+                            }
+                            PaymentNavigationRow(
+                                title = "AI 自动回复",
+                                description = "在「全局规则 → 任务 → 使用 AI 回复」里开启；$modelState",
+                                onClick = { showAiReplyDialog(context) },
+                            )
+                        }
+                    }
+                },
+                dismissButton = { TextButton(onDismiss) { Text(stringResource(R.string.dialog_close)) } },
+            )
+        }
+    }
+
+    /**
+     * 【Round41】AI 自动回复说明 + 当前模型状态。
+     *
+     * 用户实机反馈「自动回复是不是没有加 AI」——其实 Round31 就已实装（任务级 useAi），
+     * 但入口只有「全局规则 → 任务编辑 → 使用 AI 回复」这一条深路径，且没有任何地方
+     * 告诉用户「AI 回复用的模型是哪一个、配没配好」。本对话框把这两件事讲清楚。
+     */
+    internal fun showAiReplyDialog(context: Context) {
+        showComposeDialog(context) {
+            val models = runCatching { ChatAnalysisModelStore.loadModels() }.getOrDefault(emptyList())
+            val selected = runCatching { ChatAnalysisModelStore.selectedModel() }.getOrNull()
+            AlertDialogContent(
+                title = { Text("AI 自动回复") },
+                text = {
+                    SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
+                        item(key = "how") {
+                            Text(
+                                text = "开启方式：自动回复 → 「全局规则」或某个会话/群 → 添加或编辑任务 → " +
+                                    "打开「使用 AI 回复」。开启后该任务不再发固定文案，改为把收到的消息" +
+                                    "交给 AI 生成回复（可单独填写系统提示词与最大 token）。",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        item(key = "model") {
+                            val state = when {
+                                selected == null -> "还没有可用的 AI 模型"
+                                selected.apiKey.isBlank() -> "模型「${selected.name}」缺少 API Key，调用会失败"
+                                else -> "当前模型：${selected.name}\n接口：${selected.baseUrl}${selected.path}\n模型名：${selected.model}"
+                            }
+                            Text(
+                                text = "AI 模型（与聊天记录分析功能共用）：\n$state\n\n共 ${models.size} 个已配置模型。",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
+                        item(key = "where") {
+                            Text(
+                                text = "模型管理在「聊天记录分析 → AI 设置」里：可添加/切换模型、填 API Key。" +
+                                    "任务里「模型名」留空 = 使用上面这个当前模型。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 },
                 dismissButton = { TextButton(onDismiss) { Text(stringResource(R.string.dialog_close)) } },

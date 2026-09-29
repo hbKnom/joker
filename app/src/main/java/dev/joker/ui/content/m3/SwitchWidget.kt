@@ -2,7 +2,9 @@
 // Copyright (C) 2023-2026 iamr0s, InstallerX Revived contributors
 package dev.joker.ui.content.m3
 
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Alignment
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -12,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.role
@@ -20,6 +23,7 @@ import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.outlined.Check
+import com.composables.icons.materialsymbols.outlined.Chevron_right
 import com.composables.icons.materialsymbols.outlined.Close
 
 /**
@@ -47,6 +51,12 @@ fun SwitchWidget(
     isError: Boolean = false,
     onClick: (() -> Unit)? = null,
     trailingDivider: Boolean = false,
+    /**
+     * 在主区域可点击（[onClick] != null）时，于开关左侧显示一个箭头，
+     * 让用户看得出「点这一行能进配置页」——否则开关行看起来只是一行开关，
+     * 配置入口完全不可发现（用户实机反馈「找不到入口配置」）。
+     */
+    configHint: Boolean = false,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
@@ -92,6 +102,15 @@ fun SwitchWidget(
         clickHaptic = null,
         description = description
     ) { interactionSource ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+        if (configHint) {
+            Icon(
+                imageVector = MaterialSymbols.Outlined.Chevron_right,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Switch(
             modifier = Modifier.clearAndSetSemantics {},
             enabled = enabled,
@@ -111,5 +130,6 @@ fun SwitchWidget(
             // Use the switch's own touch handling when the left and trailing areas are separate.
             onCheckedChange = if (separateClickAreas) handleCheckedChange else null
         )
+        }
     }
 }

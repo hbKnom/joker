@@ -39,6 +39,21 @@
 package dev.joker.features.items.contacts
 
 import android.content.ContentValues
+import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
 import dev.joker.R
 import dev.joker.features.api.core.WeContactApi
 import dev.joker.features.api.core.WeContactLabelApi
@@ -46,10 +61,16 @@ import dev.joker.features.api.core.WeDatabaseApi
 import dev.joker.features.api.core.WeDatabaseListenerApi
 import dev.joker.features.api.core.WeMessageApi
 import dev.joker.features.api.core.models.MessageType
+import dev.joker.features.core.ClickableFeature
 import dev.joker.features.core.FeatureCategoryIds
-import dev.joker.features.core.SwitchFeature
 import dev.joker.preferences.WePrefs.Companion.prefOption
+import dev.joker.ui.content.AlertDialogContent
+import dev.joker.ui.content.TextButton
+import dev.joker.ui.content.m3.SegmentedColumn
+import dev.joker.ui.content.m3.SwitchWidget
+import dev.joker.ui.utils.showComposeDialog
 import dev.joker.utils.WeLogger
+import dev.joker.utils.android.showToast
 import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -61,7 +82,7 @@ import java.util.regex.Pattern
  *
  * 监听 message 表 FRIEND_VERIFY 插入 → 解析申请 XML → 真正调用协议层通过 → 通过后自动化。
  */
-object AutoAcceptFriendRequests : SwitchFeature() {
+object AutoAcceptFriendRequests : ClickableFeature() {
 
     override val technicalId: String = "自动通过好友申请"
     override val nameRes: Int = R.string.feature_contacts_auto_accept_friend_requests_name
@@ -151,6 +172,126 @@ object AutoAcceptFriendRequests : SwitchFeature() {
     override fun onDisable() {
         WeDatabaseListenerApi.removeListener(autoAcceptFriendRequestsInsertListener)
         synchronized(handledApplicants) { handledApplicants.clear() }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  配置界面（Round41 新增）
+    //
+    //  用户实机反馈「开了开关却没有地方配置、无法验证生效」：本类原来只是
+    //  SwitchFeature，设置页那一行只有开关。现在升为 ClickableFeature：
+    //  点正文进配置页，开关照旧管启停。
+    // ═══════════════════════════════════════════════════════════════
+
+    override fun onClick(context: ComponentActivity) {
+        showComposeDialog(context) {
+            var autoAccept by remember { mutableStateOf(autoAcceptAutoAccept) }
+            var delayMs by remember { mutableStateOf(autoAcceptDelayMs.toString()) }
+            var tagEnable by remember { mutableStateOf(autoAcceptTagEnable) }
+            var tagName by remember { mutableStateOf(autoAcceptTagName) }
+            var greetEnable by remember { mutableStateOf(autoAcceptGreetEnable) }
+            var greetText by remember { mutableStateOf(autoAcceptReplyText) }
+            var greetDelayMs by remember { mutableStateOf(autoAcceptGreetDelayMs.toString()) }
+
+            AlertDialogContent(
+                title = { Text(technicalId) },
+                text = {
+                    SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
+                        item(key = "auto_accept") {
+                            SwitchWidget(
+                                iconPlaceholder = false,
+                                title = "真正自动通过",
+                                description = "关闭 = 只记录日志（不会替你做任何联系人操作）；" +
+                                    "开启后收到好友申请立即调用协议层通过。",
+                                checked = autoAccept,
+                                onCheckedChange = { autoAccept = it },
+                            )
+                        }
+                        item(key = "delay") {
+                            OutlinedTextField(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                                value = delayMs,
+                                onValueChange = { delayMs = it.filter(Char::isDigit).take(7) },
+                                label = { Text("通过延迟（毫秒，0 = 立即）") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                singleLine = true,
+                            )
+                        }
+                        item(key = "tag_enable") {
+                            SwitchWidget(
+                                iconPlaceholder = false,
+                                title = "通过后自动打标签",
+                                checked = tagEnable,
+                                onCheckedChange = { tagEnable = it },
+                            )
+                        }
+                        if (tagEnable) {
+                            item(key = "tag_name") {
+                                OutlinedTextField(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                                    value = tagName,
+                                    onValueChange = { tagName = it },
+                                    label = { Text("标签名") },
+                                    singleLine = true,
+                                )
+                            }
+                        }
+                        item(key = "greet_enable") {
+                            SwitchWidget(
+                                iconPlaceholder = false,
+                                title = "通过后自动打招呼",
+                                checked = greetEnable,
+                                onCheckedChange = { greetEnable = it },
+                            )
+                        }
+                        if (greetEnable) {
+                            item(key = "greet_text") {
+                                OutlinedTextField(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                                    value = greetText,
+                                    onValueChange = { greetText = it },
+                                    label = { Text("打招呼文案（支持 \$nickname / \$talker / \$date / \$time）") },
+                                    )
+                            }
+                            item(key = "greet_delay") {
+                                OutlinedTextField(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                                    value = greetDelayMs,
+                                    onValueChange = { greetDelayMs = it.filter(Char::isDigit).take(7) },
+                                    label = { Text("打招呼延迟（毫秒）") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                )
+                            }
+                        }
+                        item(key = "hint") {
+                            Text(
+                                text = "提示：通过好友申请需要申请里带有 ticket（部分版本的申请不带），" +
+                                    "拿不到关键信息时只记录日志、不会误操作用户联系人。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        autoAcceptAutoAccept = autoAccept
+                        autoAcceptDelayMs = delayMs.toLongOrNull() ?: 0L
+                        autoAcceptTagEnable = tagEnable
+                        autoAcceptTagName = tagName
+                        autoAcceptGreetEnable = greetEnable
+                        if (greetText.isNotBlank()) autoAcceptReplyText = greetText
+                        autoAcceptGreetDelayMs = greetDelayMs.toLongOrNull() ?: 0L
+                        showToast(context, if (autoAccept) "已保存：开启真自动通过" else "已保存：仅记录模式")
+                        onDismiss()
+                    }) { Text("保存") }
+                },
+                dismissButton = {
+                    TextButton(onDismiss) { Text("关闭") }
+                },
+            )
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════

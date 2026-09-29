@@ -19,13 +19,28 @@
 package dev.joker.features.items.chat_input_bar_menu
 
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import com.composables.icons.materialsymbols.outlined.Chevron_right
 import com.composables.icons.materialsymbols.MaterialSymbols
 import com.composables.icons.materialsymbols.outlined.Tune
 import dev.joker.R
 import dev.joker.features.api.ui.WeChatInputBarMenuApi
+import dev.joker.activity.settings.SettingsActivity
 import dev.joker.features.core.ClickableFeature
 import dev.joker.features.core.FeatureCategoryIds
+import dev.joker.features.core.FeaturesProvider
+import dev.joker.ui.content.AlertDialogContent
+import dev.joker.ui.content.TextButton
+import dev.joker.ui.content.m3.BaseWidget
+import dev.joker.ui.content.m3.SegmentedColumn
+import dev.joker.ui.utils.showComposeDialog
+import dev.joker.utils.WeLogger
 import dev.joker.utils.android.showToast
 
 /**
@@ -56,7 +71,7 @@ object ChatFunctionSwitch : ClickableFeature() {
                 icon = MaterialSymbols.Outlined.Tune,
                 label = "聊天功能",
                 onClick = { context, _ ->
-                    showToast(context, "聊天功能：阶段 2 提供汇总菜单。")
+                    showChatFunctionMenu(context)
                 },
             ),
         )
@@ -77,18 +92,123 @@ object ChatFunctionSwitch : ClickableFeature() {
      */
     override fun onClick(context: ComponentActivity) {
         val statusText = if (isEnabled) {
-            "聊天功能开关：已启用 ✓\n会话底栏「聊天功能」按钮可触发。"
+            "已启用 ✓ 会话底栏右侧会出现「聊天功能」按钮，点它即可打开下面的汇总菜单。"
         } else {
-            "聊天功能开关：未启用\n开启后会话底栏出现「聊天功能」按钮。"
+            "未启用：请先打开本行开关，会话底栏才会出现「聊天功能」按钮。"
         }
         showToast(context, statusText)
+        showChatFunctionMenu(context)
     }
 
     /**
-     * 设置入口（由 ClickableFeature 自动接入）；
-     * 阶段 2 改造为 ClickableFeature，提供更细的菜单配置 UI。
+     * 设置入口（由 ClickableFeature 自动接入）。
      */
     fun openSettings(context: Context) {
-        showToast(context, technicalId)
+        showChatFunctionMenu(context)
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  「聊天功能」汇总菜单（Round41 实装）
+    //
+    //  原实现只弹一句「阶段 2 提供汇总菜单」的 toast —— 用户点了等于没点，
+    //  既看不到有哪些聊天功能、也没有任何配置入口。现在改为真正的汇总菜单：
+    //  列出 Joker 里所有「聊天」分类且带配置页的功能，点进去就是各自的配置页；
+    //  末尾附一个「打开 Joker 设置」直达入口。
+    // ═══════════════════════════════════════════════════════════════
+
+    private fun showChatFunctionMenu(context: Context) {
+        val candidates = FeaturesProvider.ALL_FEATURES
+            .filter { feature ->
+                feature !== this &&
+                    feature is ClickableFeature &&
+                    FeatureCategoryIds.CHAT in feature.categoryIds
+            }
+            .distinctBy { it.technicalId }
+            .sortedBy { it.technicalId }
+
+        showComposeDialog(context) {
+            AlertDialogContent(
+                title = { Text(technicalId) },
+                text = {
+                    SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
+                        if (candidates.isEmpty()) {
+                            item(key = "empty") {
+                                Text(
+                                    text = "当前没有可配置的聊天类功能。",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        }
+                        candidates.forEach { feature ->
+                            item(key = feature.technicalId) {
+                                BaseWidget(
+                                    iconPlaceholder = false,
+                                    title = runCatching { feature.localizedName(context) }
+                                        .getOrDefault(feature.technicalId),
+                                    description = runCatching { feature.localizedDescription(context) }
+                                        .getOrDefault(""),
+                                    onClick = {
+                                        onDismiss()
+                                        val activity = context.findActivity()
+                                        if (activity is ComponentActivity) {
+                                            runCatching { feature.onClick(activity) }
+                                                .onFailure { WeLogger.w(TAG, "打开 ${feature.technicalId} 配置页失败", it) }
+                                        } else {
+                                            showToast(context, "请回到 Joker 设置页打开 ${feature.technicalId}")
+                                        }
+                                    },
+                                    trailingContent = {
+                                        Icon(
+                                            imageVector = MaterialSymbols.Outlined.Chevron_right,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                        item(key = "open_settings") {
+                            BaseWidget(
+                                iconPlaceholder = false,
+                                title = "打开 Joker 设置",
+                                description = "查看全部功能开关与分类配置",
+                                onClick = {
+                                    onDismiss()
+                                    val activity = context.findActivity() ?: return@BaseWidget
+                                    runCatching {
+                                        activity.startActivity(
+                                            Intent(activity, SettingsActivity::class.java).apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            },
+                                        )
+                                    }.onFailure { WeLogger.w(TAG, "打开设置页失败", it) }
+                                },
+                                trailingContent = {
+                                    Icon(
+                                        imageVector = MaterialSymbols.Outlined.Chevron_right,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                },
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onDismiss) { Text("关闭") }
+                },
+            )
+        }
+    }
+
+    private const val TAG = "ChatFunctionSwitch"
+}
+
+private fun Context.findActivity(): android.app.Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is android.app.Activity) return current
+        current = current.baseContext
+    }
+    return null
 }
