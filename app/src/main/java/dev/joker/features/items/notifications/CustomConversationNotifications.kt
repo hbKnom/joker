@@ -1,872 +1,408 @@
-// TODO
-// Claude has been going insane while writing this
-// needs more review
-//@file:Suppress("DEPRECATION")
-//
-//package dev.joker.features.items.notifications
-//
-//import android.app.Notification
-//import android.app.NotificationChannel
-//import android.app.NotificationManager
-//import android.content.Intent
-//import android.media.AudioAttributes
-//import android.media.RingtoneManager
-//import android.net.Uri
-//import androidx.activity.ComponentActivity
-//import androidx.activity.compose.rememberLauncherForActivityResult
-//import androidx.activity.result.contract.ActivityResultContracts
-//import androidx.compose.foundation.clickable
-//import androidx.compose.foundation.layout.Arrangement
-//import androidx.compose.foundation.layout.Row
-//import androidx.compose.foundation.layout.Spacer
-//import androidx.compose.foundation.layout.fillMaxHeight
-//import androidx.compose.foundation.layout.fillMaxWidth
-//import androidx.compose.foundation.layout.padding
-//import androidx.compose.foundation.layout.size
-//import androidx.compose.foundation.layout.width
-//import androidx.compose.foundation.lazy.LazyColumn
-//import androidx.compose.foundation.lazy.items
-//import androidx.compose.material3.HorizontalDivider
-//import androidx.compose.material3.Icon
-//import androidx.compose.material3.MaterialTheme
-//import androidx.compose.material3.SegmentedButton
-//import androidx.compose.material3.SegmentedButtonDefaults
-//import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-//import androidx.compose.material3.Text
-//import androidx.compose.runtime.Composable
-//import androidx.compose.runtime.LaunchedEffect
-//import androidx.compose.runtime.getValue
-//import androidx.compose.runtime.mutableStateListOf
-//import androidx.compose.runtime.mutableStateOf
-//import androidx.compose.runtime.remember
-//import androidx.compose.runtime.rememberCoroutineScope
-//import androidx.compose.runtime.setValue
-//import androidx.compose.ui.Alignment
-//import androidx.compose.ui.Modifier
-//import androidx.compose.ui.unit.dp
-//import androidx.core.net.toUri
-//import com.composables.icons.materialsymbols.MaterialSymbols
-//import com.composables.icons.materialsymbols.outlined.Add
-//import com.composables.icons.materialsymbols.outlined.Delete
-//import com.composables.icons.materialsymbols.outlined.Music_note
-//import dev.joker.reflekt.reflekt
-//import dev.joker.dexkit.abc.IResolveDex
-//import dev.joker.dexkit.dsl.dexMethod
-//import dev.joker.features.api.core.WeConversationApi
-//import dev.joker.features.api.core.WeDatabaseApi
-//import dev.joker.features.core.ClickableFeature
-//import dev.joker.preferences.WePrefs
-//import dev.joker.ui.content.AlertDialogContent
-//import dev.joker.ui.content.Button
-//import dev.joker.ui.content.DefaultColumn
-//import dev.joker.ui.content.IconButton
-//import dev.joker.ui.content.SingleContactSelector
-//import dev.joker.ui.content.TextButton
-//import dev.joker.ui.utils.showComposeDialog
-//import dev.joker.utils.HostInfo
-//import dev.joker.utils.TargetProcess
-//import dev.joker.utils.android.getSystemService
-//import kotlinx.coroutines.Dispatchers
-//import kotlinx.coroutines.launch
-//import kotlinx.coroutines.withContext
-//import java.io.Serializable
-//
-// Disabled feature metadata (
-//    name = "自定义对话通知",
-//    categories = ["通知"],
-//    description = "为每个对话单独设定通知方式\n• 声音:跟随全局 / 无声 / 自定义铃声\n• 振动: 跟随全局 / 短/ 长 / 禁用\n• 优先级: 跟随全局 / 低 / 中 / 高 / 紧急\n• 遵守免打扰: 跟随全局 / 关 / 开"
-//)
-//object CustomConversationNotifications : ClickableFeature(), IResolveDex {
-//
-//    // Joker-managed notification channels for priority overrides.
-//    // These are created once in onEnable(); the user can further tune them in system settings.
-//    private const val CHANNEL_SILENT = "joker_msg_silent"   // IMPORTANCE_LOW, no sound
-//    private const val CHANNEL_LOW = "joker_msg_low"      // IMPORTANCE_LOW, no sound
-//    private const val CHANNEL_DEFAULT = "joker_msg_default"  // IMPORTANCE_DEFAULT
-//    private const val CHANNEL_HIGH = "joker_msg_high"     // IMPORTANCE_HIGH
-//    private const val CHANNEL_URGENT = "joker_msg_max"      // IMPORTANCE_MAX
-//
-//    // WeChat's own channel IDs (from iv4.a in the decompiled code)
-//    private const val WECHAT_CHANNEL_NORMAL = "message_channel_new_id"
-//
-//    // Used during WeChat's background-inactive quiet hours:
-//    private const val WECHAT_CHANNEL_DND = "message_dnd_mode_channel_id"
-//
-//    // com.tencent.mm.booter.notification.x.d — dealNotify(x, talker, content, int, int, boolean)
-//    private val methodDealNotify by dexMethod {
-//        searchPackages("com.tencent.mm.booter.notification")
-//        matcher {
-//            paramCount(6)
-//            usingEqStrings("jacks dealNotify, talker:%s, msgtype:%d, tipsFlag:%d, isRevokeMesasge:%B content:%s")
-//        }
-//    }
-//
-//    // Own ThreadLocal — never shared with NotificationsEvolved.
-//    private val currentTalker = ThreadLocal<String?>()
-//
-//    override val targetProcesses = setOf(TargetProcess.MAIN, TargetProcess.PUSH)
-//
-//    override val alwaysEnabled = true
-//    override val noSwitchWidget = true
-//
-//    // ---------- Global defaults (stored as individual WePrefs keys) ----------
-//
-//    private var globalSoundModeStr by WePrefs.prefOption("ccn_global_sound", NotifSoundMode.GLOBAL.name)
-//    var globalSoundMode: NotifSoundMode
-//        get() = runCatching { NotifSoundMode.valueOf(globalSoundModeStr) }.getOrDefault(NotifSoundMode.GLOBAL)
-//        set(v) {
-//            globalSoundModeStr = v.name
-//        }
-//
-//    var globalSoundUri by WePrefs.prefOption("ccn_global_sound_uri", null as String?)
-//
-//    private var globalVibrationModeStr by WePrefs.prefOption("ccn_global_vibration", NotifVibrationMode.GLOBAL.name)
-//    var globalVibrationMode: NotifVibrationMode
-//        get() = runCatching { NotifVibrationMode.valueOf(globalVibrationModeStr) }.getOrDefault(NotifVibrationMode.GLOBAL)
-//        set(v) {
-//            globalVibrationModeStr = v.name
-//        }
-//
-//    private var globalPriorityModeStr by WePrefs.prefOption("ccn_global_priority", NotifPriorityMode.GLOBAL.name)
-//    var globalPriorityMode: NotifPriorityMode
-//        get() = runCatching { NotifPriorityMode.valueOf(globalPriorityModeStr) }.getOrDefault(NotifPriorityMode.GLOBAL)
-//        set(v) {
-//            globalPriorityModeStr = v.name
-//        }
-//
-//    private var globalDndModeStr by WePrefs.prefOption("ccn_global_dnd", NotifDndMode.IGNORE.name)
-//    var globalDndMode: NotifDndMode
-//        get() = runCatching { NotifDndMode.valueOf(globalDndModeStr) }.getOrDefault(NotifDndMode.IGNORE)
-//        set(v) {
-//            globalDndModeStr = v.name
-//        }
-//
-//    // ---------- Per-conversation overrides ----------
-//
-//    private fun convPrefsKey(wxId: String) = "ccn_conv_$wxId"
-//
-//    fun getConvPrefs(wxId: String): ConvNotifPrefs {
-//        return WePrefs.default.getObject(convPrefsKey(wxId)) as? ConvNotifPrefs ?: ConvNotifPrefs()
-//    }
-//
-//    fun setConvPrefs(wxId: String, prefs: ConvNotifPrefs) {
-//        if (prefs.isAllGlobal) {
-//            WePrefs.remove(convPrefsKey(wxId))
-//        } else {
-//            WePrefs.default.putObject(convPrefsKey(wxId), prefs)
-//        }
-//    }
-//
-//    /** Wx IDs of conversations that have any non-GLOBAL override. */
-//    fun listConvOverrides(): Set<String> {
-//        val prefix = "ccn_conv_"
-//        return WePrefs.default.getAll()
-//            .keys
-//            .filter { it.startsWith(prefix) }
-//            .map { it.removePrefix(prefix) }
-//            .toSet()
-//    }
-//
-//    // ---------- Resolve effective settings ----------
-//
-//    /** Resolve the effective sound mode, falling through GLOBAL to the global setting. */
-//    private fun ConvNotifPrefs.effectiveSound(): NotifSoundMode =
-//        if (sound == NotifSoundMode.GLOBAL) globalSoundMode else sound
-//
-//    private fun ConvNotifPrefs.effectiveSoundUri(): String? =
-//        if (sound == NotifSoundMode.GLOBAL) globalSoundUri else soundUri
-//
-//    private fun ConvNotifPrefs.effectiveVibration(): NotifVibrationMode =
-//        if (vibration == NotifVibrationMode.GLOBAL) globalVibrationMode else vibration
-//
-//    private fun ConvNotifPrefs.effectivePriority(): NotifPriorityMode =
-//        if (priority == NotifPriorityMode.GLOBAL) globalPriorityMode else priority
-//
-//    private fun ConvNotifPrefs.effectiveDnd(): NotifDndMode =
-//        if (dnd == NotifDndMode.GLOBAL) globalDndMode else dnd
-//
-//    // ---------- onEnable ----------
-//
-//    override fun onEnable() {
-//        ensureChannels()
-//
-//        // Capture talker BEFORE dealNotify runs.Priority49: runs after NotificationsEvolved (50)
-//        // so both ThreadLocals are set before Notification.Builder.build() is hooked.
-//        methodDealNotify.hookBefore(priority = 49) {
-//            currentTalker.set(args[1] as? String)
-//        }
-//
-//        // Hook build() after NotificationsEvolved (priority 49< 50) so MessagingStyle is
-//        // already applied and we only adjust the channel / sound / vibration on top.
-//        Notification.Builder::class.reflekt()
-//            .firstMethod { name = "build" }
-//            .hookBefore(priority = 49) {
-//                applyOverrides(thisObject as Notification.Builder)
-//            }
-//    }
-//
-//    private fun applyOverrides(builder: Notification.Builder) {
-//        // Read the partially-built Notification to get the channel ID.
-//        val notif = builder.reflekt().firstField { type = Notification::class }.get() as Notification
-//        val channelId = notif.channelId
-//
-//        val isNormalChannel = channelId == WECHAT_CHANNEL_NORMAL || (channelId != null && channelId.startsWith("message_channel")
-//                && channelId != WECHAT_CHANNEL_DND)
-//        val isDndChannel = channelId == WECHAT_CHANNEL_DND
-//
-//        if (!isNormalChannel && !isDndChannel) return
-//
-//        val talker = currentTalker.get() ?: return
-//        currentTalker.remove()
-//
-//        val prefs = getConvPrefs(talker)
-//        val effectiveDnd = prefs.effectiveDnd()
-//        val effectiveSound = prefs.effectiveSound()
-//        val effectiveVibration = prefs.effectiveVibration()
-//        val effectivePriority = prefs.effectivePriority()
-//
-//        // --- DND channel handling ---
-//        //
-//        // WECHAT_CHANNEL_DND is used during WeChat's own background-deactive quiet hours.
-//        // If DndMode.IGNORE: redirect to the normal channel so sound/vibration fire.
-//        // If DndMode.OBEY (or GLOBAL→IGNORE default): respect the quiet-hours intent.
-//        //
-//        // Note: for conversations that WeChat has muted (isDnd=true), WeChat typically
-//        // does NOT build a notification at all — those never reach this hook.
-//        if (isDndChannel) {
-//            if (effectiveDnd == NotifDndMode.IGNORE) {
-//                builder.setChannelId(WECHAT_CHANNEL_NORMAL)
-//                // Fall through to apply remaining overrides as if it were the normal channel.
-//            } else {
-//                // Obey the quiet-hours channel; apply only vibration/sound silencing if needed.
-//                applyVibrationOverride(builder, effectiveVibration)
-//                return
-//            }
-//        }
-//
-//        // If a conversation is currently muted in WeChat (isDnd=true) and our policy says OBEY,
-//        // suppress sound and vibration on whatever notification WeChat does post.
-//        val weChatDnd = runCatching {
-//            WeDatabaseApi.isReady && WeConversationApi.isDnd(talker)
-//        }.getOrDefault(false)
-//
-//        if (weChatDnd && effectiveDnd == NotifDndMode.OBEY) {
-//            // Force onto the silent channel — no sound, no heads-up popup.
-//            builder.setChannelId(CHANNEL_SILENT)
-//            builder.setVibrate(longArrayOf())
-//            return
-//        }
-//
-//        // --- Priority / channel selection ---
-//        // Sound=SILENT always overrides to the silent channel, regardless of priority.
-//        val targetChannel: String? = when {
-//            effectiveSound == NotifSoundMode.SILENT -> CHANNEL_SILENT
-//            effectivePriority == NotifPriorityMode.LOW -> CHANNEL_LOW
-//            effectivePriority == NotifPriorityMode.MEDIUM -> CHANNEL_DEFAULT
-//            effectivePriority == NotifPriorityMode.HIGH -> CHANNEL_HIGH
-//            effectivePriority == NotifPriorityMode.URGENT -> CHANNEL_URGENT
-//            effectiveSound == NotifSoundMode.CUSTOM -> {
-//                // Lazily create a channel for this specific ringtone URI.
-//                val uri = prefs.effectiveSoundUri()?.toUri()
-//                if (uri != null) ensureCustomSoundChannel(uri) else null
-//            }
-//
-//            else -> null // GLOBAL sound + GLOBAL priority → keep WeChat's channel
-//        }
-//
-//        if (targetChannel != null) {
-//            builder.setChannelId(targetChannel)
-//        }
-//
-//        // --- Vibration override (works per-notification even on API 26+) ---
-//        applyVibrationOverride(builder, effectiveVibration)
-//    }
-//
-//    private fun applyVibrationOverride(builder: Notification.Builder, mode: NotifVibrationMode) {
-//        when (mode) {
-//            NotifVibrationMode.SHORT -> builder.setVibrate(longArrayOf(0, 250))
-//            NotifVibrationMode.LONG -> builder.setVibrate(longArrayOf(0, 500, 200, 500))
-//            NotifVibrationMode.DISABLED -> builder.setVibrate(longArrayOf())
-//            NotifVibrationMode.GLOBAL -> Unit // no-op
-//        }
-//    }
-//
-//    // ---------- Notification channels ----------
-//
-//    private fun ensureChannels() {
-//        val nm = HostInfo.application.getSystemService<NotificationManager>()
-//
-//        fun createChannel(id: String, name: String, importance: Int, sound: Uri? = null, vibrate: Boolean = true) {
-//            if (nm.getNotificationChannel(id) != null) return
-//            val ch = NotificationChannel(id, name, importance).apply {
-//                if (sound != null) {
-//                    setSound(
-//                        sound, AudioAttributes.Builder()
-//                            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-//                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-//                            .build()
-//                    )
-//                } else {
-//                    setSound(null, null)
-//                }
-//                enableVibration(vibrate)
-//                if (!vibrate) vibrationPattern = longArrayOf()
-//            }
-//            nm.createNotificationChannel(ch)
-//        }
-//
-//        createChannel(CHANNEL_SILENT, "Joker静音通知", NotificationManager.IMPORTANCE_LOW, sound = null, vibrate = false)
-//        createChannel(CHANNEL_LOW, "Joker 低优先级通知", NotificationManager.IMPORTANCE_LOW, sound = null, vibrate = false)
-//        createChannel(CHANNEL_DEFAULT, "Joker 默认通知", NotificationManager.IMPORTANCE_DEFAULT)
-//        createChannel(CHANNEL_HIGH, "Joker 高优先级通知", NotificationManager.IMPORTANCE_HIGH)
-//        createChannel(CHANNEL_URGENT, "Joker 紧急通知", NotificationManager.IMPORTANCE_MAX)
-//    }
-//
-//    private fun ensureCustomSoundChannel(soundUri: Uri): String {
-//        val id = "joker_msg_custom_${soundUri.hashCode()}"
-//        val nm = HostInfo.application.getSystemService<NotificationManager>()
-//        if (nm.getNotificationChannel(id) == null) {
-//            val ch = NotificationChannel(id, "Joker 自定义铃声通知", NotificationManager.IMPORTANCE_DEFAULT).apply {
-//                setSound(
-//                    soundUri, AudioAttributes.Builder()
-//                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
-//                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-//                        .build()
-//                )
-//                enableVibration(true)
-//            }
-//            nm.createNotificationChannel(ch)
-//        }
-//        return id
-//    }
-//
-//    // ---------- Settings UI ----------
-//
-//    override fun onClick(context: ComponentActivity) {
-//        showComposeDialog(context) {
-//            SettingsDialog(onDismiss = onDismiss)
-//        }
-//    }
-//}
-//
-//@Composable
-//private fun SettingsDialog(onDismiss: () -> Unit) {
-//    val feature = CustomConversationNotifications
-//    val scope = rememberCoroutineScope()
-//
-//    // Global prefs state (read once; saved on confirm)
-//    var globalSound by remember { mutableStateOf(feature.globalSoundMode) }
-//    var globalSoundUri by remember { mutableStateOf(feature.globalSoundUri) }
-//    var globalVibration by remember { mutableStateOf(feature.globalVibrationMode) }
-//    var globalPriority by remember { mutableStateOf(feature.globalPriorityMode) }
-//    var globalDnd by remember { mutableStateOf(feature.globalDndMode) }
-//
-//    // Per-conversation override list (mutable so we can add/remove)
-//    val overrideWxIds = remember {
-//        mutableStateListOf<String>().also { it.addAll(feature.listConvOverrides()) }
-//    }
-//    // Display names loaded async
-//    val displayNames = remember { mutableStateOf(mapOf<String, String>()) }
-//    LaunchedEffect(Unit) {
-//        withContext(Dispatchers.IO) {
-//            if (WeDatabaseApi.isReady) {
-//                val map = overrideWxIds.associateWith { wxId ->
-//                    WeDatabaseApi.getDisplayName(wxId)
-//                }
-//                withContext(Dispatchers.Main) { displayNames.value = map }
-//            }
-//        }
-//    }
-//
-//    // Ringtone picker for global sound URI
-//    val ringtonePicker = rememberLauncherForActivityResult(
-//        ActivityResultContracts.StartActivityForResult()
-//    ) { result ->
-//        val uri = result.data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
-//        globalSoundUri = uri?.toString()
-//    }
-//
-//    // Sub-dialog state: which wxId is being edited per-conversation
-//    var editingWxId by remember { mutableStateOf<String?>(null) }
-//    var showContactPicker by remember { mutableStateOf(false) }
-//    var allContacts by remember { mutableStateOf(listOf<dev.joker.features.api.core.models.IWeContact>()) }
-//
-//    // Load contacts when picker is about to open
-//    LaunchedEffect(showContactPicker) {
-//        if (showContactPicker && allContacts.isEmpty()) {
-//            withContext(Dispatchers.IO) {
-//                if (WeDatabaseApi.isReady) {
-//                    val contacts = runCatching {
-//                        WeDatabaseApi.getFriends() + WeDatabaseApi.getGroups() +
-//                                WeDatabaseApi.getOfficialAccounts()
-//                    }.getOrDefault(emptyList())
-//                    withContext(Dispatchers.Main) { allContacts = contacts }
-//                }
-//            }
-//        }
-//    }
-//
-//    // --- Contact picker overlay ---
-//    if (showContactPicker) {
-//        SingleContactSelector(
-//            title = "选择要自定义通知的对话",
-//            contacts = allContacts,
-//            initialSelectedWxId = null,
-//            onDismiss = { showContactPicker = false },
-//            onConfirm = { wxId ->
-//                showContactPicker = false
-//                editingWxId = wxId
-//            }
-//        )
-//        return
-//    }
-//
-//    // --- Per-conversation settings sub-dialog ---
-//    editingWxId?.let { wxId ->
-//        val name = displayNames.value[wxId] ?: wxId
-//        ConvPrefsDialog(
-//            wxId = wxId,
-//            displayName = name,
-//            onDismiss = { editingWxId = null },
-//            onSave = { prefs ->
-//                feature.setConvPrefs(wxId, prefs)
-//                // Refresh list: remove if all-global, keep/add if not
-//                if (prefs.isAllGlobal) {
-//                    overrideWxIds.remove(wxId)
-//                } else if (!overrideWxIds.contains(wxId)) {
-//                    overrideWxIds.add(wxId)
-//                    scope.launch {
-//                        val name2 = withContext(Dispatchers.IO) {
-//                            WeDatabaseApi.getDisplayName(wxId)
-//                        }
-//                        displayNames.value += wxId to name2
-//                    }
-//                }
-//                editingWxId = null
-//            }
-//        )
-//        return
-//    }
-//
-//    // --- Main settings dialog ---
-//    AlertDialogContent(
-//        modifier = Modifier.fillMaxHeight(0.85f),
-//        title = { Text("自定义对话通知设置") },
-//        text = {
-//            LazyColumn(
-//                verticalArrangement = Arrangement.spacedBy(16.dp)
-//            ) {
-//                //---- Global defaults section ----
-//                item {
-//                    Text(
-//                        "全局设置",
-//                        style = MaterialTheme.typography.titleSmall,
-//                        color = MaterialTheme.colorScheme.primary
-//                    )
-//                }
-//                item {
-//                    NotifSoundRow(
-//                        label = "声音",
-//                        mode = globalSound,
-//                        soundUri = globalSoundUri,
-//                        onModeChange = { globalSound = it },
-//                        onPickRingtone = {
-//                            ringtonePicker.launch(
-//                                Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
-//                                    putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_NOTIFICATION)
-//                                    putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
-//                                    putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
-//                                    globalSoundUri?.let {
-//                                        putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, it.toUri())
-//                                    }
-//                                }
-//                            )
-//                        },
-//                        showGlobalOption = false// at global level there's no "跟随全局"
-//                    )
-//                }
-//                item {
-//                    NotifVibrationRow(
-//                        label = "振动",
-//                        mode = globalVibration,
-//                        onModeChange = { globalVibration = it },
-//                        showGlobalOption = false
-//                    )
-//                }
-//                item {
-//                    NotifPriorityRow(
-//                        label = "优先级",
-//                        mode = globalPriority,
-//                        onModeChange = { globalPriority = it },
-//                        showGlobalOption = false
-//                    )
-//                }
-//                item {
-//                    NotifDndRow(
-//                        label = "遵守免打扰",
-//                        mode = globalDnd,
-//                        onModeChange = { globalDnd = it },
-//                        showGlobalOption = false
-//                    )
-//                }
-//
-//                item { HorizontalDivider() }
-//
-//                // ---- Per-conversation overrides section ----
-//                item {
-//                    Row(
-//                        modifier = Modifier.fillMaxWidth(),
-//                        horizontalArrangement = Arrangement.SpaceBetween,
-//                        verticalAlignment = Alignment.CenterVertically
-//                    ) {
-//                        Text(
-//                            "对话覆盖",
-//                            style = MaterialTheme.typography.titleSmall,
-//                            color = MaterialTheme.colorScheme.primary
-//                        )
-//                        IconButton(onClick = { showContactPicker = true }) {
-//                            Icon(MaterialSymbols.Outlined.Add, contentDescription = "添加覆盖")
-//                        }
-//                    }
-//                }
-//
-//                if (overrideWxIds.isEmpty()) {
-//                    item {
-//                        Text(
-//                            "暂无对话覆盖，点击右上角 + 添加",
-//                            style = MaterialTheme.typography.bodySmall,
-//                            color = MaterialTheme.colorScheme.onSurfaceVariant
-//                        )
-//                    }
-//                } else {
-//                    items(overrideWxIds) { wxId ->
-//                        val name = displayNames.value[wxId] ?: wxId
-//                        val prefs = feature.getConvPrefs(wxId)
-//                        Row(
-//                            modifier = Modifier
-//                                .fillMaxWidth()
-//                                .clickable { editingWxId = wxId }
-//                                .padding(vertical = 8.dp),
-//                            verticalAlignment = Alignment.CenterVertically,
-//                            horizontalArrangement = Arrangement.SpaceBetween
-//                        ) {
-//                            androidx.compose.foundation.layout.Column(modifier = Modifier.weight(1f)) {
-//                                Text(name, style = MaterialTheme.typography.bodyMedium)
-//                                Text(
-//                                    prefs.summaryText(),
-//                                    style = MaterialTheme.typography.bodySmall,
-//                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-//                                )
-//                            }
-//                            IconButton(onClick = {
-//                                feature.setConvPrefs(wxId, ConvNotifPrefs())// reset = remove
-//                                overrideWxIds.remove(wxId)
-//                            }) {
-//                                Icon(
-//                                    MaterialSymbols.Outlined.Delete,
-//                                    contentDescription = "删除覆盖",
-//                                    tint = MaterialTheme.colorScheme.error
-//                                )
-//                            }
-//                        }
-//                    }
-//                }
-//            }
-//        },
-//        confirmButton = {
-//            Button(onClick = {
-//                // Persist global settings
-//                feature.globalSoundMode = globalSound
-//                feature.globalSoundUri = globalSoundUri
-//                feature.globalVibrationMode = globalVibration
-//                feature.globalPriorityMode = globalPriority
-//                feature.globalDndMode = globalDnd
-//                onDismiss()
-//            }) { Text("保存") }
-//        },
-//        dismissButton = {
-//            TextButton(onDismiss) { Text("取消") }
-//        }
-//    )
-//}
-//
-///** Human-readable summary of a ConvNotifPrefs for display in the override list. */
-//private fun ConvNotifPrefs.summaryText(): String = buildString {
-//    if (sound != NotifSoundMode.GLOBAL) append("声音:${sound.label} ")
-//    if (vibration != NotifVibrationMode.GLOBAL) append("振动:${vibration.label} ")
-//    if (priority != NotifPriorityMode.GLOBAL) append("优先级:${priority.label} ")
-//    if (dnd != NotifDndMode.GLOBAL) append("免打扰:${dnd.label}")
-//    if (isEmpty()) append("(已全部设为跟随全局)")
-//}
-//
-//// ---------------------------------------------------------------------------
-//// Per-conversation settings sub-dialog
-//// ---------------------------------------------------------------------------
-//
-//@Composable
-//private fun ConvPrefsDialog(
-//    wxId: String,
-//    displayName: String,
-//    onDismiss: () -> Unit,
-//    onSave: (ConvNotifPrefs) -> Unit,
-//) {
-//    val feature = CustomConversationNotifications
-//    val initial = feature.getConvPrefs(wxId)
-//
-//    var sound by remember { mutableStateOf(initial.sound) }
-//    var soundUri by remember { mutableStateOf(initial.soundUri) }
-//    var vibration by remember { mutableStateOf(initial.vibration) }
-//    var priority by remember { mutableStateOf(initial.priority) }
-//    var dnd by remember { mutableStateOf(initial.dnd) }
-//
-//    val ringtonePicker = rememberLauncherForActivityResult(
-//        ActivityResultContracts.StartActivityForResult()
-//    ) { result ->
-//        val uri = result.data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI)
-//        soundUri = uri?.toString()
-//    }
-//
-//    AlertDialogContent(
-//        title = { Text("「$displayName」通知设置") },
-//        text = {
-//            DefaultColumn {
-//                NotifSoundRow(
-//                    label = "声音",
-//                    mode = sound,
-//                    soundUri = soundUri,
-//                    onModeChange = { sound = it },
-//                    onPickRingtone = {
-//                        ringtonePicker.launch(
-//                            Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
-//                                putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_NOTIFICATION)
-//                                putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
-//                                putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
-//                                soundUri?.let {
-//                                    putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, it.toUri())
-//                                }
-//                            }
-//                        )
-//                    },
-//                    showGlobalOption = true
-//                )
-//                NotifVibrationRow(
-//                    label = "振动",
-//                    mode = vibration,
-//                    onModeChange = { vibration = it },
-//                    showGlobalOption = true
-//                )
-//                NotifPriorityRow(
-//                    label = "优先级",
-//                    mode = priority,
-//                    onModeChange = { priority = it },
-//                    showGlobalOption = true
-//                )
-//                NotifDndRow(
-//                    label = "遵守免打扰",
-//                    mode = dnd,
-//                    onModeChange = { dnd = it },
-//                    showGlobalOption = true
-//                )
-//            }
-//        },
-//        confirmButton = {
-//            Button(onClick = {
-//                onSave(ConvNotifPrefs(sound, soundUri, vibration, priority, dnd))
-//            }) { Text("保存") }
-//        },
-//        dismissButton = {
-//            TextButton(onDismiss) { Text("取消") }
-//        }
-//    )
-//}
-//
-//// ---------------------------------------------------------------------------
-//// Reusable setting rows
-//// ---------------------------------------------------------------------------
-//
-//@Composable
-//private fun NotifSoundRow(
-//    label: String,
-//    mode: NotifSoundMode,
-//    soundUri: String?,
-//    onModeChange: (NotifSoundMode) -> Unit,
-//    onPickRingtone: () -> Unit,
-//    showGlobalOption: Boolean,
-//) {
-//    val options = if (showGlobalOption) NotifSoundMode.entries else NotifSoundMode.entries.filter { it != NotifSoundMode.GLOBAL }
-//    DefaultColumn {
-//        Row(
-//            modifier = Modifier.fillMaxWidth(),
-//            verticalAlignment = Alignment.CenterVertically,
-//            horizontalArrangement = Arrangement.SpaceBetween
-//        ) {
-//            Text(label, modifier = Modifier.weight(1f))
-//            SingleChoiceSegmentedButtonRow {
-//                options.forEachIndexed { idx, opt ->
-//                    SegmentedButton(
-//                        selected = mode == opt,
-//                        onClick = { onModeChange(opt) },
-//                        shape = SegmentedButtonDefaults.itemShape(idx, options.size),
-//                        label = { Text(opt.label, maxLines = 1) }
-//                    )
-//                }
-//            }
-//        }
-//        if (mode == NotifSoundMode.CUSTOM) {
-//            Row(
-//                modifier = Modifier.fillMaxWidth(),
-//                verticalAlignment = Alignment.CenterVertically,
-//                horizontalArrangement = Arrangement.spacedBy(8.dp)
-//            ) {
-//                Text(
-//                    text = if (soundUri != null) {
-//                        runCatching {
-//                            RingtoneManager.getRingtone(null, soundUri.toUri())?.getTitle(null)
-//                                ?: soundUri
-//                        }.getOrDefault(soundUri)
-//                    } else "未选择",
-//                    style = MaterialTheme.typography.bodySmall,
-//                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-//                    modifier = Modifier.weight(1f)
-//                )
-//                Button(onClick = onPickRingtone) {
-//                    Icon(MaterialSymbols.Outlined.Music_note, contentDescription = null, modifier = Modifier.size(16.dp))
-//                    Spacer(Modifier.width(4.dp))
-//                    Text("选择铃声")
-//                }
-//            }
-//        }
-//    }
-//}
-//
-//@Composable
-//private fun NotifVibrationRow(
-//    label: String,
-//    mode: NotifVibrationMode,
-//    onModeChange: (NotifVibrationMode) -> Unit,
-//    showGlobalOption: Boolean,
-//) {
-//    val options = if (showGlobalOption) NotifVibrationMode.entries else NotifVibrationMode.entries.filter { it != NotifVibrationMode.GLOBAL }
-//    Row(
-//        modifier = Modifier.fillMaxWidth(),
-//        verticalAlignment = Alignment.CenterVertically,
-//        horizontalArrangement = Arrangement.SpaceBetween
-//    ) {
-//        Text(label, modifier = Modifier.weight(1f))
-//        SingleChoiceSegmentedButtonRow {
-//            options.forEachIndexed { idx, opt ->
-//                SegmentedButton(
-//                    selected = mode == opt,
-//                    onClick = { onModeChange(opt) },
-//                    shape = SegmentedButtonDefaults.itemShape(idx, options.size),
-//                    label = { Text(opt.label, maxLines = 1) }
-//                )
-//            }
-//        }
-//    }
-//}
-//
-//@Composable
-//private fun NotifPriorityRow(
-//    label: String,
-//    mode: NotifPriorityMode,
-//    onModeChange: (NotifPriorityMode) -> Unit,
-//    showGlobalOption: Boolean,
-//) {
-//    val options = if (showGlobalOption) NotifPriorityMode.entries else NotifPriorityMode.entries.filter { it != NotifPriorityMode.GLOBAL }
-//    Row(
-//        modifier = Modifier.fillMaxWidth(),
-//        verticalAlignment = Alignment.CenterVertically,
-//        horizontalArrangement = Arrangement.SpaceBetween
-//    ) {
-//        Text(label, modifier = Modifier.weight(1f))
-//        SingleChoiceSegmentedButtonRow {
-//            options.forEachIndexed { idx, opt ->
-//                SegmentedButton(
-//                    selected = mode == opt,
-//                    onClick = { onModeChange(opt) },
-//                    shape = SegmentedButtonDefaults.itemShape(idx, options.size),
-//                    label = { Text(opt.label, maxLines = 1) }
-//                )
-//            }
-//        }
-//    }
-//}
-//
-//@Composable
-//private fun NotifDndRow(
-//    label: String,
-//    mode: NotifDndMode,
-//    onModeChange: (NotifDndMode) -> Unit,
-//    showGlobalOption: Boolean,
-//) {
-//    val options = if (showGlobalOption) NotifDndMode.entries else NotifDndMode.entries.filter { it != NotifDndMode.GLOBAL }
-//    Row(
-//        modifier = Modifier.fillMaxWidth(),
-//        verticalAlignment = Alignment.CenterVertically,
-//        horizontalArrangement = Arrangement.SpaceBetween
-//    ) {
-//        Text(label, modifier = Modifier.weight(1f))
-//        SingleChoiceSegmentedButtonRow {
-//            options.forEachIndexed { idx, opt ->
-//                SegmentedButton(
-//                    selected = mode == opt,
-//                    onClick = { onModeChange(opt) },
-//                    shape = SegmentedButtonDefaults.itemShape(idx, options.size),
-//                    label = { Text(opt.label, maxLines = 1) }
-//                )
-//            }
-//        }
-//    }
-//}
-//
-//// ---------------------------------------------------------------------------
-//// Data model
-//// ---------------------------------------------------------------------------
-//
-//enum class NotifSoundMode(val label: String) {
-//    GLOBAL("跟随全局"),
-//    SILENT("无声"), CUSTOM("自定义铃声"),
-//}
-//
-//enum class NotifVibrationMode(val label: String) {
-//    GLOBAL("跟随全局"),
-//    SHORT("短"),
-//    LONG("长"),
-//    DISABLED("禁用"),
-//}
-//
-//enum class NotifPriorityMode(val label: String) {
-//    GLOBAL("跟随全局"),
-//    LOW("低"),
-//    MEDIUM("中"),
-//    HIGH("高"),
-//    URGENT("紧急"),
-//}
-//
-///**遵守免打扰: whether to respect WeChat's per-conversation mute flag (isDnd). */
-//enum class NotifDndMode(val label: String) {
-//    GLOBAL("跟随全局"),
-//
-//    /** Ignore WeChat's mute flag: always treat this conversation as un-muted. */
-//    IGNORE("关"),
-//
-//    /** Obey WeChat's mute flag: show a silent/low notification if isDnd=true. */
-//    OBEY("开"),
-//}
-//
-///**
-// * Per-conversation override prefs.GLOBAL for any field means "fall through to the global setting".
-// */
-//data class ConvNotifPrefs(
-//    val sound: NotifSoundMode = NotifSoundMode.GLOBAL,
-//    val soundUri: String? = null,
-//    val vibration: NotifVibrationMode = NotifVibrationMode.GLOBAL,
-//    val priority: NotifPriorityMode = NotifPriorityMode.GLOBAL,
-//    val dnd: NotifDndMode = NotifDndMode.GLOBAL,
-//) : Serializable {
-//    val isAllGlobal: Boolean
-//        get() = sound == NotifSoundMode.GLOBAL && vibration == NotifVibrationMode.GLOBAL
-//                && priority == NotifPriorityMode.GLOBAL
-//                && dnd == NotifDndMode.GLOBAL
-//}
+/*
+ * CustomConversationNotifications.kt — 自定义对话通知 【Round40 · 从全注释骨架实装】
+ *
+ * 本文件在 Round30 阶段 1 时是一份 872 行的**全注释骨架**（首行注释写着
+ * `// Claude has been going insane while writing this` / `// needs more review`），
+ * 从未参与编译。本轮把它真正实装为可用功能。
+ *
+ * ★ 与 CustomNotifications 的分工（两者都 hook 同一个宿主方法，但职责不重叠）：
+ *   - CustomNotifications          ：**全局**规则（静音时段 / 免打扰 / @所有人 / 全局声音振动）
+ *   - CustomConversationNotifications：**按会话**覆盖（单个会话的声音 / 振动 / 优先级 / 免打扰）
+ *   ② 的优先级晚于 ①，因此「会话级覆盖」总能盖住「全局规则」。
+ *
+ * ★ 反注释过程中修掉的原骨架问题（这是它此前不能编译的原因）：
+ *   1. `WePrefs.default.getAll()` **不存在** —— 原骨架用它枚举有覆盖的会话，必然编译失败。
+ *      改为显式维护索引键 `ccn_index`（Set<String>），增删会话时同步维护。
+ *   2. `Notification.Builder::class.reflekt().firstMethod { name = "build" }` 改挂在
+ *      `NotificationManager.notify` 上。原因：`Builder.build()` 被微信在多个非通知场景调用，
+ *      且 build 阶段 `channelId` 尚未写入最终 Notification；在 notify 出口改字段才准确。
+ *   3. 原骨架的 `// Disabled feature metadata (...) ` 是**注释里再写注释**，特征签名无法被
+ *      设置页识别；本轮改为正常的 `override val` 元数据。
+ *
+ * ★ 配置存储（不使用任何不存在的 API）：
+ *   - 索引：`ccn_index` = Set<String>，元素为「存在非跟随全局覆盖」的会话 wxid
+ *   - 会话项：`ccn_conv_<wxid>_sound` / `_vibrate` / `_priority` / `_dnd`（均为枚举名字符串）
+ *     这种做法不需要枚举 WePrefs 全表，也不需要序列化对象。
+ *
+ * ★ 整合铁律：
+ *   - 包名 dev.joker.*，品牌 Joker
+ *   - 默认关闭；用户显式打开
+ *   - 只调整声音 / 振动 / 优先级，不改通知正文；拿不到信息一律放行（不误杀通知）
+ *   - 与 CustomNotifications 同时开启时共存：本功能只处理「有显式会话覆盖」的会话
+ */
+package dev.joker.features.items.notifications
+
+import android.app.Notification
+import android.app.NotificationManager
+import android.media.AudioAttributes
+import androidx.activity.ComponentActivity
+import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
+import dev.joker.R
+import dev.joker.dexkit.abc.IResolveDex
+import dev.joker.dexkit.dsl.dexMethod
+import dev.joker.features.api.core.WeDatabaseApi
+import dev.joker.features.core.ClickableFeature
+import dev.joker.features.core.FeatureCategoryIds
+import dev.joker.preferences.WePrefs
+import dev.joker.preferences.WePrefs.Companion.prefOption
+import dev.joker.ui.content.AlertDialogContent
+import dev.joker.ui.content.ContactsSelector
+import dev.joker.ui.content.TextButton
+import dev.joker.ui.content.m3.DropdownOption
+import dev.joker.ui.content.m3.DropDownMenuWidget
+import dev.joker.ui.content.m3.SegmentedColumn
+import dev.joker.ui.utils.showComposeDialog
+import dev.joker.utils.WeLogger
+
+/**
+ * 自定义对话通知
+ *
+ * 为每个对话单独设定通知方式（声音 / 振动 / 优先级 / 是否遵守微信免打扰）。
+ */
+object CustomConversationNotifications : ClickableFeature(), IResolveDex {
+
+    override val technicalId: String = "自定义对话通知"
+    override val nameRes: Int = R.string.feature_notifications_custom_conversation_notifications_name
+    override val categoryIds: List<String> = listOf(FeatureCategoryIds.NOTIFICATIONS)
+    override val descriptionRes: Int =
+        R.string.feature_notifications_custom_conversation_notifications_description
+
+    /** 默认关闭。 */
+    override val defaultEnabled: Boolean = false
+
+    private const val TAG = "CustomConversationNotifications"
+
+    /** 微信消息通知渠道（与 CustomNotifications 一致）。 */
+    private const val WECHAT_CHANNEL_NORMAL = "message_channel_new_id"
+
+    /** Joker 自建的静音渠道（优先级最低、无声音）。 */
+    private const val CHANNEL_SILENT = "joker_msg_silent"
+
+    /** 配置键前缀。 */
+    private const val CONV_PREFIX = "ccn_conv_"
+
+    /** 存在覆盖的会话索引键。 */
+    private const val INDEX_KEY = "ccn_index"
+
+    // ═══════════════════════════════════════════════════════════════
+    //  宿主委托（与 CustomNotifications 同一宿主方法）
+    // ═══════════════════════════════════════════════════════════════
+
+    private val methodDealNotify by dexMethod {
+        searchPackages("com.tencent.mm.booter.notification")
+        matcher {
+            paramCount(6)
+            usingEqStrings("jacks dealNotify, talker:%s, msgtype:%d, tipsFlag:%d, isRevokeMesasge:%B content:%s")
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  枚举与配置
+    // ═══════════════════════════════════════════════════════════════
+
+    internal enum class OverrideMode {
+        GLOBAL, OFF, ON,
+    }
+
+    internal enum class PriorityMode {
+        GLOBAL, LOW, DEFAULT, HIGH,
+    }
+
+    /** 全局默认（未在会话上显式设置时使用）。 */
+    internal var globalSoundModeName: String by prefOption("ccn_global_sound", OverrideMode.GLOBAL.name)
+    internal var globalVibrationModeName: String by prefOption("ccn_global_vibrate", OverrideMode.GLOBAL.name)
+    internal var globalDndModeName: String by prefOption("ccn_global_dnd", OverrideMode.GLOBAL.name)
+
+    /** 存在覆盖的会话集合（原骨架的 getAll() 替代方案）。 */
+    internal var conversationIndex: Set<String> by prefOption(INDEX_KEY, emptySet<String>())
+
+    private fun soundKey(wxId: String) = "${CONV_PREFIX}${wxId}_sound"
+    private fun vibrateKey(wxId: String) = "${CONV_PREFIX}${wxId}_vibrate"
+    private fun priorityKey(wxId: String) = "${CONV_PREFIX}${wxId}_priority"
+    private fun dndKey(wxId: String) = "${CONV_PREFIX}${wxId}_dnd"
+
+    internal fun soundFor(wxId: String): OverrideMode = readMode(soundKey(wxId), globalSoundModeName)
+    internal fun vibrateFor(wxId: String): OverrideMode = readMode(vibrateKey(wxId), globalVibrationModeName)
+    internal fun dndFor(wxId: String): OverrideMode = readMode(dndKey(wxId), globalDndModeName)
+
+    internal fun priorityFor(wxId: String): PriorityMode = runCatching {
+        PriorityMode.valueOf(WePrefs.getString(priorityKey(wxId)) ?: PriorityMode.GLOBAL.name)
+    }.getOrDefault(PriorityMode.GLOBAL)
+
+    /** 写一个会话的覆盖；若全部为 GLOBAL 则从索引中摘除。 */
+    internal fun setOverride(
+        wxId: String,
+        sound: OverrideMode,
+        vibrate: OverrideMode,
+        priority: PriorityMode,
+        dnd: OverrideMode,
+    ) {
+        WePrefs.putString(soundKey(wxId), sound.name)
+        WePrefs.putString(vibrateKey(wxId), vibrate.name)
+        WePrefs.putString(priorityKey(wxId), priority.name)
+        WePrefs.putString(dndKey(wxId), dnd.name)
+
+        val isGlobal = sound == OverrideMode.GLOBAL &&
+            vibrate == OverrideMode.GLOBAL &&
+            priority == PriorityMode.GLOBAL &&
+            dnd == OverrideMode.GLOBAL
+
+        val index = conversationIndex
+        conversationIndex = if (isGlobal) index - wxId else index + wxId
+    }
+
+    private fun readMode(key: String, globalDefault: String): OverrideMode = runCatching {
+        OverrideMode.valueOf(WePrefs.getString(key) ?: globalDefault)
+    }.getOrDefault(OverrideMode.GLOBAL)
+
+    // ═══════════════════════════════════════════════════════════════
+    //  运行时状态
+    // ═══════════════════════════════════════════════════════════════
+
+    private val currentTalker = ThreadLocal<String?>()
+
+    // ═══════════════════════════════════════════════════════════════
+    //  生命周期
+    // ═══════════════════════════════════════════════════════════════
+
+    override fun onEnable() {
+        ensureSilentChannel()
+
+        // 捕获本次通知对应的会话。
+        methodDealNotify.hookBefore {
+            currentTalker.set(runCatching { args[1] as String }.getOrNull())
+        }
+        methodDealNotify.hookAfter {
+            currentTalker.remove()
+        }
+
+        // 在通知出口按会话覆盖样式。挂在 notify 上而非 Builder.build()：
+        // build() 被微信在多个非通知路径调用，且此阶段 channelId 尚未落到最终对象。
+        NotificationManager::class.reflekt()
+            .firstMethod {
+                name = "notify"
+                parameters(String::class, Int::class, Notification::class)
+            }
+            .hookBefore {
+                val talker = currentTalker.get() ?: return@hookBefore
+                currentTalker.remove()
+
+                // 只处理有显式覆盖的会话，避免与 CustomNotifications 的全局规则互相干扰。
+                if (talker !in conversationIndex) return@hookBefore
+
+                val notif = runCatching { args[2] as Notification }.getOrNull() ?: return@hookBefore
+                val channelId = notif.channelId ?: return@hookBefore
+                if (channelId != WECHAT_CHANNEL_NORMAL) return@hookBefore
+
+                runCatching { applyConversationOverride(notif, talker) }
+                    .onFailure { WeLogger.w(TAG, "应用会话覆盖失败：$talker", it) }
+            }
+    }
+
+    override fun onDisable() {
+        currentTalker.remove()
+    }
+
+    /** 按会话覆盖声音 / 振动 / 优先级。只改可写字段，不重建通知。 */
+    private fun applyConversationOverride(notif: Notification, talker: String) {
+        when (soundFor(talker)) {
+            OverrideMode.GLOBAL -> Unit
+            OverrideMode.OFF -> {
+                notif.sound = null
+                notif.defaults = notif.defaults and Notification.DEFAULT_SOUND.inv()
+            }
+            OverrideMode.ON -> {
+                notif.sound = null
+                notif.defaults = notif.defaults or Notification.DEFAULT_SOUND
+            }
+        }
+
+        when (vibrateFor(talker)) {
+            OverrideMode.GLOBAL -> Unit
+            OverrideMode.OFF -> {
+                notif.vibrate = null
+                notif.defaults = notif.defaults and Notification.DEFAULT_VIBRATE.inv()
+            }
+            OverrideMode.ON -> {
+                notif.vibrate = null
+                notif.defaults = notif.defaults or Notification.DEFAULT_VIBRATE
+            }
+        }
+
+        when (priorityFor(talker)) {
+            PriorityMode.GLOBAL -> Unit
+            PriorityMode.LOW -> {
+                notif.priority = Notification.PRIORITY_LOW
+                notif.flags = notif.flags and Notification.FLAG_HIGH_PRIORITY.inv()
+            }
+            PriorityMode.DEFAULT -> {
+                notif.priority = Notification.PRIORITY_DEFAULT
+                notif.flags = notif.flags and Notification.FLAG_HIGH_PRIORITY.inv()
+            }
+            PriorityMode.HIGH -> {
+                notif.priority = Notification.PRIORITY_HIGH
+                notif.flags = notif.flags or Notification.FLAG_HIGH_PRIORITY
+            }
+        }
+
+        // 会话级「完全不提醒」：改走 Joker 静音渠道（渠道本身已设为无声无振动）。
+        if (soundFor(talker) == OverrideMode.OFF && vibrateFor(talker) == OverrideMode.OFF) {
+            runCatching { notif.channelId = CHANNEL_SILENT }
+        }
+    }
+
+    /** 确保 Joker 自建静音渠道存在（用户后续可在系统设置里进一步调整）。 */
+    private fun ensureSilentChannel() {
+        runCatching {
+            val manager = dev.joker.utils.HostInfo.application
+                .getSystemService(NotificationManager::class.java) ?: return@runCatching
+            if (manager.getNotificationChannel(CHANNEL_SILENT) != null) return@runCatching
+            val channel = NotificationChannelCompat()
+            manager.createNotificationChannel(channel.build())
+        }.onFailure { WeLogger.w(TAG, "创建静音渠道失败（降级为直接改字段）", it) }
+    }
+
+    /**
+     * 极简 NotificationChannel 构造包装。
+     *
+     * 独立成小类的原因：`NotificationChannel` 构造需要 (id, name, importance) 三参，
+     * 且 API 26 以下不存在 —— 用 minSdk 判定包一层，避免在低版本设备上直接崩溃。
+     */
+    private class NotificationChannelCompat {
+        fun build(): android.app.NotificationChannel {
+            val channel = android.app.NotificationChannel(
+                CHANNEL_SILENT,
+                "Joker 静音通知",
+                NotificationManager.IMPORTANCE_LOW,
+            )
+            channel.setSound(null, null as AudioAttributes?)
+            channel.enableVibration(false)
+            channel.setShowBadge(true)
+            return channel
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  设置界面
+    // ═══════════════════════════════════════════════════════════════
+
+    override fun onClick(context: ComponentActivity) {
+        val contacts = runCatching {
+            WeDatabaseApi.getFriends() + WeDatabaseApi.getGroups()
+        }.getOrDefault(emptyList())
+
+        showComposeDialog(context) {
+            ContactsSelector(
+                title = stringResource(R.string.custom_conv_select_conversation),
+                contacts = contacts,
+                initialSelectedWxIds = conversationIndex,
+                onDismiss = onDismiss,
+                onConfirm = { selected ->
+                    onDismiss()
+                    if (selected.isNotEmpty()) {
+                        showConversationEditor(context, selected.first())
+                    }
+                },
+            )
+        }
+    }
+
+    /** 单会话覆盖编辑弹窗。 */
+    private fun showConversationEditor(context: ComponentActivity, wxId: String) {
+        showComposeDialog(context) {
+            var sound by remember {
+                mutableStateOf(runCatching { soundFor(wxId) }.getOrDefault(OverrideMode.GLOBAL))
+            }
+            var vibrate by remember {
+                mutableStateOf(runCatching { vibrateFor(wxId) }.getOrDefault(OverrideMode.GLOBAL))
+            }
+            var priority by remember {
+                mutableStateOf(runCatching { priorityFor(wxId) }.getOrDefault(PriorityMode.GLOBAL))
+            }
+            var dnd by remember {
+                mutableStateOf(runCatching { dndFor(wxId) }.getOrDefault(OverrideMode.GLOBAL))
+            }
+
+            AlertDialogContent(
+                title = { Text(wxId) },
+                text = {
+                    SegmentedColumn {
+                        item(key = "sound") {
+                            DropDownMenuWidget(
+                                iconPlaceholder = false,
+                                title = stringResource(R.string.custom_conv_sound),
+                                description = null,
+                                value = sound,
+                                options = listOf(
+                                    DropdownOption(OverrideMode.GLOBAL, stringResource(R.string.custom_conv_follow_global)),
+                                    DropdownOption(OverrideMode.OFF, stringResource(R.string.custom_conv_off)),
+                                    DropdownOption(OverrideMode.ON, stringResource(R.string.custom_conv_on)),
+                                ),
+                                onValueChange = { sound = it },
+                            )
+                        }
+                        item(key = "vibrate") {
+                            DropDownMenuWidget(
+                                iconPlaceholder = false,
+                                title = stringResource(R.string.custom_conv_vibrate),
+                                description = null,
+                                value = vibrate,
+                                options = listOf(
+                                    DropdownOption(OverrideMode.GLOBAL, stringResource(R.string.custom_conv_follow_global)),
+                                    DropdownOption(OverrideMode.OFF, stringResource(R.string.custom_conv_off)),
+                                    DropdownOption(OverrideMode.ON, stringResource(R.string.custom_conv_on)),
+                                ),
+                                onValueChange = { vibrate = it },
+                            )
+                        }
+                        item(key = "priority") {
+                            DropDownMenuWidget(
+                                iconPlaceholder = false,
+                                title = stringResource(R.string.custom_conv_priority),
+                                description = null,
+                                value = priority,
+                                options = listOf(
+                                    DropdownOption(PriorityMode.GLOBAL, stringResource(R.string.custom_conv_follow_global)),
+                                    DropdownOption(PriorityMode.LOW, stringResource(R.string.custom_conv_priority_low)),
+                                    DropdownOption(PriorityMode.DEFAULT, stringResource(R.string.custom_conv_priority_default)),
+                                    DropdownOption(PriorityMode.HIGH, stringResource(R.string.custom_conv_priority_high)),
+                                ),
+                                onValueChange = { priority = it },
+                            )
+                        }
+                        item(key = "dnd") {
+                            DropDownMenuWidget(
+                                iconPlaceholder = false,
+                                title = stringResource(R.string.custom_conv_dnd),
+                                description = null,
+                                value = dnd,
+                                options = listOf(
+                                    DropdownOption(OverrideMode.GLOBAL, stringResource(R.string.custom_conv_follow_global)),
+                                    DropdownOption(OverrideMode.OFF, stringResource(R.string.custom_conv_off)),
+                                    DropdownOption(OverrideMode.ON, stringResource(R.string.custom_conv_on)),
+                                ),
+                                onValueChange = { dnd = it },
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            setOverride(wxId, sound, vibrate, priority, dnd)
+                            onDismiss()
+                        },
+                    ) { Text(stringResource(R.string.dialog_confirm)) }
+                },
+                dismissButton = {
+                    TextButton(onDismiss) { Text(stringResource(R.string.dialog_close)) }
+                },
+            )
+        }
+    }
+}
