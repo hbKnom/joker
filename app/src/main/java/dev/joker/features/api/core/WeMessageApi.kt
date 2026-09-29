@@ -1534,7 +1534,14 @@ object WeMessageApi : ApiFeature(), IResolveDex {
                     e
                 }
                 if (attempt >= SEND_TEXT_MAX_ATTEMPTS || !looksUninitialized(failure)) {
-                    WeLogger.e(TAG, "failed to send text message", failure)
+                    // failure 的类型是 Exception?（try 分支只有 return@execute，Kotlin 会把
+                    // 整体推成可空）。走到这里 failure 必然非空，但 WeLogger.e 要非空 Throwable，
+                    // 所以显式判空，顺带兜住「不可能发生」的情况。
+                    if (failure != null) {
+                        WeLogger.e(TAG, "failed to send text message", failure)
+                    } else {
+                        WeLogger.e(TAG, "failed to send text message (no exception captured)")
+                    }
                     onResult?.invoke(false)
                     return@execute
                 }

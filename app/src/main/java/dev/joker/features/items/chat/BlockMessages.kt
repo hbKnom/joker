@@ -118,13 +118,19 @@ object BlockMessages : ClickableFeature() {
      *
      * @return null = 放行；否则返回中文原因标签。
      */
-    fun matchReason(talker: String, sender: String, content: String): String? =
+    fun matchReason(
+        talker: String,
+        sender: String,
+        content: String,
+        senderAliases: List<String> = emptyList(),
+    ): String? =
         matchReason(
             rules = BlockMessagesRules.current,
             useWhitelist = BlockMessagesWhitelistPrefs.useWhitelist,
             talker = talker,
             sender = sender,
             content = content,
+            senderAliases = senderAliases,
         )
 
     /**
