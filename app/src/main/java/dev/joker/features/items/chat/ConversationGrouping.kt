@@ -1945,13 +1945,13 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
                 Box(
                     modifier = Modifier
                         .padding(start = 4.dp)
-                        .background(MaterialTheme.colorScheme.error, RoundedCornerShape(percent = 50))
+                        .background(groupBadgeContainerColor(), RoundedCornerShape(percent = 50))
                         .padding(horizontal = 5.dp, vertical = 1.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         text = if (unread > 99) "99+" else unread.toString(),
-                        color = MaterialTheme.colorScheme.onError,
+                        color = groupBadgeContentColor(),
                         style = MaterialTheme.typography.labelSmall,
                         maxLines = 1,
                     )
@@ -2496,4 +2496,28 @@ object ConversationGrouping : ClickableFeature(), IResolveDex {
         val whereClause: String = "",
         val builtInLabel: BuiltInGroupLabel? = null,
     )
+}
+
+
+/**
+ * 【第 46 轮】对话分组栏（顶部 tab）未读角标的「莫奈取色」。
+ *
+ * 与底栏角标同源问题：原来走 `MaterialTheme.colorScheme.error`，
+ * 而 error 被 [dev.joker.ui.utils.theme.SeedResolver.applyMonetTokens] 派生成了
+ * 「与莫奈主色同源的暖红」—— 用户看到的就是「永远是红角标」。
+ * 用户明确要求「对话分组栏的消息角标永远可以莫奈取色」，故直接吃引擎主色；
+ * 莫奈未启用 / 未解析成功时保持原来的 error 红，不变更既有外观。
+ */
+@Composable
+private fun groupBadgeContainerColor(): Color {
+    val night = isSystemInDarkTheme()
+    return MonetColors.applied.value?.let { MonetColors.tokens(night) }?.let { Color(it.primary) }
+        ?: MaterialTheme.colorScheme.error
+}
+
+@Composable
+private fun groupBadgeContentColor(): Color {
+    val night = isSystemInDarkTheme()
+    return MonetColors.applied.value?.let { MonetColors.tokens(night) }?.let { Color(it.onPrimary) }
+        ?: MaterialTheme.colorScheme.onError
 }

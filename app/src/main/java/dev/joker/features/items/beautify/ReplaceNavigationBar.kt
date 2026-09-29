@@ -648,29 +648,29 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                                                 BadgedBox(
                                                     badge = {
                                                         if (index == 0 && unreadCount > 0) {
-                                                            Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                                            Badge(containerColor = badgeContainerColor()) {
                                                                 Text(
                                                                     if (unreadCount <= 99) unreadCount.toString() else stringResource(R.string.badge_count_overflow),
-                                                                    color = MaterialTheme.colorScheme.onError, fontSize = 10.sp
+                                                                    color = badgeContentColor(), fontSize = 10.sp
                                                                 )
                                                             }
                                                         } else if (item.wechatIndex == 1 && contactUnreadCount > 0) {
-                                                            Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                                            Badge(containerColor = badgeContainerColor()) {
                                                                 Text(
                                                                     if (contactUnreadCount <= 99) contactUnreadCount.toString() else stringResource(R.string.badge_count_overflow),
-                                                                    color = MaterialTheme.colorScheme.onError, fontSize = 10.sp
+                                                                    color = badgeContentColor(), fontSize = 10.sp
                                                                 )
                                                             }
                                                         } else if (item.wechatIndex == 2 && showFinderBadge) {
                                                             if (finderUnreadCount > 0) {
-                                                                Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                                                Badge(containerColor = badgeContainerColor()) {
                                                                     Text(
                                                                         if (finderUnreadCount <= 99) finderUnreadCount.toString() else stringResource(R.string.badge_count_overflow),
-                                                                        color = MaterialTheme.colorScheme.onError, fontSize = 10.sp
+                                                                        color = badgeContentColor(), fontSize = 10.sp
                                                                     )
                                                                 }
                                                             } else if (showFinderDot) {
-                                                                Badge(containerColor = MaterialTheme.colorScheme.error)
+                                                                Badge(containerColor = badgeContainerColor())
                                                             }
                                                         }
                                                     }
@@ -800,29 +800,29 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
                                             BadgedBox(
                                                 badge = {
                                                     if (index == 0 && unreadCount > 0) {
-                                                        Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                                        Badge(containerColor = badgeContainerColor()) {
                                                             Text(
                                                                 if (unreadCount <= 99) unreadCount.toString() else stringResource(R.string.badge_count_overflow),
-                                                                color = MaterialTheme.colorScheme.onError, fontSize = 10.sp
+                                                                color = badgeContentColor(), fontSize = 10.sp
                                                             )
                                                         }
                                                     } else if (item.wechatIndex == 1 && contactUnreadCount > 0) {
-                                                        Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                                        Badge(containerColor = badgeContainerColor()) {
                                                             Text(
                                                                 if (contactUnreadCount <= 99) contactUnreadCount.toString() else stringResource(R.string.badge_count_overflow),
-                                                                color = MaterialTheme.colorScheme.onError, fontSize = 10.sp
+                                                                color = badgeContentColor(), fontSize = 10.sp
                                                             )
                                                         }
                                                     } else if (item.wechatIndex == 2 && showFinderBadge) {
                                                         if (finderUnreadCount > 0) {
-                                                            Badge(containerColor = MaterialTheme.colorScheme.error) {
+                                                            Badge(containerColor = badgeContainerColor()) {
                                                                 Text(
                                                                     if (finderUnreadCount <= 99) finderUnreadCount.toString() else stringResource(R.string.badge_count_overflow),
-                                                                    color = MaterialTheme.colorScheme.onError, fontSize = 10.sp
+                                                                    color = badgeContentColor(), fontSize = 10.sp
                                                                 )
                                                             }
                                                         } else if (showFinderDot) {
-                                                            Badge(containerColor = MaterialTheme.colorScheme.error)
+                                                            Badge(containerColor = badgeContainerColor())
                                                         }
                                                     }
                                                 }
@@ -1439,4 +1439,30 @@ object ReplaceNavigationBar : ClickableFeature(), IResolveDex {
             usingEqStrings("[updateContactTabUnread] unread : ")
         }
     }
+}
+
+
+/**
+ * 【第 46 轮】底栏角标的「莫奈取色」。
+ *
+ * 用户实机反馈（含截图）：底栏导航的消息角标**永远是红的**，与莫奈主色割裂。
+ * 根因是这组角标走 `MaterialTheme.colorScheme.error`，而
+ * [dev.joker.ui.utils.theme.SeedResolver.applyMonetTokens] 把 error 派生成了
+ * 「与主色同源的**暖红**」（hue 抖到 18°）—— 与莫奈主色同源，但看起来仍然是红。
+ * 用户明确要求「永远可以莫奈取色，不要老是红色角标」，所以这里直接吃引擎主色
+ * `tokens.primary` / `tokens.onPrimary`（对比度由引擎色板保证）；
+ * 莫奈未启用 / 未解析成功时回落到主题的 error 红，外观与之前完全一致。
+ */
+@Composable
+private fun badgeContainerColor(): Color {
+    val night = isSystemInDarkTheme()
+    return MonetColors.applied.value?.let { MonetColors.tokens(night) }?.let { Color(it.primary) }
+        ?: MaterialTheme.colorScheme.error
+}
+
+@Composable
+private fun badgeContentColor(): Color {
+    val night = isSystemInDarkTheme()
+    return MonetColors.applied.value?.let { MonetColors.tokens(night) }?.let { Color(it.onPrimary) }
+        ?: MaterialTheme.colorScheme.onError
 }

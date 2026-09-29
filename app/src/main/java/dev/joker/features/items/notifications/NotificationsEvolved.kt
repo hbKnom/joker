@@ -264,8 +264,19 @@ object NotificationsEvolved : ClickableFeature(), IResolveDex {
                             messageHistory[targetWxId]?.toList().orEmpty()
                         }
                     }
-                    WeLogger.i(TAG, "quick replying '$replyContent' to $targetWxId")
-                    WeMessageApi.sendText(targetWxId, replyContent)
+                    // 只记长度，不落盘聊天正文（隐私）。
+                    WeLogger.i(TAG, "quick replying (len=${replyContent.length}) to $targetWxId")
+                    // 【第 46 轮】改走带重试的后台发送：微信刚被拉起时宿主网络核还没初始化，
+                    // 直接同步发送会抛 `mCoreNetwork not initialized!`，消息**静默丢掉**。
+                    WeMessageApi.sendTextRetrying(targetWxId, replyContent) { sent ->
+                        if (!sent) {
+                            WeLogger.w(
+                                TAG,
+                                "quick reply not delivered (len=${replyContent.length}) to $targetWxId",
+                            )
+                            toastSendFailed(context)
+                        }
+                    }
                     WeConversationApi.markAsRead(targetWxId)
                     cancelConversationNotifications(notificationManager, targetWxId)
 
@@ -1042,5 +1053,24 @@ object NotificationsEvolved : ClickableFeature(), IResolveDex {
         receiverRegistered = false
         runCatching { HostInfo.application.unregisterReceiver(notificationReceiver) }
             .onFailure { WeLogger.w(TAG, "failed to unregister notification receiver", it) }
+    }
+
+    /**
+     * 快捷回复最终没发出去时给用户一个明确反馈（第 46 轮）。
+     *
+     * 以前发送失败只写日志，用户完全无感 —— 以为发出去了，实际对方什么都没收到。
+     */
+    private fun toastSendFailed(context: Context) {
+        runCatching {
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                runCatching {
+                    android.widget.Toast.makeText(
+                        context,
+                        R.string.notif_quick_reply_failed,
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }
     }
 }

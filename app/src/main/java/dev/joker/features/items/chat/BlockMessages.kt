@@ -33,6 +33,7 @@
 package dev.joker.features.items.chat
 
 import android.content.ContentValues
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -140,8 +141,9 @@ object BlockMessages : ClickableFeature() {
         talker: String,
         sender: String,
         content: String,
+        senderAliases: List<String> = emptyList(),
     ): String? {
-        // ── ① 会话级独立规则最高优先（Round45 新增）────────────────────────────
+        // ── ① 会话级独立规则最高优先（Round45 新增，Round46 增加成员粒度）────────
         // 用户原话：「这个遮盖如果遇到多个会话是不是不同会话要分开设置，
         // 确保不出现被全部遮盖的 bug」。因此每个会话可以有**自己的**模式，
         // 与全局规则完全隔离：一个会话设成「全部遮盖」不会影响另一个会话。
@@ -150,6 +152,14 @@ object BlockMessages : ClickableFeature() {
                 return when (per.mode) {
                     BlockTalkerMode.PASS -> null
                     BlockTalkerMode.MASK_ALL -> "该会话全部"
+                    // 【Round46】只遮该会话里点名的成员；成员名单为空 → 不命中任何消息
+                    // （保存对话框时若没选人，绝不能把整个会话盖掉）。
+                    BlockTalkerMode.MASK_MEMBERS ->
+                        if (per.members.isNotEmpty() && senderHit(per.members, sender, senderAliases)) {
+                            "该会话指定成员"
+                        } else {
+                            null
+                        }
                     BlockTalkerMode.KEYWORD -> {
                         if (per.keywords.isEmpty() || content.isEmpty()) {
                             null
@@ -174,7 +184,7 @@ object BlockMessages : ClickableFeature() {
         // 黑名单会话
         if (talker.isNotEmpty() && rules.talkers.contains(talker)) return "会话名单"
         // 发送人黑名单
-        if (sender.isNotEmpty() && rules.senderKeywords.any { sender.contains(it, ignoreCase = true) }) {
+        if (senderHit(rules.senderKeywords, sender, senderAliases)) {
             return "发送人"
         }
         // 关键词（受总开关控制：关掉后「会话名单」里的人就是全部消息遮盖，
@@ -184,6 +194,33 @@ object BlockMessages : ClickableFeature() {
             if (rules.keywords.any { lowered.contains(it.lowercase()) }) return "关键词"
         }
         return null
+    }
+
+    /**
+     * 发送人 / 会话内成员命中判定（Round46）。
+     *
+     * 名单里存的是**wxid**（「群成员可视化选择」给的就是 wxid），但
+     * [BlockMessagesRuntime] 的通知路径从通知正文里只能抠出**昵称/群昵称**
+     * （`dealNotify` 只有 talker + content 两个入参）。
+     * 旧实现只拿昵称去比对 wxid 名单 —— **永远不可能命中**，这正是用户反复反馈的
+     * 「发送人名单配了、开关也开了，就是一点效果没有」的根因。
+     *
+     * 现在同时比对：① 发送人本身（聊天界面路径给的就是 wxid，本来就对）；
+     * ② [aliases]（通知路径把昵称反查出的 wxid / 昵称本身）。
+     *
+     * @param aliases 允许为空：拿不到辅助信息只是少一条判定路径，绝不抛异常。
+     */
+    private fun senderHit(list: List<String>, sender: String, aliases: List<String>): Boolean {
+        if (list.isEmpty()) return false
+        fun hits(candidate: String): Boolean {
+            if (candidate.isEmpty()) return false
+            return list.any { rule ->
+                rule.isNotEmpty() && (candidate.equals(rule, ignoreCase = true) || candidate.contains(rule, ignoreCase = true))
+            }
+        }
+        if (hits(sender)) return true
+        for (alias in aliases) if (hits(alias)) return true
+        return false
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -283,7 +320,7 @@ object BlockMessages : ClickableFeature() {
                                 iconPlaceholder = false,
                                 title = "按会话独立设置",
                                 description = if (ruleMap.isEmpty()) {
-                                    "为某个会话单独指定「全部遮盖 / 仅关键词 / 放行」，与其它会话互不影响。"
+                                    "为某个会话单独指定「**只遮我点名的成员** / 全部遮盖 / 仅关键词 / 放行」，与其它会话互不影响 —— 多个会话各屏蔽各的人时用这个。"
                                 } else {
                                     "已单独设置 ${ruleMap.size} 个会话（点击修改）"
                                 },
@@ -343,7 +380,7 @@ object BlockMessages : ClickableFeature() {
                             BaseWidget(
                                 iconPlaceholder = false,
                                 title = "从群成员中选择",
-                                description = "先选一个群，再勾选要遮盖的成员，自动填入上面的发送人名单。",
+                                description = "先选一个群，再勾选要遮盖的成员。选完会让你选作用域：默认「只在该会话生效」（推荐，多会话互不影响），也可以选「所有会话都遮盖」。",
                                 onClick = {
                                     persistRules(talkers, keywords, senders, whitelist, keywordOn)
                                     onDismiss()
@@ -506,13 +543,17 @@ object BlockMessages : ClickableFeature() {
 
     /** 会话级独立设置：先选会话，再进入该会话的模式编辑。 */
     private fun showTalkerRulePicker(context: ComponentActivity) {
-        val talkers = BlockMessagesRules.current.talkers
+        val rules = BlockMessagesRules.current
+        val talkers = rules.talkers
         if (talkers.isEmpty()) {
             showToast(context, "请先在「会话名单」里选择会话")
             showRulesDialog(context)
             return
         }
-        val contacts = talkers.map { talker -> pickerContactFor(talker) }
+        // 【Round46】列表里直接标出每个会话当前的独立规则，避免「配了哪个会话、什么模式」全靠记
+        val contacts = talkers.map { talker ->
+            pickerContactFor(talker, ruleSummary(talker, rules))
+        }
         showComposeDialog(context) {
             SingleContactSelector(
                 title = "选择要单独设置的会话",
@@ -527,12 +568,14 @@ object BlockMessages : ClickableFeature() {
         }
     }
 
-    /** 单个会话的模式编辑：全部遮盖 / 仅关键词 / 放行。 */
+    /** 单个会话的模式编辑：仅指定成员 / 全部遮盖 / 仅关键词 / 放行。 */
     private fun showTalkerRuleDialog(context: ComponentActivity, talker: String) {
         showComposeDialog(context) {
             val existing = BlockMessagesRules.current.talkerRule(talker)
             var mode by remember { mutableStateOf(existing.mode) }
             var keywords by remember { mutableStateOf(existing.keywords.joinToString("\n")) }
+            var members by remember { mutableStateOf(existing.members) }
+            val isGroup = talker.isGroupChatWxId
 
             AlertDialogContent(
                 textScrolls = true,
@@ -540,11 +583,14 @@ object BlockMessages : ClickableFeature() {
                 text = {
                     SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
                         BlockTalkerMode.entries.forEach { candidate ->
+                            // 单聊没有「成员」概念：不展示该模式，避免选了之后一脸问号
+                            if (candidate == BlockTalkerMode.MASK_MEMBERS && !isGroup) return@forEach
                             item(key = "mode_${candidate.id}") {
                                 BaseWidget(
                                     iconPlaceholder = false,
                                     title = candidate.label,
                                     description = when (candidate) {
+                                        BlockTalkerMode.MASK_MEMBERS -> "只遮盖该会话里**你点名的成员**，其他人照常显示。多会话各配各的人时用这个。"
                                         BlockTalkerMode.MASK_ALL -> "该会话里对方的**所有**消息都被遮盖/屏蔽（与全局关键词无关）。"
                                         BlockTalkerMode.KEYWORD -> "只有命中下面关键词的消息才被遮盖/屏蔽。"
                                         BlockTalkerMode.PASS -> "该会话完全放行，即使它在全局会话名单里也不遮盖。"
@@ -560,6 +606,33 @@ object BlockMessages : ClickableFeature() {
                                         }
                                     },
                                 )
+                            }
+                        }
+                        if (isGroup && mode == BlockTalkerMode.MASK_MEMBERS) {
+                            item(key = "talker_members_pick") {
+                                BaseWidget(
+                                    iconPlaceholder = false,
+                                    title = if (members.isEmpty()) "选择要遮盖的成员" else "选择要遮盖的成员（已选 ${members.size} 人）",
+                                    description = if (members.isEmpty()) {
+                                        "还没选人 —— 此时该规则不遮盖任何消息。"
+                                    } else {
+                                        "点这里可以继续增删；下面点名单里的成员也可以直接移除。"
+                                    },
+                                    onClick = {
+                                        onDismiss()
+                                        showTalkerMembersPicker(context, talker)
+                                    },
+                                )
+                            }
+                            members.forEach { member ->
+                                item(key = "talker_member_$member") {
+                                    BaseWidget(
+                                        iconPlaceholder = false,
+                                        title = displayNameFor(member),
+                                        description = "点按把 ta 从本会话的遮盖名单里移除",
+                                        onClick = { members = members.filterNot { it == member } },
+                                    )
+                                }
                             }
                         }
                         if (mode == BlockTalkerMode.KEYWORD) {
@@ -598,11 +671,23 @@ object BlockMessages : ClickableFeature() {
                             BlockMessagesRules.save(
                                 rules.withTalkerRule(
                                     talker,
-                                    BlockTalkerRule(mode = mode, keywords = splitLines(keywords)),
+                                    BlockTalkerRule(
+                                        mode = mode,
+                                        keywords = splitLines(keywords),
+                                        members = members,
+                                    ),
                                 ),
                             )
                         }.onFailure { WeLogger.e(TAG, "保存会话独立规则失败", it) }
-                        showToast(context, "已保存该会话的独立设置")
+                        showToast(
+                            context,
+                            when {
+                                mode == BlockTalkerMode.MASK_MEMBERS && members.isEmpty() ->
+                                    "已保存（还没选成员，暂不遮盖任何消息）"
+                                mode == BlockTalkerMode.MASK_MEMBERS -> "已保存：只遮盖这 ${members.size} 个成员"
+                                else -> "已保存该会话的独立设置"
+                            },
+                        )
                         onDismiss()
                         showRulesDialog(context)
                     }) { Text("保存") }
@@ -613,6 +698,56 @@ object BlockMessages : ClickableFeature() {
             )
         }
     }
+
+    /**
+     * 【Round46】会话内「只遮这几个成员」的成员选择器。
+     *
+     * 选完**立即写盘**（并失效 HotPrefs 缓存），然后回到该会话的模式对话框继续编辑 ——
+     * 与其余对话框的「关掉当前 → 打开下一个」的节奏保持一致，避免嵌套弹窗。
+     */
+    private fun showTalkerMembersPicker(context: ComponentActivity, talker: String) {
+        val members = runCatching { WeDatabaseApi.getGroupMembers(talker) }.getOrDefault(emptyList())
+        if (members.isEmpty()) {
+            showToast(context, "该会话取不到成员列表（可能不是群聊）")
+            showTalkerRuleDialog(context, talker)
+            return
+        }
+        val current = BlockMessagesRules.current.talkerRule(talker)
+        val roomName = pickerContactFor(talker).nickname
+        showComposeDialog(context) {
+            ContactsSelector(
+                title = "选择要遮盖的成员（$roomName）",
+                contacts = members,
+                initialSelectedWxIds = current.members.toSet(),
+                onDismiss = {
+                    onDismiss()
+                    showTalkerRuleDialog(context, talker)
+                },
+                onConfirm = { selected ->
+                    runCatching {
+                        val rules = BlockMessagesRules.current
+                        val rule = rules.talkerRule(talker)
+                        BlockMessagesRules.save(
+                            rules.withTalkerRule(
+                                talker,
+                                rule.copy(
+                                    mode = BlockTalkerMode.MASK_MEMBERS,
+                                    members = selected.toList(),
+                                ),
+                            ),
+                        )
+                    }.onFailure { WeLogger.e(TAG, "保存会话内成员名单失败", it) }
+                    showToast(context, "已保存 ${selected.size} 个成员（仅本会话生效）")
+                    onDismiss()
+                    showTalkerRuleDialog(context, talker)
+                },
+            )
+        }
+    }
+
+    /** wxid → 展示名（失败退回 wxid 本身，绝不抛异常）。 */
+    private fun displayNameFor(wxid: String): String =
+        runCatching { WeDatabaseApi.getDisplayName(wxid) }.getOrDefault(wxid).ifBlank { wxid }
 
     /** 群成员可视化选择：选群 → 勾选成员 → 自动填入发送人名单。 */
     private fun showGroupMembersPicker(context: ComponentActivity) {
@@ -651,23 +786,111 @@ object BlockMessages : ClickableFeature() {
                 initialSelectedWxIds = BlockMessagesRules.current.senderKeywords.toSet(),
                 onDismiss = { onDismiss(); showRulesDialog(context) },
                 onConfirm = { selected ->
-                    runCatching {
-                        val rules = BlockMessagesRules.current
-                        BlockMessagesRules.save(rules.copy(senderKeywords = selected.toList()))
-                    }.onFailure { WeLogger.e(TAG, "保存发送人名单失败", it) }
-                    showToast(context, "已填入 ${selected.size} 个发送人")
+                    // 【Round46】不再闷头塞进全局名单 —— 让用户选作用域（默认推荐「只在本会话生效」）
                     onDismiss()
-                    showRulesDialog(context)
+                    showMemberScopeDialog(context, groupId, roomName, selected.toList())
+                },
+            )
+        }
+    }
+
+    /**
+     * 【Round46】选完群成员后决定作用域。
+     *
+     * 用户实测痛点：多个会话要各屏蔽各的人 —— 旧流程把这些成员塞进**全局**发送人名单，
+     * 等于「这个人在所有会话里都被遮住」，正是「第二个会话配完全员都被屏蔽/影响别的会话」
+     * 的观感来源。现在默认推荐存成**该会话专属规则（仅指定成员）**，
+     * 全局名单降级为需要用户显式选择的第二选项。
+     */
+    private fun showMemberScopeDialog(
+        context: ComponentActivity,
+        groupId: String,
+        roomName: String,
+        members: List<String>,
+    ) {
+        if (members.isEmpty()) {
+            showRulesDialog(context)
+            return
+        }
+        showComposeDialog(context) {
+            AlertDialogContent(
+                textScrolls = true,
+                title = { Text("这 ${members.size} 个人在哪里生效？") },
+                text = {
+                    SegmentedColumn(contentPadding = PaddingValues(0.dp)) {
+                        item(key = "scope_talker") {
+                            BaseWidget(
+                                iconPlaceholder = false,
+                                title = "只在这个会话里遮盖（推荐）",
+                                description = "存成「$roomName」的专属规则：只遮这 ${members.size} 个人，该会话其他人照常看得到；其它会话完全不受影响。",
+                                onClick = {
+                                    runCatching {
+                                        val rules = BlockMessagesRules.current
+                                        val rule = rules.talkerRule(groupId)
+                                        BlockMessagesRules.save(
+                                            rules.withTalkerRule(
+                                                groupId,
+                                                rule.copy(
+                                                    mode = BlockTalkerMode.MASK_MEMBERS,
+                                                    members = members,
+                                                ),
+                                            ),
+                                        )
+                                    }.onFailure { WeLogger.e(TAG, "保存会话专属成员名单失败", it) }
+                                    showToast(context, "已设为「$roomName」专属：只遮这 ${members.size} 个人")
+                                    onDismiss()
+                                    showRulesDialog(context)
+                                },
+                            )
+                        }
+                        item(key = "scope_global") {
+                            BaseWidget(
+                                iconPlaceholder = false,
+                                title = "所有会话里都遮盖这些人",
+                                description = "存进全局发送人名单：这 ${members.size} 个人在**任何**会话里发的消息都会被遮盖/屏蔽。",
+                                onClick = {
+                                    runCatching {
+                                        val rules = BlockMessagesRules.current
+                                        BlockMessagesRules.save(rules.copy(senderKeywords = members))
+                                    }.onFailure { WeLogger.e(TAG, "保存发送人名单失败", it) }
+                                    showToast(context, "已填入全局发送人名单（${members.size} 人）")
+                                    onDismiss()
+                                    showRulesDialog(context)
+                                },
+                            )
+                        }
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { onDismiss(); showGroupMemberListPicker(context, groupId) }) {
+                        Text("返回重选")
+                    }
                 },
             )
         }
     }
 
     /** 把 wxid 解析成「头像 + 昵称/群备注」，供选择器展示。 */
-    private fun pickerContactFor(wxid: String): IWeContact {
+    private fun pickerContactFor(wxid: String, note: String = ""): IWeContact {
         val name = runCatching { WeDatabaseApi.getDisplayName(wxid) }.getOrDefault(wxid)
         val avatar = runCatching { WeDatabaseApi.getAvatarUrl(wxid) }.getOrDefault("")
-        return MaskPickerContact(wxId = wxid, nickname = name.ifBlank { wxid }, avatarUrl = avatar)
+        val label = name.ifBlank { wxid }
+        return MaskPickerContact(
+            wxId = wxid,
+            nickname = if (note.isBlank()) label else "$label · $note",
+            avatarUrl = avatar,
+        )
+    }
+
+    /** 【Round46】会话当前独立规则的一句话摘要（未设置 = 跟随全局）。 */
+    private fun ruleSummary(talker: String, rules: BlockMessagesRules): String {
+        val rule = rules.perTalker[talker] ?: return "跟随全局"
+        return when (rule.mode) {
+            BlockTalkerMode.MASK_MEMBERS -> if (rule.members.isEmpty()) "仅指定成员（未选人）" else "仅指定成员 ${rule.members.size} 人"
+            BlockTalkerMode.MASK_ALL -> "全部遮盖"
+            BlockTalkerMode.KEYWORD -> "仅关键词"
+            BlockTalkerMode.PASS -> "放行"
+        }
     }
 
     private fun persistRules(
@@ -787,6 +1010,9 @@ data class BlockMessagesRules(
                         JSONObject().apply {
                             put("mode", rule.mode.id)
                             put("keywords", JSONArray(rule.keywords))
+                            // 【Round46】会话内「仅指定成员」名单（空数组也必须写，
+                            // 保证老/新版本互读时语义不歧义）
+                            put("members", JSONArray(rule.members))
                         },
                     )
                 }
@@ -818,6 +1044,7 @@ data class BlockMessagesRules(
                 out[talker] = BlockTalkerRule(
                     mode = BlockTalkerMode.fromId(rule.optString("mode", BlockTalkerMode.MASK_ALL.id)),
                     keywords = readArray(rule.optJSONArray("keywords")),
+                    members = readArray(rule.optJSONArray("members")),
                 )
             }
             return out
@@ -827,6 +1054,16 @@ data class BlockMessagesRules(
 
 /** 单个会话的遮盖/屏蔽模式。 */
 enum class BlockTalkerMode(val id: String, val label: String) {
+    /**
+     * 【Round46】只遮盖该会话里**指定成员**的消息（推荐模式，也是新建规则的默认值）。
+     *
+     * 用户第 45 轮实测口径：「多个会话各自屏蔽各自的人」——第一个会话配好正常，
+     * 第二个会话一保存竟然**整个会话的人都看不见了**。根因就是旧枚举只有「全部遮盖」，
+     * 且新建规则的默认模式是 MASK_ALL：进对话框没动模式直接点保存 = 全遮。
+     * 现在默认模式是 MASK_MEMBERS 且**成员为空时恒不命中**（保存不动 = 零副作用）。
+     */
+    MASK_MEMBERS("mask_members", "仅指定成员"),
+
     /** 该会话的对方消息**全部**遮盖/屏蔽。 */
     MASK_ALL("mask_all", "全部遮盖"),
 
@@ -837,15 +1074,29 @@ enum class BlockTalkerMode(val id: String, val label: String) {
     PASS("pass", "放行");
 
     companion object {
+        /**
+         * 反序列化。
+         *
+         * 注意：`mode` 键缺失时退回 [MASK_ALL]（老配置里一定带 mode，缺失只可能是手工改过
+         * 存储的场景，此时保守地按老行为处理）。新建规则请用 [BlockTalkerRule] 的默认值，
+         * 那条路径走的是 [MASK_MEMBERS]。
+         */
         fun fromId(id: String): BlockTalkerMode =
             entries.firstOrNull { it.id == id } ?: MASK_ALL
     }
 }
 
-/** 单个会话的独立规则（Round45）。 */
+/**
+ * 单个会话的独立规则（Round45 引入 / Round46 增加成员粒度）。
+ *
+ * @param members 仅 [BlockTalkerMode.MASK_MEMBERS] 生效：该会话里要遮盖的成员名单
+ *   （存 **wxid**，与选择器一致；通知路径用「昵称 → wxid」反查补齐，见
+ *   [BlockMessagesRuntime.senderAliasesOf]）。空名单 = 该规则不命中任何消息。
+ */
 data class BlockTalkerRule(
-    val mode: BlockTalkerMode = BlockTalkerMode.MASK_ALL,
+    val mode: BlockTalkerMode = BlockTalkerMode.MASK_MEMBERS,
     val keywords: List<String> = emptyList(),
+    val members: List<String> = emptyList(),
 )
 
 /**
@@ -898,8 +1149,16 @@ object BlockMessagesRuntime : ApiFeature(), IResolveDex {
                 rawContent
             }
 
-            val reason = BlockMessages.matchReason(talker = talker, sender = sender, content = content)
-                ?: return@hookBefore
+            // 【Round46】通知路径只能拿到「昵称」，而名单里存的是 wxid：
+            // 这里把昵称反查成 wxid 一起喂给规则引擎，否则「发送人/会话内指定成员」
+            // 在通知路径上永远命中不了（用户实测「配了没效果」的根因）。
+            val aliases = senderAliasesOf(talker, sender)
+            val reason = BlockMessages.matchReason(
+                talker = talker,
+                sender = sender,
+                content = content,
+                senderAliases = aliases,
+            ) ?: return@hookBefore
 
             // 1) 吞掉通知
             result = null
@@ -939,8 +1198,54 @@ object BlockMessagesRuntime : ApiFeature(), IResolveDex {
         return rawContent.substring(0, idx).trim()
     }
 
+    /**
+     * 【Round46】把通知正文里的**群昵称**反查成 wxid，供「发送人 / 会话内指定成员」名单命中。
+     *
+     * 为什么必须做：`dealNotify` 只有 (talker, content)，发送人只能从「昵称: 正文」里抠出昵称；
+     * 而选择器存进规则的是 wxid。两者不在同一命名空间，旧实现因此永远不命中。
+     *
+     * 成本控制：
+     *  - 只在**群聊**上做，且带上限 64 条的 LRU + 120s TTL（同一发送人反复发消息只查一次库）；
+     *  - 通知路径（不是逐条 bind 的热路径），且只在准备判定前查一次；
+     *  - 任何失败只是返回空列表（降级为「不比别名」），绝不抛异常、绝不吞掉通知链。
+     */
+    private val aliasCache = object : LinkedHashMap<String, Pair<Long, List<String>>>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Long, List<String>>>?) =
+            size > 64
+    }
+
+    private fun senderAliasesOf(talker: String, sender: String): List<String> {
+        if (sender.isEmpty() || !talker.isGroupChatWxId) return emptyList()
+        val key = "$talker|$sender"
+        val now = SystemClock.elapsedRealtime()
+        synchronized(aliasCache) {
+            aliasCache[key]?.let { (stamp, value) ->
+                if (now - stamp < ALIAS_TTL_MS) return value
+            }
+        }
+        val resolved = runCatching {
+            WeDatabaseApi.getGroupMembers(talker)
+                .filter { contact ->
+                    val name = contact.nickname
+                    name.isNotEmpty() &&
+                        (name == sender || name.endsWith(sender) || sender.endsWith(name))
+                }
+                .map { it.wxId }
+                .filter { it.isNotEmpty() }
+                .distinct()
+        }.getOrDefault(emptyList())
+        synchronized(aliasCache) {
+            aliasCache.remove(key)
+            aliasCache[key] = now to resolved
+        }
+        return resolved
+    }
+
+    private const val ALIAS_TTL_MS = 120_000L
+
     override fun onDisable() {
         // Joker 自己的 hook 框架会自动卸载 dexMethod 委托；本类无额外状态
+        synchronized(aliasCache) { aliasCache.clear() }
     }
 }
 

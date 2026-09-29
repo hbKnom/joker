@@ -69,6 +69,7 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.FileTime
 import java.util.UUID
+import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 import kotlin.io.path.Path
 import kotlin.io.path.absolutePathString
@@ -1467,6 +1468,19 @@ object WeMessageApi : ApiFeature(), IResolveDex {
         }
     }
 
+    /** 「发送文本」的重试次数上限（第 46 轮：宿主网络核未初始化时最多重试到 3 次）。 */
+    private const val SEND_TEXT_MAX_ATTEMPTS = 3
+
+    /**
+     * 「发送文本」专用后台线程。
+     *
+     * 通知栏快捷回复是从 `BroadcastReceiver.onReceive`（主线程）里触发的，
+     * 重试等待绝不能占用主线程；单线程串行也天然保证多条回复的先后顺序。
+     */
+    private val sendExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "joker-send-text").apply { isDaemon = true }
+    }
+
     private fun createSendMsgScene(toUser: String, content: String): Any {
         val constructor = ctorNetSceneSendMsg.constructor
         // The six-argument signature accepts an explicit msgsource. Empty preserves
@@ -1478,18 +1492,87 @@ object WeMessageApi : ApiFeature(), IResolveDex {
         }
     }
 
-    /** 发送文本消息 */
+    /** 发送文本消息（同步；失败只记日志并返回 false —— 需要重试语义请用 [sendTextRetrying]）。 */
     fun sendText(toUser: String, text: String): Boolean {
         return try {
-            // 日志落盘在手机上、还可能被日志页/脚本读取：只记长度，不记聊天正文（隐私）。
-            WeLogger.i(TAG, "sending text message (len=${text.length})")
-            val sendMsgObject = methodGetSendMsgObject.method.invoke(null) ?: return false
-            val msgObj = createSendMsgScene(toUser, text)
-            methodPostToQueue.method.invoke(sendMsgObject, msgObj) as? Boolean ?: false
+            sendTextOnce(toUser, text)
         } catch (e: Exception) {
             WeLogger.e(TAG, "failed to send text message", e)
             false
         }
+    }
+
+    /**
+     * 后台线程发送文本，并在「宿主网络核尚未初始化」时自动重试（第 46 轮新增）。
+     *
+     * 用户第 45 轮实测日志里出现 `aw5.b: mCoreNetwork not initialized!`：通知栏快捷回复
+     * 在微信刚被拉起 / 刚开机时被点，宿主网络核还没起来，消息**直接发失败**
+     * —— 用户观感就是「我在通知里回了，但消息根本没发出去」。
+     *
+     * 这类失败抛在**真正投递之前**（异常来自取网络核那一步），所以可以安全重试；
+     * 退避 0.6s → 1.8s → 4s，最多 3 次。只对「未初始化」特征重试，
+     * 参数类错误（目标非法等）第一次就放弃，避免重试放大问题。
+     *
+     * 必须在后台线程做：调用方是 BroadcastReceiver 的 `onReceive`（主线程），
+     * 在主线程上 sleep 重试会直接 ANR。
+     */
+    fun sendTextRetrying(toUser: String, text: String, onResult: ((Boolean) -> Unit)? = null) {
+        sendExecutor.execute {
+            var delay = 600L
+            var attempt = 1
+            while (true) {
+                val failure: Exception? = try {
+                    if (sendTextOnce(toUser, text)) {
+                        onResult?.invoke(true)
+                        return@execute
+                    }
+                    // 入队被宿主明确拒绝：不是「没初始化」，不重试（重试有重复投递风险）。
+                    WeLogger.w(TAG, "send text rejected by host queue")
+                    onResult?.invoke(false)
+                    return@execute
+                } catch (e: Exception) {
+                    e
+                }
+                if (attempt >= SEND_TEXT_MAX_ATTEMPTS || !looksUninitialized(failure)) {
+                    WeLogger.e(TAG, "failed to send text message", failure)
+                    onResult?.invoke(false)
+                    return@execute
+                }
+                WeLogger.w(
+                    TAG,
+                    "宿主网络核尚未就绪，${delay}ms 后重试发送（attempt=$attempt）",
+                )
+                runCatching { Thread.sleep(delay) }
+                delay *= 3
+                attempt++
+            }
+        }
+    }
+
+    private fun sendTextOnce(toUser: String, text: String): Boolean {
+        // 日志落盘在手机上、还可能被日志页/脚本读取：只记长度，不记聊天正文（隐私）。
+        WeLogger.i(TAG, "sending text message (len=${text.length})")
+        val sendMsgObject = methodGetSendMsgObject.method.invoke(null) ?: return false
+        val msgObj = createSendMsgScene(toUser, text)
+        return methodPostToQueue.method.invoke(sendMsgObject, msgObj) as? Boolean ?: false
+    }
+
+    /** 异常链里是否带「宿主还没初始化好」的特征（微信冷启动早期最常见）。 */
+    private fun looksUninitialized(throwable: Throwable?): Boolean {
+        var current = throwable
+        var depth = 0
+        while (current != null && depth < 6) {
+            val message = current.message.orEmpty()
+            if (message.contains("not initialized", ignoreCase = true) ||
+                message.contains("mCoreNetwork", ignoreCase = true) ||
+                message.contains("not inited", ignoreCase = true)
+            ) {
+                return true
+            }
+            current = current.cause
+            depth++
+        }
+        return false
     }
 
     /** 发送文件消息 */

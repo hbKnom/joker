@@ -88,6 +88,9 @@ object WeDatabaseApi : ApiFeature(), IResolveDex {
 
     private const val TAG = "WeDatabaseApi"
 
+    /** 头像可能落在 `img_flag` 的哪几列（不同微信版本不同，全取回来由调用方按序尝试）。 */
+    private val AVATAR_COLUMNS = listOf("reserved1", "reserved2", "reserved3", "reserved4")
+
     val coreStorage by lazy {
         classMmKernel.reflekt()
             .firstMethod {
@@ -813,6 +816,59 @@ object WeDatabaseApi : ApiFeature(), IResolveDex {
         val http = candidates.firstOrNull { it.startsWith("http://") || it.startsWith("https://") }
         WeLogger.d(TAG, "avatar for '$wxid': candidates=${candidates.size} http=${http != null}")
         return http.orEmpty()
+    }
+
+    /**
+     * 头像的**全部候选来源**（第 46 轮新增）。
+     *
+     * 为什么需要：用户实机反馈「群聊里被遮盖的那条消息，头像加载不出来，只显示一个字母圆」。
+     * 根因是微信新版的头像**只以虚拟路径存在** —— `img_flag.reserved1..4` 里是
+     * `wcf://avatar/01/a5/user_xxx.png`（有时外面还套一层 `file:` 前缀），
+     * 单纯 `BitmapFactory.decodeFile()` 必然拿到 null，于是一律退化成首字彩圆。
+     *
+     * 这里把 `reserved1..4` 全部取回、去掉 `file:` 前缀、去重，并**按可解码性排序**：
+     * 真实文件路径（`/…`）优先 → 宿主虚拟路径（`wcf://…`）其次 → http(s) 直链最后
+     * （网络地址我们不在热路径里请求，只当作兜底候选信息返回）。
+     *
+     * 调用方（[dev.joker.features.items.chat.BlockedMessageMask]）会先按真实路径
+     * `decodeFile`，失败再借宿主自己的 VFS 引擎读虚拟路径。
+     */
+    fun getAvatarCandidates(wxid: String): List<String> {
+        if (wxid.isEmpty()) return emptyList()
+        val raw = ArrayList<String>(4)
+        runCatching {
+            executeQuery(SqlStatements.avatarAll(wxid)).firstOrNull()?.let { row ->
+                AVATAR_COLUMNS.forEach { column ->
+                    (row[column] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let { raw += it }
+                }
+            }
+        }.onFailure { WeLogger.w(TAG, "avatarAll query failed for '$wxid'", it) }
+        if (raw.isEmpty()) {
+            runCatching { getAvatarUrl(wxid) }.getOrDefault("").let { if (it.isNotBlank()) raw += it }
+        }
+        return raw
+            .map { stripFileScheme(it) }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .sortedBy { avatarRank(it) }
+    }
+
+    /** `file:` / `file://` 前缀去掉（微信可能给 `file:wcf://avatar/…`）。 */
+    private fun stripFileScheme(value: String): String {
+        val v = value.trim()
+        return when {
+            v.startsWith("file://", ignoreCase = true) -> v.substring(7).trim()
+            v.startsWith("file:", ignoreCase = true) -> v.substring(5).trim()
+            else -> v
+        }
+    }
+
+    /** 0 = 真实文件路径，1 = 宿主虚拟路径（wcf://），2 = 网络直链（仅兜底排序，不请求）。 */
+    private fun avatarRank(value: String): Int = when {
+        value.startsWith("/") -> 0
+        value.startsWith("http://", ignoreCase = true) ||
+            value.startsWith("https://", ignoreCase = true) -> 2
+        else -> 1
     }
 
     private fun mapToContacts(data: List<Map<String, Any?>>): List<WeContact> {

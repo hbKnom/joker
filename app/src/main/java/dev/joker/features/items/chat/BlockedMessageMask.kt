@@ -24,8 +24,11 @@ import dev.joker.features.api.core.models.MessageInfo
 import dev.joker.features.core.FeatureCategoryIds
 import dev.joker.features.core.SwitchFeature
 import dev.joker.preferences.hotPrefOption
+import dev.joker.reflekt.utils.Modifiers
 import dev.joker.reflekt.reflekt
 import dev.joker.utils.WeLogger
+import java.io.File
+import java.io.InputStream
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.Executors
@@ -515,30 +518,82 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
             Thread(runnable, "joker-mask-avatar").apply { isDaemon = true }
         }
 
+        /**
+         * 宿主 VFS 的「读文件」静态方法（`MicroMsg.VFSFileOp` 的 `(String) -> InputStream`）。
+         *
+         * 【第 46 轮】微信新版的头像只以 `wcf://avatar/xx/yy/user_xxx.png` 这类**虚拟路径**
+         * 存在（`img_flag.reserved*` 里拿到的就是它），`BitmapFactory.decodeFile()` 一定拿不到
+         * —— 这就是用户截图里「群成员头像加载不出来、只剩一个字母圆」的根因。
+         * 只有借宿主自己的 VFS 引擎（同一个 `MicroMsg.VFSFileOp`，语音/朋友圈大图都在用）
+         * 才能把虚拟路径读成字节流。
+         *
+         * 解析失败（DexKit 未就绪、该版本没有这个方法）**不缓存 null**：下次请求再试一次，
+         * 否则一次抢跑就会让本进程内所有头像永久退化成首字圆。
+         */
+        @Volatile private var vfsReadResolved = false
+        @Volatile private var vfsReadMethod: java.lang.reflect.Method? = null
+
+        private fun vfsRead(): java.lang.reflect.Method? {
+            if (vfsReadResolved) return vfsReadMethod
+            val found = runCatching {
+                WeMessageApi.classVfs.reflekt().firstMethod {
+                    modifiers(Modifiers.STATIC)
+                    parameters(String::class)
+                    returnType = InputStream::class
+                }.self
+            }.getOrNull()
+            if (found != null) {
+                vfsReadMethod = found
+                vfsReadResolved = true
+            }
+            return found
+        }
+
         fun cached(key: String): Bitmap? = runCatching { cache.get(key) }.getOrNull()
 
         fun request(key: String, onReady: () -> Unit) {
             if (key.isEmpty() || failed.contains(key) || cached(key) != null) return
-            runCatching {
-                val path = WeDatabaseApi.getAvatarUrl(key)
-                // 只处理本地文件路径；http(s) 直链在这里不做网络请求（避免引入任何网络开销）
-                if (path.isBlank() || !path.startsWith("/")) {
+            executor.execute {
+                val decoded = runCatching { decodeAvatar(key) }.getOrNull()
+                if (decoded == null) {
                     failed.add(key)
-                    return
+                    return@execute
                 }
-                executor.execute {
-                    runCatching {
-                        val decoded = BitmapFactory.decodeFile(path)
-                        if (decoded == null) {
-                            failed.add(key)
-                            return@execute
-                        }
-                        val scaled = scaleDown(decoded)
-                        cache.put(key, scaled)
-                        onReady()
-                    }.onFailure { failed.add(key) }
+                cache.put(key, scaleDown(decoded))
+                runCatching { onReady() }
+            }
+        }
+
+        /**
+         * 多来源尝试：真实文件路径 → 宿主 VFS（`wcf://` 等虚拟路径）；全失败才返回 null
+         * （调用方会退化成首字彩圆）。整个方法只在后台线程调用，主线程零 IO。
+         */
+        private fun decodeAvatar(wxid: String): Bitmap? {
+            val candidates = runCatching { WeDatabaseApi.getAvatarCandidates(wxid) }
+                .getOrDefault(emptyList())
+            if (candidates.isEmpty()) {
+                WeLogger.d(TAG, "avatar: no candidate for '$wxid'")
+                return null
+            }
+            candidates.filter { it.startsWith("/") }.forEach { path ->
+                runCatching {
+                    if (File(path).isFile) BitmapFactory.decodeFile(path)?.let { return it }
                 }
-            }.onFailure { failed.add(key) }
+            }
+            val read = vfsRead()
+            if (read == null) {
+                WeLogger.d(TAG, "avatar: VFS reader unavailable for '$wxid'")
+                return null
+            }
+            candidates.forEach { candidate ->
+                runCatching {
+                    (read.invoke(null, candidate) as? InputStream)?.use { stream ->
+                        BitmapFactory.decodeStream(stream)?.let { return it }
+                    }
+                }
+            }
+            WeLogger.d(TAG, "avatar: decode failed for '$wxid' (candidates=${candidates.size})")
+            return null
         }
 
         private fun scaleDown(src: Bitmap): Bitmap {

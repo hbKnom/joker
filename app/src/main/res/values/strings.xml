@@ -2391,6 +2391,14 @@
     <string name="chat_auto_reply_ai_system_prompt_hint">Leave blank to use the built-in Hchat-style prompt (a friendly chat assistant replying in Chinese).</string>
     <string name="chat_auto_reply_ai_max_tokens">Max tokens (64–4096)</string>
     <string name="chat_auto_reply_ai_model_current">Current AI model: %1$s</string>
+    <string name="chat_auto_reply_style_title">Reply style</string>
+    <string name="chat_auto_reply_style_hint">Shapes the tone and persona of AI replies. Applied on top of your custom prompt.</string>
+    <string name="chat_auto_reply_style_warm">Warm and caring</string>
+    <string name="chat_auto_reply_style_playful">Playful and cute</string>
+    <string name="chat_auto_reply_style_humor">Witty and humorous</string>
+    <string name="chat_auto_reply_style_concise">Short and to the point</string>
+    <string name="chat_auto_reply_style_steady">Steady and professional</string>
+    <string name="chat_auto_reply_style_poetic">Poetic and vivid</string>
     <string name="chat_auto_reply_ai_no_model">No AI model configured. Open Chat Analysis → AI Models to add one.</string>
     <string name="chat_auto_reply_ai_model_name">AI model name (optional)</string>
     <string name="chat_auto_reply_ai_model_name_hint">Leave blank to use the model selected in Chat Analysis. Enter a model name to override per task.</string>
@@ -3731,6 +3739,7 @@
     <string name="notifications_action_mark_read">Mark as read</string>
     <string name="notifications_action_reply">Reply</string>
     <string name="notifications_reply_hint">Enter a reply…</string>
+    <string name="notif_quick_reply_failed">Quick reply was not sent. Open WeChat and try again.</string>
     <string name="notifications_self">Me</string>
     <string name="notifications_unknown_content">Unknown content (please report this to the module developer)</string>
     <string name="notifications_unknown_conversation">Unknown conversation (please report this to the module developer)</string>

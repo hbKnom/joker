@@ -2349,6 +2349,14 @@
     <string name="chat_auto_reply_ai_system_prompt_hint">留空则使用内置 Hchat 风格提示词（友好的中文聊天助手）。</string>
     <string name="chat_auto_reply_ai_max_tokens">最大 Token (64–4096)</string>
     <string name="chat_auto_reply_ai_model_current">当前 AI 模型：%1$s</string>
+    <string name="chat_auto_reply_style_title">回复风格</string>
+    <string name="chat_auto_reply_style_hint">决定 AI 回复的语气与人设，在你的自定义提示词之上叠加生效</string>
+    <string name="chat_auto_reply_style_warm">温柔体贴</string>
+    <string name="chat_auto_reply_style_playful">俏皮可爱</string>
+    <string name="chat_auto_reply_style_humor">幽默风趣</string>
+    <string name="chat_auto_reply_style_concise">简洁干练</string>
+    <string name="chat_auto_reply_style_steady">专业稳重</string>
+    <string name="chat_auto_reply_style_poetic">文艺抒情</string>
     <string name="chat_auto_reply_ai_no_model">尚未配置 AI 模型。请打开「聊天分析 → AI 模型」添加。</string>
     <string name="chat_auto_reply_ai_model_name">AI 模型名称（选填）</string>
     <string name="chat_auto_reply_ai_model_name_hint">留空则使用聊天分析中选定的模型。填入名称可让此任务覆盖默认。</string>
@@ -3764,6 +3772,7 @@
     <string name="notifications_action_mark_read">标为已读</string>
     <string name="notifications_action_reply">回复</string>
     <string name="notifications_reply_hint">输入回复内容…</string>
+    <string name="notif_quick_reply_failed">快捷回复发送失败，请打开微信重试</string>
     <string name="notifications_self">我</string>
     <string name="notifications_unknown_content">未知内容（请向模块开发者报告错误）</string>
     <string name="notifications_unknown_conversation">未知对话（请向模块开发者报告错误）</string>

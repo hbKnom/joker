@@ -34,6 +34,9 @@ internal object MonetBadgeRecolor {
     /** 一次最多改写多少条角标颜色（防止某个版本里「大红色」被滥用成几十条而把包撑肿）。 */
     private const val MAX_TARGETS = 60
 
+    /** 角标底色与「面」色的最小明度差（低于它就换成同源的深/浅强调色）。 */
+    private const val MIN_BADGE_LUMINANCE_DELTA = 0.22f
+
     /** 微信家族里被用作「未读 / 新消息」角标的红（ARGB 位模式）。 */
     private val BADGE_REDS = setOf(
         0xFFFA5151.toInt(),
@@ -86,6 +89,24 @@ internal object MonetBadgeRecolor {
     )
 
     /**
+     * 【第 46 轮】名字里出现任一关键词 → **绝不改**：这些是**前景/文字色**。
+     *
+     * 为什么必须排除：角标是「底 + 字」两个色。如果底和字都被重着色成同一个莫奈主色，
+     * 数字就会溶进底色里 —— 实机观感正是「有消息进来，但消息角标变成空白的」。
+     * 我们无法可靠地判断一个字色资源配的是哪块底，所以这类资源一律不动（保守即安全）。
+     */
+    private val NAME_TEXT_BLOCKLIST = listOf(
+        "text",
+        "txt",
+        "_fg",
+        "fore",
+        "font",
+        "white",
+        "title_color",
+        "digit",
+    )
+
+    /**
      * 扫出所有「角标类」颜色资源并给出莫奈覆盖目标。
      *
      * 全程 `runCatching` 兜底：扫描失败只是「角标保持原色」，绝不能影响其余角色的解析。
@@ -97,6 +118,7 @@ internal object MonetBadgeRecolor {
                 if (node.key.type != "color") return@forEach
                 val name = node.key.name.lowercase()
                 if (NAME_BLOCKLIST.any { name.contains(it) }) return@forEach
+                if (NAME_TEXT_BLOCKLIST.any { name.contains(it) }) return@forEach
 
                 val byName = NAME_HINTS.any { name.contains(it) }
                 val byValue = node.hasLiteralBadgeRed()
@@ -108,21 +130,61 @@ internal object MonetBadgeRecolor {
                 WeLogger.i(TAG, "未发现角标类颜色资源（本版本角标可能不是独立 color 资源）")
                 return@runCatching emptyList()
             }
+            // 【第 46 轮】不再无脑写 primaryLight/primaryDark：如果主色与「面」色的明度太接近，
+            // 角标底色就会和会话行背景糊在一起 —— 实机观感就是「角标是空的 / 看不见」。
+            // 这里做一次明度差守卫，不够对比时改用同源的深/浅强调色（仍是莫奈色，只是更有对比）。
+            val lightColor = badgeColor(palette.primaryLight, palette.surfaceLight, palette.accent1_700)
+            val nightColor = badgeColor(palette.primaryDark, palette.surfaceDark, palette.accent1_300)
             val picked = hits.take(MAX_TARGETS).map { (node, _) ->
                 ColorTarget(
                     binding = node.binding(),
-                    light = ColorValue.Literal(palette.primaryLight),
-                    night = ColorValue.Literal(palette.primaryDark),
+                    light = ColorValue.Literal(lightColor),
+                    night = ColorValue.Literal(nightColor),
                 )
             }
+            // 逐条列出「资源名 旧值→新值」：下一轮日志里就能直接看出角标到底被改成了什么色，
+            // 不必再靠截图猜（第 46 轮用户反馈「角标为空」时缺的就是这条证据）。
             WeLogger.i(
                 TAG,
-                "角标重着色：命中 ${hits.size} 条颜色资源，取前 ${picked.size} 条改写为莫奈主色 " +
-                    "(${hits.take(8).joinToString { it.first.key.name }})",
+                "角标重着色：命中 ${hits.size} 条颜色资源，取前 ${picked.size} 条改写为莫奈角标色 " +
+                    "light=#${Integer.toHexString(lightColor)} night=#${Integer.toHexString(nightColor)} | " +
+                    hits.take(12).joinToString {
+                        "${it.first.key.name}(${if (it.second) "名" else "值"}证据," +
+                            "旧值=#${Integer.toHexString(it.first.representativeLiteral())})"
+                    },
             )
             picked
         }.onFailure { WeLogger.w(TAG, "角标重着色扫描失败，保持原色", it) }
             .getOrDefault(emptyList())
+    }
+
+    /**
+     * 选一个「与背景有足够明度差」的角标底色。
+     *
+     * 明度差 ≥ 0.22 时用莫奈主色本身（用户要的就是「角标跟主色」）；
+     * 否则退回同源的深/浅强调色 —— 宁可角标颜色深一点/浅一点，也**绝不能糊到看不出来**。
+     */
+    private fun badgeColor(primary: Int, surface: Int, fallback: Int): Int {
+        val delta = luminance(primary) - luminance(surface)
+        return if (delta >= MIN_BADGE_LUMINANCE_DELTA || -delta >= MIN_BADGE_LUMINANCE_DELTA) primary
+        else fallback
+    }
+
+    /** 相对亮度（0..1，sRGB 简化式，够用来判断「糊没糊在一起」）。 */
+    private fun luminance(argb: Int): Float {
+        val r = (argb shr 16) and 0xFF
+        val g = (argb shr 8) and 0xFF
+        val b = argb and 0xFF
+        return (0.2126f * r + 0.7152f * g + 0.0722f * b) / 255f
+    }
+
+    /** 取该节点第一个字面量色值，仅供日志（拿不到就返回 0）。 */
+    private fun MonetResourceNode.representativeLiteral(): Int {
+        values.forEach { configured ->
+            val value = configured.value
+            if (value is MonetResourceValue.Literal) return value.data.toInt()
+        }
+        return 0
     }
 
     /** 该 color 条目的值是否恰好是角标红。 */

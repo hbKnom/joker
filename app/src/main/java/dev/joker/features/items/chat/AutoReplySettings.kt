@@ -146,6 +146,14 @@ internal data class AutoReplyTask(
      * 让用户能为自动回复选不同模型（如：聊天分析用 GPT-4，自动回复用本地 Ollama）。
      */
     val aiModelName: String = "",
+    /**
+     * 【第 46 轮】AI 回复的人设风格（见 [AutoReplyStyle]）。
+     *
+     * 用户反馈 AI 回复「单调、功能单一」，希望能选风格（温柔体贴 / 俏皮 / 幽默 …）。
+     * 存 id 字符串而不是枚举本身：与既有 `reply.type` 等字段一致的存法，
+     * 且新增字段**带默认值**，老配置反序列化后自动得到「温柔体贴」，不需要迁移脚本。
+     */
+    val aiStyle: String = AutoReplyStyle.WARM.id,
 )
 
 @Serializable
@@ -928,6 +936,19 @@ internal object AutoReplySettings {
                         )
                     }
                 }
+                // 【第 46 轮】回复风格选择：温柔体贴 / 俏皮可爱 / 幽默风趣 / 简洁干练 / 专业稳重 / 文艺抒情
+                item(key = "ai_style") {
+                    DropDownMenuWidget(
+                        iconPlaceholder = false,
+                        title = stringResource(R.string.chat_auto_reply_style_title),
+                        description = stringResource(R.string.chat_auto_reply_style_hint),
+                        value = task.aiStyle,
+                        options = AutoReplyStyle.entries.map { style ->
+                            DropdownOption(style.id, stringResource(autoReplyStyleLabel(style.id)))
+                        },
+                        onValueChange = { onChange(task.copy(aiStyle = it)) },
+                    )
+                }
                 item(key = "ai_max_tokens") {
                     BaseSupportingWidget(
                         title = stringResource(R.string.chat_auto_reply_ai_max_tokens),
@@ -1306,4 +1327,14 @@ internal object AutoReplySettings {
     private fun updateConfig(transform: (StoredConfig) -> StoredConfig) {
         store.update { transform(it).copy(version = CONFIG_VERSION) }
     }
+
+/** 风格 id → 三语文案（认不出的 id 回落「温柔体贴」，与 [AutoReplyStyle.fromId] 一致）。 */
+private fun autoReplyStyleLabel(id: String): Int = when (id) {
+    "playful" -> R.string.chat_auto_reply_style_playful
+    "humor" -> R.string.chat_auto_reply_style_humor
+    "concise" -> R.string.chat_auto_reply_style_concise
+    "steady" -> R.string.chat_auto_reply_style_steady
+    "poetic" -> R.string.chat_auto_reply_style_poetic
+    else -> R.string.chat_auto_reply_style_warm
+}
 }

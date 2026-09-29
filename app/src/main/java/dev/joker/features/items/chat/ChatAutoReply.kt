@@ -18,6 +18,69 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicLong
 
+/**
+ * 【第 46 轮】AI 自动回复的「人设风格」。
+ *
+ * 用户反馈：AI 回复「比较单调、功能单一」，希望「更人性化，温柔体贴一些，可以有多种风格选择」。
+ * 每种风格只做一件事：往 system prompt 末尾追加一段**人设与语气约束**。
+ * 它不替换用户自定义的提示词（自定义优先级不变），只是叠加一层语气要求 —— 所以：
+ *  · 老配置（没有 aiStyle 字段）反序列化后拿到默认值 [WARM]，行为与用户预期一致；
+ *  · 不确定风格 id 时一律回落 [WARM]，绝不因为配置脏了就不回复。
+ */
+internal enum class AutoReplyStyle(
+    val id: String,
+    private val persona: String,
+) {
+    /** 温柔体贴（默认）：对齐用户原话「回复的更加人性化，温柔体贴一些」。 */
+    WARM(
+        "warm",
+        "语气温柔体贴、有耐心。先接住对方当下的情绪，再回应内容；多用自然短句和少量语气词，" +
+            "让对方感觉被认真在意。不要敷衍式附和，也不要长篇大论。",
+    ),
+
+    /** 俏皮可爱。 */
+    PLAYFUL(
+        "playful",
+        "语气俏皮可爱、机灵，像很熟的朋友在闲聊。可以有适度的自嘲和小小的撒娇，" +
+            "不必端着；但不要油腻、不要每句都加颜文字。",
+    ),
+
+    /** 幽默风趣。 */
+    HUMOR(
+        "humor",
+        "幽默风趣，会接梗、会夸张一点点地打趣。玩笑只针对事情不针对人，" +
+            "对方明显在难过或生气时先收起玩笑。",
+    ),
+
+    /** 简洁干练。 */
+    CONCISE(
+        "concise",
+        "话少、直给。像熟人之间干脆利落的回话，不寒暄、不铺垫、不写小作文，" +
+            "一到两句说到点上就停。",
+    ),
+
+    /** 专业稳重。 */
+    STEADY(
+        "steady",
+        "专业稳重、有条理。先给结论再给理由，用词准确克制，不夸张、不轻浮、不卖弄。",
+    ),
+
+    /** 文艺抒情。 */
+    POETIC(
+        "poetic",
+        "文艺、有画面感。可以用简短的比喻或意象来表达，但克制不堆砌辞藻，" +
+            "不要写成散文诗。",
+    );
+
+    /** 追加给模型的语气约束（caller 负责和用户的 system prompt 拼接）。 */
+    fun promptClause(): String = "【人设与语气】$persona"
+
+    companion object {
+        /** 脏配置兜底：认不出的 id 一律当温柔体贴。 */
+        fun fromId(id: String?): AutoReplyStyle = entries.firstOrNull { it.id == id } ?: WARM
+    }
+}
+
 object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener {
 
     override val technicalId = "聊天自动回复"
@@ -216,8 +279,13 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         // 2) system prompt：用户自定义 > 默认自然聊天提示
         // 【Round43】默认提示词升级：模型现在能看到会话上下文（见 buildUserPrompt），
         // 因此提示词里明确要求「结合上下文、口语化、不重复、不暴露自己是 AI」。
-        val sys = task.aiSystemPrompt.takeIf { it.isNotBlank() }
-            ?: buildDefaultSystemPrompt(task, talker)
+        // 【第 46 轮】在提示词末尾叠加「人设风格」约束：用户自定义提示词依然优先，
+        // 风格只作为附加语气要求（旧配置没有该字段 → 默认温柔体贴，行为可预期）。
+        val sys = buildString {
+            append(task.aiSystemPrompt.takeIf { it.isNotBlank() } ?: buildDefaultSystemPrompt(task, talker))
+            append("\n\n")
+            append(AutoReplyStyle.fromId(task.aiStyle).promptClause())
+        }
         val maxTokens = task.aiMaxTokens.coerceIn(64, 4096)
 
         // 【Round43】带上该会话最近 N 轮对话 —— 这是「上下文更正确」的关键：
