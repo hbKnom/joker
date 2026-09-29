@@ -183,7 +183,7 @@ object BlockMessages : ClickableFeature() {
             var senders by remember { mutableStateOf(initial.senderKeywords.joinToString("\n")) }
 
             AlertDialogContent(
-                    textScrolls = true,
+                textScrolls = true,
                     title = { Text(technicalId) },
                 text = {
                     SegmentedColumn(contentPadding = PaddingValues(0.dp)) {

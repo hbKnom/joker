@@ -66,6 +66,7 @@ import dev.joker.features.core.FeatureCategoryIds
 import dev.joker.preferences.WePrefs.Companion.prefOption
 import dev.joker.ui.content.AlertDialogContent
 import dev.joker.ui.content.TextButton
+import dev.joker.ui.content.m3.BaseWidget
 import dev.joker.ui.content.m3.SegmentedColumn
 import dev.joker.ui.content.m3.SwitchWidget
 import dev.joker.ui.utils.showComposeDialog
@@ -260,7 +261,7 @@ object AutoAcceptFriendRequests : ClickableFeature() {
             var greetDelayMs by remember { mutableStateOf(autoAcceptGreetDelayMs.toString()) }
 
             AlertDialogContent(
-                    textScrolls = true,
+                textScrolls = true,
                     title = { Text(technicalId) },
                 text = {
                     SegmentedColumn(contentPadding = PaddingValues(0.dp)) {

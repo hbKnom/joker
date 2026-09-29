@@ -894,7 +894,12 @@ internal object AutoReplySettings {
             // 【Round43】AI 模型选择器（取代 Round31 的手输文本框）
             // 用户反馈原话：「居然要手动输入模型，而不是自动获取所有并选择指定模型测试后填入，
             // 同时无法变化模型提供商」。详见 AutoReplyAiModelPicker.kt。
-            AiModelPicker(task = task, onChange = onChange)
+            // 注意：必须包在 item { } 里 —— SegmentedColumnScope 的 item content 才是
+            // @Composable 上下文，直接裸调会报
+            // 「@Composable invocations can only happen from the context of a @Composable function」。
+            item(key = "ai_model_picker") {
+                AiModelPicker(task = task, onChange = onChange)
+            }
             // 当前 AI 模型提示
             val currentAiModel = ChatAnalysisModelStore.selectedModel()
             item(key = "ai_model_hint") {

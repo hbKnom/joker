@@ -130,7 +130,7 @@ object ChatFunctionSwitch : ClickableFeature() {
 
         showComposeDialog(context) {
             AlertDialogContent(
-                    textScrolls = true,
+                textScrolls = true,
                     title = { Text(technicalId) },
                 text = {
                     SegmentedColumn(contentPadding = PaddingValues(0.dp)) {

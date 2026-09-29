@@ -293,7 +293,7 @@ object CustomConversationNotifications : ClickableFeature(), IResolveDex {
             }
 
             AlertDialogContent(
-                    textScrolls = true,
+                textScrolls = true,
                     title = { Text(wxId) },
                 text = {
                     SegmentedColumn {

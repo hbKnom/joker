@@ -171,8 +171,10 @@ internal fun SegmentedColumnScope.AiModelPicker(
             }
             // 当前值必须存在于 options（否则 DropDownMenuWidget 的 first {} 会抛异常）：
             // 例如用户删掉了原提供商，或某个 provider 被重命名。
+            // 注意：这里用 buildList receiver 自己的 none（**不能**写 options.none —— 在
+            // 初始化器内部引用 options 会形成自引用，Kotlin 报 Unresolved reference）。
             if (pickedName.isNotBlank() && pickedName != AI_PICKER_NEW_PROVIDER &&
-                options.none { it.value == pickedName }
+                none { it.value == pickedName }
             ) {
                 add(DropdownOption(pickedName, "${pickedName}（已失效）"))
             }

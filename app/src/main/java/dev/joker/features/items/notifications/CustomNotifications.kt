@@ -186,7 +186,14 @@ object CustomNotifications : ClickableFeature(), IResolveDex {
     /** 仅提醒 @我 与 @所有人。 */
     internal var mentionsOnly: Boolean by prefOption("custom_notify_mentions_only", false)
 
-    /** 忽略微信自身免打扰（微信标记免打扰的会话仍然提醒）。 */
+    /**
+     * 忽略微信自身免打扰（微信标记免打扰的会话仍然提醒）。
+     *
+     * 【Round43】语义已废弃：旧实现一旦本键为 false，就会把「免打扰会话的 @我 提醒」
+     * 一起吞掉 —— 用户实机反馈「开了自定义通知之后有些消息的通知就不显示了」根因即此。
+     * 现在改由 [dndSilent] 表达；本键**保留仅为不 reset 老用户配置**，不再参与判断。
+     */
+    @Suppress("unused")
     internal var ignoreWechatDnd: Boolean by prefOption("custom_notify_ignore_dnd", false)
 
     /** 提示音模式。存枚举名。 */
@@ -202,10 +209,6 @@ object CustomNotifications : ClickableFeature(), IResolveDex {
      * 我们不应该抢在它前面一刀切。想要更激进的行为再手动打开本开关。
      */
     internal var dndSilent: Boolean by prefOption("custom_notify_dnd_silent", false)
-
-    /** @deprecated 语义已废弃（旧键一旦为 false 会误吞免打扰会话的 @我 提醒），改由 [dndSilent] 表达。 */
-    @Suppress("unused")
-    internal var ignoreWechatDnd: Boolean by prefOption("custom_notify_ignore_dnd", false)
 
     /** 振动模式。存枚举名。 */
     internal var vibrationModeName: String by prefOption("custom_notify_vibrate", VibrationMode.FOLLOW.name)
@@ -533,7 +536,7 @@ object CustomNotifications : ClickableFeature(), IResolveDex {
             }
 
             AlertDialogContent(
-                    textScrolls = true,
+                textScrolls = true,
                     title = { Text(stringResource(R.string.feature_notifications_custom_notifications_name)) },
                 text = {
                     SegmentedColumn(contentPadding = PaddingValues(0.dp)) {

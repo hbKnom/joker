@@ -281,7 +281,7 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         if (rows.isEmpty()) return emptyList()
         return rows.asReversed() // SQL 是倒序取最新，这里翻回时间正序
             .filter { it.typeCode == MessageType.TEXT.code }
-            .map { it.isSend == 1 to plainTextOf(it.content, 120) }
+            .map { (it.isSend == 1) to plainTextOf(it.content, 120) }
             .filter { (_, text) -> text.isNotBlank() }
     }
 
