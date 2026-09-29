@@ -248,10 +248,15 @@ object WeChatMessageViewApi : ApiFeature(), IResolveDex {
             getItemMethodByAdapter.putIfAbsent(adapter.javaClass, resolved) ?: resolved
         }
 
+    // 注意：这是个 standalone object，**不能**再包一层 `companion object`（第 47 轮踩坑）：
+    //   ① Kotlin 直接报 "Modifier 'companion' is not applicable inside 'standalone object'"；
+    //   ② KSP 生成的 `FeaturesProvider` 会去访问 `WeChatMessageViewApi.Companion`，连带报
+    //      "Cannot access 'companion object Companion': it is private"。
+    // 常量与可变字段**直接写在 object 体里**即可（`const val` 在 object 内是合法的）。
+    // 同一条坑 2026-09-23 在 `QqMusicOrder` 上已经吃过一次。
+
     /** bind 日志限流：1 条/秒。 */
-    private companion object {
-        const val BIND_LOG_INTERVAL_MILLIS = 1000L
-    }
+    private const val BIND_LOG_INTERVAL_MILLIS = 1000L
 
     @Volatile private var lastBindLogAt = 0L
     @Volatile private var bindLogSuppressed = 0
