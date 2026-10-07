@@ -144,6 +144,21 @@ object ChatAnalysisAi {
         return plainInternal(shortClient, config, sys, userContent, maxTokens, includeReasoning = true)
     }
 
+    /**
+     * 【第 56 轮】「潜语」的解读/回复生成专用：**短超时** + 限制输出长度。
+     *
+     * 为什么不能复用 [plain]：那条走 [longClient]（读超时 180 秒），而潜语的补写是在
+     * 分析 worker 里同步做的 —— 服务端挂起时会把一个 worker 卡住三分钟，同一屏其它消息
+     * 全被拖住（第二铁律：不能卡）。这里用 [shortClient]（连接 10s / 读 25s）把上限写死在
+     * 传输层，调用方不必再靠协程超时兜底（阻塞式 OkHttp 调用根本收不到协程取消）。
+     *
+     * max_tokens 默认 512：解读 + 一句回复，够用且逼模型说短话。
+     */
+    @Throws(Exception::class)
+    fun plainQuick(config: AiModelConfig, sys: String, userContent: String, maxTokens: Int = 512): String? {
+        return plainInternal(shortClient, config, sys, userContent, maxTokens, includeReasoning = true)
+    }
+
     private fun plainInternal(
         client: OkHttpClient,
         config: AiModelConfig,

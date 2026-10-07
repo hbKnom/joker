@@ -133,4 +133,36 @@
     <string name="jev_recent_line">%1$s · %2$s · %3$s</string>
     <string name="jev_export_title">Yanwai · recent readings (%1$d)</string>
     <string name="jev_export_failed">analysis failed: %1$s</string>
+
+    <!-- 【Round 56】A non-Jev general model writes the plain-language reading and the ready-to-send reply -->
+    <string name="jev_card_reply">Reply: %1$s</string>
+    <string name="jev_card_reply_source">Reply written by %1$s</string>
+    <string name="jev_hint_expand_reply">▾ Tap to expand · long press to copy the reply</string>
+    <string name="jev_hint_collapse_reply">▴ Tap to collapse · long press to copy the reply</string>
+    <string name="jev_hint_copy_reply">Long press to copy this reply</string>
+    <string name="jev_toast_copied_reply">Reply copied</string>
+    <string name="jev_clip_label_reply">Yanwai reply</string>
+    <string name="jev_reply_section">Reply generation (general model)</string>
+    <string name="jev_reply_enable">Write the reading and reply with a general model</string>
+    <string name="jev_reply_enable_desc">Jev only judges the situation; the plain-language reading and the ready-to-send reply come from the chat model below. When your channel has no deep-reading round, this is what keeps the card useful.</string>
+    <string name="jev_reply_model">Generation model</string>
+    <string name="jev_reply_model_hint">Pick any model already configured in Chat analysis → AI model. Defaults to whatever Chat analysis is using. Changes apply at once.</string>
+    <string name="jev_reply_follow">Follow Chat analysis selection</string>
+    <string name="jev_reply_new">＋ New provider</string>
+    <string name="jev_reply_model_saved">Model selected: %1$s</string>
+    <string name="jev_reply_model_effective">In use: %1$s</string>
+    <string name="jev_reply_model_none">No usable model yet: fill in a Base URL and API Key in Chat analysis → AI model.</string>
+    <string name="jev_reply_test">Test generation</string>
+    <string name="jev_reply_testing">Asking the model…</string>
+    <string name="jev_reply_test_ok">Generated:\n%1$s</string>
+    <string name="jev_reply_test_fail">Generation failed: %1$s</string>
+    <string name="jev_reply_field_name">Name</string>
+    <string name="jev_reply_field_base">Base URL</string>
+    <string name="jev_reply_field_key">API Key</string>
+    <string name="jev_reply_field_model">Model</string>
+    <string name="jev_reply_fetch">Fetch models</string>
+    <string name="jev_reply_save">Save and use</string>
+    <string name="jev_reply_fetch_ok">Fetched %1$d models — pick one under “Model” above</string>
+    <string name="jev_reply_saved_provider">Saved and selected: %1$s</string>
+    <string name="jev_reply_bad_field">Name / Base URL / Model cannot be empty</string>
 </resources>

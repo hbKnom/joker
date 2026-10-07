@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,9 +57,13 @@ import com.composables.icons.materialsymbols.outlined.Send
 import com.composables.icons.materialsymbols.outlined.Tune
 import com.composables.icons.materialsymbols.outlined.Warning
 import dev.joker.R
+import dev.joker.features.items.chat.AiModelConfig
+import dev.joker.features.items.chat.ChatAnalysisAi
+import dev.joker.features.items.chat.ChatAnalysisModelStore
 import dev.joker.features.items.chat.ChatAnalysisUi
 import dev.joker.features.items.chat.jev.analysis.ChatInsights
 import dev.joker.features.items.chat.jev.analysis.SignalAnalyzer
+import dev.joker.features.items.chat.jev.analysis.YanwaiReplyAi
 import dev.joker.features.items.chat.jev.core.ApiProfiles
 import dev.joker.features.items.chat.jev.core.ApiSettings
 import dev.joker.features.items.chat.jev.core.JevProvider
@@ -73,11 +78,16 @@ import dev.joker.utils.android.copyToClipboard
 import dev.joker.ui.content.AlertDialogContent
 import dev.joker.ui.content.Button
 import dev.joker.ui.content.TextButton
+import dev.joker.ui.content.m3.DropDownMenuWidget
+import dev.joker.ui.content.m3.DropdownOption
 import dev.joker.ui.content.m3.RadioButtonWidget
 import dev.joker.ui.content.m3.SwitchWidget
 import dev.joker.ui.utils.ConversationPickerSection
 import dev.joker.ui.utils.rememberAllConversations
 import dev.joker.ui.utils.showComposeDialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -115,6 +125,14 @@ object YanwaiSettings {
     /** 提示条语气：普通说明 / 需要看一眼的失败。 */
     private enum class Tone { Info, Warning }
 
+    /**
+     * 【第 56 轮】「回复生成」下拉里的哨兵值：选中它 = 展开「新建模型提供商」表单。
+     *
+     * 用 `\u0000` 而不是 `__new__` 这类可读串：模型名是用户自己起的，
+     * 万一真起了个 `__new__` 就会误判成「新建」，哨兵必须不可能与真实名字撞上。
+     */
+    private const val REPLY_AI_NEW_PROVIDER = "\u0000new"
+
     fun show(context: Context) {
         showComposeDialog(context) {
             var enabled by remember { mutableStateOf(ModulePrefs.enabled) }
@@ -146,6 +164,38 @@ object YanwaiSettings {
             var runtime by remember { mutableStateOf(runtimeLine(context)) }
             // 「按人查看历史」：同一弹窗内展开，避免再套一层对话框
             var showHistory by remember { mutableStateOf(false) }
+
+            // 【第 56 轮】回复生成（通用模型）：开关 + 用哪个模型（"" = 跟随聊天分析当前选中）。
+            // 与上面那批开关不同，这两个改动**立即生效**（回复生成与 Jev 渠道配置互不相关，
+            // 而且下面的「测试生成」要能马上用新选的模型验证）。
+            var replyAiEnabled by remember { mutableStateOf(ModulePrefs.replyAiEnabled) }
+            var replyAiPicked by remember { mutableStateOf(ModulePrefs.replyAiModelName) }
+            var replyAiModels by remember { mutableStateOf(ChatAnalysisModelStore.loadModels()) }
+            var replyAiBusy by remember { mutableStateOf(false) }
+            val replyAiScope = rememberCoroutineScope()
+
+            // 回复生成下拉的选项与「当前生效模型」：记忆化，别让每次重组都去解析一遍模型 JSON
+            val replyAiFollow = stringResource(R.string.jev_reply_follow)
+            val replyAiNew = stringResource(R.string.jev_reply_new)
+            val replyAiEffective = remember(replyAiPicked, replyAiModels) {
+                YanwaiReplyAi.currentLabel(replyAiPicked)
+            }
+            val replyAiOptions = remember(replyAiModels, replyAiPicked, replyAiFollow, replyAiNew) {
+                buildList {
+                    add(DropdownOption("", replyAiFollow))
+                    replyAiModels.forEach { config ->
+                        add(DropdownOption(config.name, "${config.name} · ${config.model}"))
+                    }
+                    // 选中的条目可能已经被删掉：补一个占位项，否则 DropDownMenuWidget 内部
+                    // 的 first { it.value == value } 会直接抛异常（整页崩）。
+                    if (replyAiPicked.isNotBlank() && replyAiPicked != REPLY_AI_NEW_PROVIDER &&
+                        none { it.value == replyAiPicked }
+                    ) {
+                        add(DropdownOption(replyAiPicked, "$replyAiPicked（已失效）"))
+                    }
+                    add(DropdownOption(REPLY_AI_NEW_PROVIDER, replyAiNew))
+                }
+            }
 
             // 会话标题表：选择器需要它才能把 wxId 存成「能看懂的名字」（存名字是为了在
             // 会话改名/无法查库时仍能显示）。加载走 IO 线程，与选择器共用同一份数据。
@@ -681,11 +731,107 @@ object YanwaiSettings {
                             )
                         }
 
-                        // ---------------------------------------------------------- 8 运行状态与动作
+                        // ---------------------------------------------------- 8 回复生成（通用模型）
+                        item {
+                            ChatAnalysisUi.SectionHeader(
+                                title = stringResource(R.string.jev_reply_section),
+                                index = 8,
+                                badge = replyAiEffective ?: JevText.get(R.string.jev_reply_model_none),
+                            )
+                        }
+                        item {
+                            SwitchWidget(
+                                icon = MaterialSymbols.Outlined.Send,
+                                title = stringResource(R.string.jev_reply_enable),
+                                description = stringResource(R.string.jev_reply_enable_desc),
+                                checked = replyAiEnabled,
+                                onCheckedChange = {
+                                    replyAiEnabled = it
+                                    ModulePrefs.setReplyAiEnabled(it)
+                                },
+                                trailingDivider = true,
+                            )
+                        }
+                        item {
+                            DropDownMenuWidget(
+                                iconPlaceholder = false,
+                                title = stringResource(R.string.jev_reply_model),
+                                description = stringResource(R.string.jev_reply_model_hint),
+                                value = replyAiPicked,
+                                options = replyAiOptions,
+                                onValueChange = { picked ->
+                                    replyAiPicked = picked
+                                    if (picked == REPLY_AI_NEW_PROVIDER) return@DropDownMenuWidget
+                                    ModulePrefs.setReplyAiModel(picked)
+                                    tell(
+                                        JevText.of(
+                                            context,
+                                            R.string.jev_reply_model_saved,
+                                            picked.ifEmpty { JevText.get(R.string.jev_reply_follow) },
+                                        ),
+                                    )
+                                },
+                            )
+                        }
+                        if (replyAiPicked == REPLY_AI_NEW_PROVIDER) {
+                            item {
+                                ReplyAiProviderEditor(
+                                    onSaved = { saved ->
+                                        replyAiModels = ChatAnalysisModelStore.loadModels()
+                                        replyAiPicked = saved
+                                        ModulePrefs.setReplyAiModel(saved)
+                                        tell(JevText.of(context, R.string.jev_reply_saved_provider, saved))
+                                    },
+                                    onTell = { message, tone -> tell(message, tone) },
+                                )
+                            }
+                        }
+                        item {
+                            Banner(
+                                text = replyAiEffective?.let {
+                                    JevText.of(context, R.string.jev_reply_model_effective, it)
+                                } ?: JevText.get(R.string.jev_reply_model_none),
+                                tone = if (replyAiEffective != null) Tone.Info else Tone.Warning,
+                            )
+                        }
+                        item {
+                            ActionButton(
+                                icon = MaterialSymbols.Outlined.Send,
+                                label = stringResource(R.string.jev_reply_test),
+                                onClick = {
+                                    if (replyAiBusy) return@ActionButton
+                                    replyAiBusy = true
+                                    tell(JevText.get(R.string.jev_reply_testing))
+                                    replyAiScope.launch {
+                                        val outcome = withContext(Dispatchers.IO) {
+                                            runCatching { YanwaiReplyAi.selfTest(replyAiPicked) }
+                                        }
+                                        replyAiBusy = false
+                                        outcome.fold(
+                                            onSuccess = { text ->
+                                                tell(JevText.of(context, R.string.jev_reply_test_ok, text))
+                                            },
+                                            onFailure = { failure ->
+                                                tell(
+                                                    JevText.of(
+                                                        context,
+                                                        R.string.jev_reply_test_fail,
+                                                        failure.message ?: "unknown",
+                                                    ),
+                                                    Tone.Warning,
+                                                )
+                                            },
+                                        )
+                                    }
+                                },
+                            )
+                        }
+
+                        // ---------------------------------------------------------- 9 运行状态与动作
                         item {
                             ChatAnalysisUi.SectionHeader(
                                 title = stringResource(R.string.jev_settings_section_runtime),
-                                index = 8,
+                                index = 9,
                                 badge = stringResource(R.string.yanwai_scope_summary, ModulePrefs.contextLimit),
                             )
                         }
@@ -868,6 +1014,145 @@ object YanwaiSettings {
                     }
                 },
             )
+        }
+    }
+
+    /**
+     * 【第 56 轮】「新建模型提供商」表单（潜语 → 回复生成）。
+     *
+     * 用户要求「把聊天分析里的模型配置复制到决策分析里」——这里就是那次复制：
+     * 与聊天分析 / 聊天自动回复共用**同一份存储**（[ChatAnalysisModelStore]），
+     * 在这里新增的条目，那两处也能直接选到，不必在三个地方各配一遍。
+     * 保存成功后回调 [onSaved]（由调用方刷新下拉、写进潜语的模型键并提示）。
+     */
+    @Composable
+    private fun ReplyAiProviderEditor(
+        onSaved: (String) -> Unit,
+        onTell: (String, Tone) -> Unit,
+    ) {
+        var name by remember { mutableStateOf("") }
+        var base by remember { mutableStateOf("") }
+        var key by remember { mutableStateOf("") }
+        var model by remember { mutableStateOf("") }
+        var fetched by remember { mutableStateOf<List<String>>(emptyList()) }
+        var busy by remember { mutableStateOf(false) }
+        val scope = rememberCoroutineScope()
+        val badField = stringResource(R.string.jev_reply_bad_field)
+        // 非 Composable 的协程回调里不能调 stringResource，模板必须先取出来
+        val fetchOkTemplate = stringResource(R.string.jev_reply_fetch_ok)
+        val fetchFailTemplate = stringResource(R.string.chat_auto_reply_ai_fetch_fail)
+        val fetchEmpty = stringResource(R.string.chat_auto_reply_ai_fetch_empty)
+
+        Column(modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text(stringResource(R.string.jev_reply_field_name)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+            OutlinedTextField(
+                value = base,
+                onValueChange = { base = it },
+                label = { Text(stringResource(R.string.jev_reply_field_base)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+            OutlinedTextField(
+                value = key,
+                onValueChange = { key = it },
+                label = { Text(stringResource(R.string.jev_reply_field_key)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+            OutlinedTextField(
+                value = model,
+                onValueChange = { model = it },
+                label = { Text(stringResource(R.string.jev_reply_field_model)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+            if (fetched.isNotEmpty()) {
+                var index by remember(fetched) { mutableStateOf(0) }
+                DropDownMenuWidget(
+                    iconPlaceholder = false,
+                    title = stringResource(R.string.chat_auto_reply_ai_model_list, fetched.size),
+                    description = null,
+                    value = index,
+                    options = fetched.mapIndexed { at, id -> DropdownOption(at, id) },
+                    onValueChange = { picked ->
+                        index = picked
+                        fetched.getOrNull(picked)?.let { model = it }
+                    },
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(
+                    onClick = {
+                        if (busy) return@Button
+                        val trimmedBase = base.trim()
+                        if (trimmedBase.isEmpty()) {
+                            onTell(badField, Tone.Warning)
+                            return@Button
+                        }
+                        busy = true
+                        scope.launch {
+                            val outcome = withContext(Dispatchers.IO) {
+                                runCatching { ChatAnalysisAi.fetchModels(trimmedBase, key.trim()) }
+                            }
+                            busy = false
+                            outcome.fold(
+                                onSuccess = { models ->
+                                    fetched = models
+                                    if (models.isEmpty()) {
+                                        onTell(fetchEmpty, Tone.Warning)
+                                    } else {
+                                        if (model.isBlank()) model = models.first()
+                                        onTell(String.format(fetchOkTemplate, models.size), Tone.Info)
+                                    }
+                                },
+                                onFailure = { failure ->
+                                    onTell(
+                                        String.format(fetchFailTemplate, failure.message ?: "unknown"),
+                                        Tone.Warning,
+                                    )
+                                },
+                            )
+                        }
+                    },
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.jev_reply_fetch)) }
+                Button(
+                    onClick = {
+                        val finalName = name.trim()
+                        val finalBase = base.trim()
+                        val finalModel = model.trim()
+                        if (finalName.isEmpty() || finalBase.isEmpty() || finalModel.isEmpty()) {
+                            onTell(badField, Tone.Warning)
+                            return@Button
+                        }
+                        val outcome = runCatching {
+                            ChatAnalysisModelStore.addOrUpdate(
+                                AiModelConfig(
+                                    name = finalName,
+                                    baseUrl = finalBase,
+                                    apiKey = key.trim(),
+                                    model = finalModel,
+                                ),
+                            )
+                        }
+                        outcome.fold(
+                            onSuccess = { onSaved(finalName) },
+                            onFailure = { onTell(it.message ?: "save failed", Tone.Warning) },
+                        )
+                    },
+                    modifier = Modifier.weight(1f),
+                ) { Text(stringResource(R.string.jev_reply_save)) }
+            }
         }
     }
 

@@ -133,4 +133,36 @@
     <string name="jev_recent_line">%1$s · %2$s · %3$s</string>
     <string name="jev_export_title">潛語 · 最近解讀（%1$d 條）</string>
     <string name="jev_export_failed">分析失敗：%1$s</string>
+
+    <!-- 【第 56 輪】非 Jev 的通用模型補寫「人話解讀 + 可直接複製的回覆」 -->
+    <string name="jev_card_reply">回覆：%1$s</string>
+    <string name="jev_card_reply_source">回覆由 %1$s 生成</string>
+    <string name="jev_hint_expand_reply">▾ 點擊展開完整解讀 · 長按複製回覆</string>
+    <string name="jev_hint_collapse_reply">▴ 點擊收起 · 長按複製回覆</string>
+    <string name="jev_hint_copy_reply">長按複製這條回覆</string>
+    <string name="jev_toast_copied_reply">已複製回覆</string>
+    <string name="jev_clip_label_reply">潛語回覆</string>
+    <string name="jev_reply_section">回覆生成（通用模型）</string>
+    <string name="jev_reply_enable">用通用模型生成解讀與回覆</string>
+    <string name="jev_reply_enable_desc">Jev 只負責決策判定；白話解讀和「可以直接複製送出去的那句話」交給這裡的對話模型寫。渠道不支援深度解讀（第二輪報錯）時，卡片就靠它兜住。</string>
+    <string name="jev_reply_model">生成模型</string>
+    <string name="jev_reply_model_hint">直接選「聊天分析 → AI 模型」裡已經配置好的項目；預設跟隨聊天分析目前模型。改完立即生效。</string>
+    <string name="jev_reply_follow">跟隨聊天分析目前模型</string>
+    <string name="jev_reply_new">＋ 新增模型供應商</string>
+    <string name="jev_reply_model_saved">已選用模型：%1$s</string>
+    <string name="jev_reply_model_effective">目前生效：%1$s</string>
+    <string name="jev_reply_model_none">還沒有可用模型：到「聊天分析 → AI 模型」填好 Base URL 與 API Key 即可。</string>
+    <string name="jev_reply_test">測試生成</string>
+    <string name="jev_reply_testing">正在請求模型…</string>
+    <string name="jev_reply_test_ok">生成成功：\n%1$s</string>
+    <string name="jev_reply_test_fail">生成失敗：%1$s</string>
+    <string name="jev_reply_field_name">名稱</string>
+    <string name="jev_reply_field_base">Base URL</string>
+    <string name="jev_reply_field_key">API Key</string>
+    <string name="jev_reply_field_model">模型</string>
+    <string name="jev_reply_fetch">取得模型清單</string>
+    <string name="jev_reply_save">儲存並選用</string>
+    <string name="jev_reply_fetch_ok">已取得 %1$d 個模型，點上方「模型」選取</string>
+    <string name="jev_reply_saved_provider">已儲存並選用：%1$s</string>
+    <string name="jev_reply_bad_field">名稱 / Base URL / 模型都不能為空</string>
 </resources>

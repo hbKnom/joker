@@ -41,6 +41,15 @@ object SignalAnalyzer {
     /** 单条消息的硬超时（兜底）。真正保证"不会一直转圈"的是扫描器一侧的看门狗。 */
     private const val TIMEOUT_MS = 70_000L
 
+    /**
+     * 【第 56 轮】决策两轮跑完后还剩多少时间才允许发起「补写解读/回复」。
+     *
+     * 扫描器看门狗对「已在跑」的条目给 90 秒（`RUNNING_WATCHDOG_MS`）：决策耗时 + 补写耗时
+     * 必须留在这条线里面，否则一条本来会成功的分析会被看门狗判成超时失败。
+     * 补写自身最坏 ≈ 10s 连接 + 25s 读 = 35s，所以这里卡 45s。
+     */
+    private const val REPLY_BUDGET_MS = 45_000L
+
     /** 起跑时刻（elapsedRealtime）：看门狗据此区分「排在队里」和「已经在跑」。 */
     private val startTimes = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
@@ -362,17 +371,44 @@ object SignalAnalyzer {
             // 刻意不再用「这一行还在不在屏幕上」当作继续条件：
             // 一旦开始就必然留下结果或可见失败。以前消息一转出屏幕就静默 release，
             // 气泡会永远停在「正在分析…」（用户实测的主要症状之一）。
+            val began = System.currentTimeMillis()
             val mood = withTimeoutOrNull(TIMEOUT_MS) { analyze(input) }
             if (mood == null) {
                 fail(key, input, "分析超时（模型无响应），点击此卡重试", report = "分析超时：${key.take(8)}")
                 return
             }
-            succeed(key, input, mood)
+            succeed(key, input, enrichReply(input, mood, began))
         } catch (e: CancellationException) {
             MoodStore.release(key)
             throw e
         } catch (e: Exception) {
             fail(key, input, e.message ?: "分析失败，请稍后重试", report = "分析失败：${e.message}")
+        }
+    }
+
+    /**
+     * 【第 56 轮】决策结论出来之后，再用**非 Jev** 的通用模型补「人话解读 + 可直接复制的回复」。
+     *
+     * 用户实测：自己的 Jev 渠道只支持决策、不支持第二轮深度解读（HTTP 400），卡片上就只剩
+     * 情绪概率，也没有能直接发出去的那句话。分工改成「Jev 判决策、通用模型说人话」。
+     *
+     * 两道刹车，都是为了不破坏第二铁律（不卡、不崩）：
+     *  1. 决策已经跑掉太多时间（[REPLY_BUDGET_MS]）时**直接跳过** —— 扫描器一侧的看门狗
+     *     对「已在跑」的条目只给 90 秒，不能让补写把一条本来要成功的分析拖成超时；
+     *  2. 请求走 [dev.joker.features.items.chat.ChatAnalysisAi.plainQuick]（连接 10s / 读 25s），
+     *     上限死在传输层，服务端挂起也不会把 worker 卡住三分钟。
+     *
+     * 任何失败都原样返回决策结论（[YanwaiReplyAi.enrich] 内部已全程兜住，这里再兜一层）。
+     */
+    private suspend fun enrichReply(input: AnalysisInput, mood: Mood, began: Long): Mood {
+        if (!ModulePrefs.replyAiEnabled) return mood
+        val spent = System.currentTimeMillis() - began
+        if (spent > REPLY_BUDGET_MS) {
+            MoodLog.w("潜语：决策耗时 ${spent}ms 已超过补写预算，跳过通用模型的解读/回复")
+            return mood
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching { YanwaiReplyAi.enrich(input, mood) }.getOrDefault(mood)
         }
     }
 

@@ -90,7 +90,14 @@ internal object HomeSidePanelHuangliIdf {
                 // 头部合法性：三个宽度字段与行区/描述符区都必须在文件内
                 require(rowStride in 1..8 && lengthSize in 1..4 && elementSize in 1..8)
                 require(fa >= 0 && fb > 0)
-                require(fc >= MIN_SIZE && base >= MIN_SIZE)
+                // 【第 56 轮·关键修正】`base` 是**描述符区基址**（实测 = 68），不是「文件头长度」。
+                // 旧实现写成 `base >= MIN_SIZE(72)`：真机文件的 descBase = 68 < 72 ⇒ require 直接抛错
+                // ⇒ `data` 永远为 null ⇒ **宜忌从来没有加载成功过**（月/周/日三视图与黄历详情的
+                // 宜·忌两行全空，而同一份 idf 用 Python 对拍真机 7 天是全对的，所以问题一直藏在
+                // 「解析器对拍 PASS」的假象后面）。正确口径只有两条：描述符区在文件内、行区在文件内。
+                require(base >= 4 && base + 4L <= bytes.size.toLong())
+                require(base + 4L <= fc)
+                require(fc >= 4)
                 require(fc + fb.toLong() * rowStride <= bytes.size.toLong())
                 require(elementSize * 1L + 4 <= bytes.size.toLong())
                 longArrayOf(fa.toLong(), fb.toLong(), fc, base, rowStride.toLong(), lengthSize.toLong(), elementSize.toLong())

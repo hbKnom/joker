@@ -1539,6 +1539,27 @@ object YanwaiBubble {
                     )
                 }
 
+                // 回复（第 56 轮）：写好的那句话本身 —— 长按卡片复制的就是它。
+                // 与「建议」用同一种强调样式：两者都是「下一步怎么办」，只是回复更直接可用。
+                if (mood.replyDraft.isNotBlank()) {
+                    builder.gap(7f)
+                    builder.advice(
+                        labelTone(
+                            JevText.get(R.string.jev_card_reply, mood.replyDraft),
+                            accent,
+                            pal.title,
+                        ),
+                    )
+                    if (mood.aiModel.isNotBlank()) {
+                        builder.gap(3f)
+                        builder.line(
+                            JevText.get(R.string.jev_card_reply_source, mood.aiModel),
+                            9.5f,
+                            pal.muted,
+                        )
+                    }
+                }
+
                 // 扩展块 1：建议强度说明 + 话题（画成小标签，最多两行）+ 风险依据
                 val topics = if (ModulePrefs.showTopics) {
                     insight?.topics.orEmpty().map { JevText.get(it) }.filter { it.isNotEmpty() }
@@ -1723,10 +1744,15 @@ object YanwaiBubble {
     /** 左侧情绪指示条：竖着的药丸 + 竖向渐变，纵向内缩，和卡片圆角互不打架（见 buildCard 第 4 条指令）。 */
     private fun dpf(density: Float, dp: Float) = density * dp
 
-    /** 解读正文：优先用结构化解读，降级结果退回原始正文裁剪。 */
+    /** 解读正文：优先用结构化解读，其次通用模型写的人话解读，最后退回原始正文裁剪。 */
     private fun readingText(card: Card, mood: Mood): String {
         val title = mood.readingTitle
-        if (title == null) return bodyText(mood)
+        if (title == null) {
+            // 第 56 轮：Jev 渠道不给第二轮（HTTP 400）时卡片上只剩情绪概率，信息量太低 ——
+            // 这时用非 Jev 模型写的那段大白话兜住「解读」这一行。
+            if (mood.aiReading.isNotBlank()) return mood.aiReading
+            return bodyText(mood)
+        }
         val builder = StringBuilder(title)
         if (card.expanded) {
             mood.readingQuestion?.let { builder.append('\n').append(it) }
@@ -1738,9 +1764,13 @@ object YanwaiBubble {
         return builder.toString().trim()
     }
 
-    /** 页脚：降级说明优先，其次交互提示。 */
+    /** 页脚：降级说明优先，其次交互提示（有现成回复时直接说「长按复制回复」）。 */
     private fun hintText(card: Card, mood: Mood): CharSequence = when {
         mood.note != null -> JevText.get(R.string.jev_hint_note, mood.note)
+        mood.replyDraft.isNotBlank() && canExpand(mood) && card.expanded ->
+            JevText.get(R.string.jev_hint_collapse_reply)
+        mood.replyDraft.isNotBlank() && canExpand(mood) -> JevText.get(R.string.jev_hint_expand_reply)
+        mood.replyDraft.isNotBlank() -> JevText.get(R.string.jev_hint_copy_reply)
         canExpand(mood) && card.expanded -> JevText.get(R.string.jev_hint_collapse)
         canExpand(mood) -> JevText.get(R.string.jev_hint_expand)
         else -> JevText.get(R.string.jev_hint_copy)
@@ -2129,19 +2159,22 @@ object YanwaiBubble {
         }
     }
 
-    /** 长按：把整份解读（含情绪概率与建议）复制成纯文本。 */
+    /** 长按：有现成回复就只复制那句（第 55/56 轮），否则复制整份解读（情绪概率与建议）。 */
     private fun onLongClick(row: View): Boolean {
         val card = cards[row] ?: return false
         val mood = card.input?.let { MoodStore.moodFor(it) } ?: return false
         val text = MoodMessageChannel.format(mood)
+        // 复制的是「回复」还是「解读」，提示语与剪贴板标签都要跟着变 —— 不然用户以为复制错了。
+        val isReply = mood.replyDraft.isNotBlank()
+        val label = JevText.get(if (isReply) R.string.jev_clip_label_reply else R.string.jev_clip_label)
         val copied = runCatching {
             val manager = row.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            manager.setPrimaryClip(ClipData.newPlainText(JevText.get(R.string.jev_clip_label), text))
+            manager.setPrimaryClip(ClipData.newPlainText(label, text))
             true
         }.getOrDefault(false)
         runCatching {
             val toast = if (copied) {
-                JevText.get(R.string.jev_toast_copied)
+                JevText.get(if (isReply) R.string.jev_toast_copied_reply else R.string.jev_toast_copied)
             } else {
                 JevText.get(R.string.jev_toast_copy_failed)
             }
@@ -2268,10 +2301,11 @@ object YanwaiBubble {
     private fun canExpand(mood: Mood): Boolean =
         mood.bars.size > 1 || mood.readingQuestion != null || mood.readingOptions.isNotEmpty()
 
-    /** 正文 = 去掉 Jev 头、「情绪：」行与「建议：」行后的其余解读内容（降级结果用）。 */
+    /** 正文 = 去掉 Jev 头、「情绪：」「建议：」「回复：」行后的其余解读内容（降级结果用）。 */
     private fun bodyText(mood: Mood): String = mood.detail.lines()
         .filterNot {
-            it.startsWith(JevProtocol.header) || it.startsWith("情绪：") || it.startsWith("建议：")
+            it.startsWith(JevProtocol.header) || it.startsWith("情绪：") ||
+                it.startsWith("建议：") || it.startsWith("回复：")
         }
         .joinToString("\n")
         .trim()

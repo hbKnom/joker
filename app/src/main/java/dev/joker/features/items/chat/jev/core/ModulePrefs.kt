@@ -84,6 +84,23 @@ object ModulePrefs {
     /** 扩展：建议分级与风险提示。 */
     const val KEY_CARD_LEVEL = "yanwai_card_level"
 
+    // ---------------------------------------------------------------- 第 56 轮：非 Jev 的「解读 + 回复」
+
+    /**
+     * 决策分析出结论后，再用一个**非 Jev** 的 OpenAI 兼容模型生成「人话解读 + 可直接复制的回复」。
+     *
+     * 背景（用户实测）：Jev 决策协议走的是自定义 `decisions` 请求，很多渠道只支持「决策」不支持
+     * 「分析」，第二轮（深度解读）直接 HTTP 400 ⇒ 卡片上只剩情绪概率，而且把技术报错摆到了脸上。
+     * 所以把「解读 + 回复」交给通用的 chat/completions 模型去做，Jev 只负责它最擅长的决策判定。
+     */
+    const val KEY_REPLY_AI_ENABLED = "yanwai_reply_ai_enabled"
+
+    /**
+     * 用哪个已保存的模型（[dev.joker.features.items.chat.ChatAnalysisModelStore] 的名字）。
+     * 空串 = 跟随「聊天分析」当前选中的模型 —— 用户已经配好的那个直接复用，开箱即用。
+     */
+    const val KEY_REPLY_AI_MODEL = "yanwai_reply_ai_model"
+
     const val DEFAULT_INSERT_FRESH_SECONDS = 60
     const val MIN_INSERT_FRESH_SECONDS = 10
     const val MAX_INSERT_FRESH_SECONDS = 1800
@@ -247,8 +264,21 @@ object ModulePrefs {
 
     /** 扩展 4：建议分级与风险提示。 */
     val showLevel get() = HotPrefs.bool(KEY_CARD_LEVEL, true)
-
     fun setShowLevel(value: Boolean) = putBool(KEY_CARD_LEVEL, value)
+
+    /**
+     * 第 56 轮：Jev 决策出结论后，再用一个非 Jev 的对话模型补「解读 + 可直接复制的回复」。
+     *
+     * 默认**开**，但没有副作用：没配模型（[KEY_API_MODEL] 空）或没填 Key 时整条链路直接跳过，
+     * 一次网络请求都不会发出去。用户实测自己的 Jev 渠道不支持深度解读（第二轮 HTTP 400），
+     * 这条链路就是那个场景的正解 —— 决策交给 Jev，说人话交给通用模型。
+     */
+    val replyAiEnabled get() = HotPrefs.bool(KEY_REPLY_AI_ENABLED, true)
+    fun setReplyAiEnabled(value: Boolean) = putBool(KEY_REPLY_AI_ENABLED, value)
+
+    /** 用哪个已保存的模型生成解读/回复（空 = 跟随「聊天分析」当前选中）。 */
+    val replyAiModelName get() = HotPrefs.string(KEY_REPLY_AI_MODEL, "")
+    fun setReplyAiModel(value: String) = putString(KEY_REPLY_AI_MODEL, value)
 
     /** 回插会话的新鲜度窗口（秒），夹在 10..1800。 */
     val insertFreshSeconds get() = HotPrefs.int(KEY_INSERT_FRESH_SECONDS, DEFAULT_INSERT_FRESH_SECONDS)
