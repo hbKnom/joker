@@ -332,7 +332,7 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         // 这是最影响「像不像人」的一条 —— 连发两三条没人接，观感就是复读机器人。
         // 只读已经取到的最近对话，不额外查库、不加配置项，默认对既有行为是「更少打扰」。
         val tail = history.takeLast(2)
-        if (tail.size == 2 && tail.all { it.first }) {
+        if (tail.size == 2 && tail.all { it.isSend }) {
             WeLogger.i(TAG, "最近两条都是自己发的（对方未接话），本次不追加回复：$talker")
             return false
         }
@@ -390,15 +390,42 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
      *   - 每条裁到 120 字符，整段最多 1200 字符，避免把 token 预算烧在历史上；
      *   - 数据库访问包在 runCatching 里（拿不到历史 ≠ 回复失败，降级为无上下文）。
      */
-    private fun loadRecentContext(talker: String, turns: Int): List<Pair<Boolean, String>> {
+    /**
+     * 【第 51 轮】上下文里的一行：**带上谁在说话**。
+     *
+     * 旧实现只给模型 `对方：xxx` —— 群聊里所有成员都被压成同一个「对方」，模型分不清
+     * 是张三还是李四在说，回复自然容易答错人（用户反馈「扩展不怎么有效果」）。
+     * 群聊消息的 `content` 自带 `wxid:\n正文` 前缀，这里把它换成**群昵称**（查一次缓存一次）。
+     */
+    private data class HistoryLine(val isSend: Boolean, val speaker: String, val text: String)
+
+    private fun loadRecentContext(talker: String, turns: Int): List<HistoryLine> {
         if (turns <= 0) return emptyList()
         val limit = (turns + 1).coerceAtMost(31)
         val rows = WeDatabaseApi.getMessages(talker, 1, limit)
         if (rows.isEmpty()) return emptyList()
+        val group = talker.isGroupChatWxId
+        val names = HashMap<String, String>()
         return rows.asReversed() // SQL 是倒序取最新，这里翻回时间正序
             .filter { it.typeCode == MessageType.TEXT.code }
-            .map { (it.isSend == 1) to plainTextOf(it.content, 120) }
-            .filter { (_, text) -> text.isNotBlank() }
+            .mapNotNull { row ->
+                val raw = row.content
+                var body = raw
+                var speaker = ""
+                if (group && raw.contains(":\n")) {
+                    val who = raw.substringBefore(":\n").trim()
+                    // 群消息前缀是发送者 wxid（历史消息里可能还带冒号变体），换成可读昵称。
+                    if (who.isNotEmpty() && !who.contains(' ')) {
+                        speaker = names.getOrPut(who) {
+                            runCatching { WeDatabaseApi.getGroupMemberDisplayName(talker, who) }
+                                .getOrDefault("").takeIf { it.isNotBlank() } ?: who
+                        }
+                        body = raw.substringAfter(":\n")
+                    }
+                }
+                val text = plainTextOf(body, 120)
+                if (text.isBlank()) null else HistoryLine(row.isSend == 1, speaker, text)
+            }
     }
 
     /** 原始 content 可能是 XML（引用/链接/表情等），这里只抠出可读文本。 */
@@ -485,15 +512,16 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
     private fun buildUserPrompt(
         content: String,
         talker: String,
-        history: List<Pair<Boolean, String>>,
+        history: List<HistoryLine>,
         sender: String,
     ): String {
         val user = senderLabel(talker, sender)
         val sb = StringBuilder()
         if (history.isNotEmpty()) {
             sb.append("最近对话（时间正序，「我」= 你自己）：\n")
-            history.forEach { (isSend, text) ->
-                sb.append(if (isSend) "我：" else "对方：").append(text).append('\n')
+            history.forEach { line ->
+                val who = if (line.isSend) "我" else line.speaker.ifBlank { "对方" }
+                sb.append(who).append("：").append(line.text).append('\n')
             }
             sb.append('\n')
         }

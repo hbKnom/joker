@@ -5,9 +5,13 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.View
 import dev.joker.R
+import dev.joker.features.api.core.WeDatabaseApi
 import dev.joker.features.api.core.models.MessageInfo
+import dev.joker.features.api.core.models.MessageType
+import dev.joker.features.api.core.models.WeMessage
 import dev.joker.features.api.ui.WeChatMessageViewApi
 import dev.joker.utils.HookParam
+import dev.joker.utils.strings.isGroupChatWxId
 import dev.joker.features.items.chat.jev.analysis.ChatInsights
 import dev.joker.features.items.chat.jev.analysis.SignalAnalyzer
 import dev.joker.features.items.chat.jev.core.AnalysisInput
@@ -83,6 +87,20 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
 
     /** 【第 48 轮】「同一行同一消息」被重绑的时间窗（毫秒）：卡片重建诊断探针用。 */
     private const val REBIND_WINDOW_MS = 3_000L
+
+    /** 【第 51 轮】按库补扫：节流间隔 / 翻几页 / 每页条数 / 单轮最多提交多少条。 */
+    private const val CATCHUP_INTERVAL_MS = 60_000L
+    private const val CATCHUP_PAGES = 3
+    private const val CATCHUP_PAGE_SIZE = 20
+    private const val CATCHUP_MAX_MESSAGES = 40
+
+    /** 按库补扫的单线程执行器（DB 查询绝不上主线程）。 */
+    private val catchUpExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "joker-yanwai-catchup").apply { isDaemon = true }
+    }
+
+    @Volatile private var catchUpRunning = false
+    private var lastCatchUpAt = 0L
 
     /**
      * 兜底节拍间隔。结果主要靠 [SignalAnalyzer.SettleListener] 推送回填，
@@ -561,15 +579,105 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
         try {
             invalidateScreenSnapshot()
             var bound = 0
+            talkerOfBound.clear()
             for ((view, message) in WeChatMessageViewApi.findBoundViews { true }) {
                 bound++
+                if (talkerOfBound.isEmpty() && message.talker.isNotEmpty()) talkerOfBound.add(message.talker)
                 handle(view, message)
             }
             if (bound > 0 && (awaiting.isNotEmpty() || capacityWaiting.isNotEmpty() || deferred.isNotEmpty())) {
                 scheduleTick()
             }
+            // 【第 51 轮】可见行扫完再按**库**补一轮：滚动时滑过去、从没进过屏幕的那些文本消息
+            // 在旧实现里永远不会被分析（行没绑过 → 没有绑定回调 → 不在快照里）。
+            // 用户明确要求「确保被选定的聊天正常被分析每一条文本消息」。
+            // 只投没有任何结论、也没有归属身份命中的那些（见 [catchUp]），所以不额外花额度。
+            talkerOfBound.firstOrNull()?.let { if (!YanwaiBubble.anyListScrolling()) catchUp(it) }
         } catch (t: Throwable) {
             logOnce("rescan:${t.javaClass.simpleName}", "补扫异常（已忽略）：${t.message}")
+        }
+    }
+
+    /** 本轮 rescan 里见过的会话（用于按库补扫的会话来源）。 */
+    private val talkerOfBound = ArrayList<String>(2)
+
+    /**
+     * 【第 51 轮】按库补扫：把「当前会话里还没有任何结论的文本消息」提交分析。
+     *
+     * 为什么必须单独有这一条：可见行补扫（[rescan]）只能覆盖**已经绑到屏幕上的行**，
+     * 而用户滑过去的消息、以及「打开聊天时刚好没在屏幕上」的消息，要么从来没被分析过、
+     * 要么失败后没有行去重投 —— 表现就是「不是每一条文本消息都有分析」。
+     *
+     * 省额度的关键是**先用归属身份查结果**：`MoodStore.settledMood(input)` 按
+     * 「会话 + 消息 id」判定，同一条消息无论上下文怎么变都算已结清 → 直接跳过、不发请求。
+     * 只有真正没结论的消息才会进队，因此补扫的额度增量 = 真正漏掉的那几条。
+     */
+    private fun catchUp(talker: String) {
+        if (talker.isEmpty() || catchUpRunning) return
+        if (catchUpExecutor.isShutdown) return
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastCatchUpAt < CATCHUP_INTERVAL_MS) return
+        if (SignalAnalyzer.atCapacity()) return
+        lastCatchUpAt = now
+        catchUpRunning = true
+        catchUpExecutor.execute {
+            var submitted = 0
+            var settledSkipped = 0
+            var scanned = 0
+            try {
+                val recent = ArrayList<WeMessage>(CATCHUP_PAGES * CATCHUP_PAGE_SIZE)
+                for (page in 1..CATCHUP_PAGES) {
+                    val got = runCatching {
+                        WeDatabaseApi.getMessages(talker, page, CATCHUP_PAGE_SIZE)
+                    }.getOrDefault(emptyList())
+                    if (got.isEmpty()) break
+                    recent += got
+                }
+                recent.asSequence()
+                    .filter { it.isSend == 0 }
+                    .filter { it.typeCode == MessageType.TEXT.code || it.typeCode == MessageType.QUOTE.code }
+                    .sortedByDescending { it.createTime }
+                    .take(CATCHUP_MAX_MESSAGES)
+                    .forEach { msg ->
+                        scanned++
+                        val raw = msg.content
+                        val speaker = if (talker.isGroupChatWxId) raw.substringBefore(":\n", "") else ""
+                        val text = if (speaker.isNotEmpty() && raw.contains(":\n")) {
+                            raw.substringAfter(":\n")
+                        } else {
+                            raw
+                        }
+                        if (text.isBlank()) return@forEach
+                        val input = AnalysisInput(
+                            text = text,
+                            talker = talker,
+                            messageId = msg.msgId,
+                            speaker = speaker.ifEmpty { "对方" },
+                            createdAt = msg.createTime,
+                            rawContent = raw,
+                        )
+                        // 已有结论 / 归属身份命中 → 不重复花钱（补扫的核心纪律）。
+                        if (MoodStore.get(input.key) != null || MoodStore.settledMood(input) != null) {
+                            settledSkipped++
+                            return@forEach
+                        }
+                        // 失败冷却中不重投（避免把重投额度白等掉）。
+                        if (SignalAnalyzer.failure(input.key) != null && SignalAnalyzer.coolingDown(input.key)) {
+                            return@forEach
+                        }
+                        if (SignalAnalyzer.atCapacity()) return@forEach
+                        if (SignalAnalyzer.submit(input) != null) submitted++
+                    }
+            } catch (t: Throwable) {
+                logOnce("catchup:${t.javaClass.simpleName}", "按库补扫异常（已忽略）：${t.message}")
+            } finally {
+                catchUpRunning = false
+                if (submitted > 0 || scanned > 0) {
+                    MoodLog.i(
+                        "$TAG 按库补扫：会话=$talker 扫描=$scanned 已结清跳过=$settledSkipped 提交=$submitted",
+                    )
+                }
+            }
         }
     }
 
@@ -592,6 +700,20 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
         // 为什么这样不会闪：宿主是先派发 Detached(rebound=true) 再派发 Attached/onCreateView，
         // 两者在**同一个 onBindView 调用栈、同一帧**内完成 —— 摘掉之后紧接着的 handle()
         // 会按新的消息标识把卡片重建出来，用户看不到中间态。
+        //
+        // 【第 51 轮】`rebound = false` 的 detach **不再摘卡片**。
+        //
+        // 用户反馈：「在聊天会话里上下滑动聊天记录会自动刷新，导致分析卡片容器重新生成
+        // （浪费额度），渲染频繁还容易占位串乱」。宿主在滚动时会对**滑出屏幕的行**派发
+        // `Detached(rebound=false)`，而这些行通常**原样滑回来**；旧实现无条件 forget，
+        // 于是滑回来必须整卡重建（重算屏幕快照 → 重新排版 → 有时还会重新排队）。
+        //
+        // 只摘两种情况，两者都仍然正确：
+        //  ① `rebound = true`（这一行换了消息，卡片属于上一条）——上面那段；
+        //  ② `onMessageViewRecycled`（视图被回收给别的行）。
+        // 另外 `handle()` 每次绑定都会用 `rowMatches()` 校验消息身份，视图即使被静默复用，
+        // 下一帧也会按新消息重建内容，不会留下串位的卡片。
+        if (!rebound) return
         onMain { forget(view) }
     }
 

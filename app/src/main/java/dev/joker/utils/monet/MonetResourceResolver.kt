@@ -134,6 +134,59 @@ object MonetResourceResolver {
     /** 每个角色最多扩展多少个同族 drawable。 */
     private const val CARD_FAMILY_MAX = 8
 
+    /** 【第 49c】同卡片背景扩展的封顶（布局数 / 最终目标数）+ `android:background` 属性 id。 */
+    private const val FAMILY_MAX_LAYOUTS = 4
+    private const val FAMILY_MAX_TARGETS = 10
+    private const val ATTR_BACKGROUND = 0x010100d4
+
+    /**
+     * 找与 [nodeId] **共用同一张卡片布局**的其它 drawable。
+     *
+     * 起点全是宿主自己的结构（不猜指纹）：引用该节点的布局、以及该节点自身的 selector items。
+     * 深度与数量都封顶，避免在个别畸形资源上滚雪球。
+     */
+    private fun collectSameCardDrawables(graph: MonetResourceGraph, nodeId: Int): List<Int> {
+        val out = LinkedHashSet<Int>()
+        runCatching {
+            graph.incoming(nodeId)
+                .filter { graph.node(it)?.key?.type == "layout" }
+                .take(FAMILY_MAX_LAYOUTS)
+                .forEach { layoutId ->
+                    graph.xmlTrees(layoutId).take(6).forEach { tree -> collectBackgroundRefs(tree, out, 0) }
+                }
+            graph.xmlTrees(nodeId).take(4).forEach { tree -> collectItemRefs(tree, out, 0) }
+        }.onFailure { WeLogger.w(TAG, "同卡片背景收集失败（$nodeId），该节点按原样处理", it) }
+        out.remove(nodeId)
+        return out.toList()
+    }
+
+    /** 递归收集 `android:background` 引用的 drawable（含 complex/selector 形式的 item）。 */
+    private fun collectBackgroundRefs(element: MonetXmlElement, out: MutableSet<Int>, depth: Int) {
+        if (depth > 8) return
+        element.attributes.forEach { attr ->
+            if (attr.nameId != ATTR_BACKGROUND) return@forEach
+            when (val value = attr.value) {
+                is MonetResourceValue.Reference -> out += value.resourceId
+                is MonetResourceValue.Complex -> value.items.forEach { item ->
+                    (item.value as? MonetResourceValue.Reference)?.let { out += it.resourceId }
+                }
+                else -> Unit
+            }
+        }
+        element.children.forEach { collectBackgroundRefs(it, out, depth + 1) }
+    }
+
+    /** selector / state-list 里的 drawable item（卡片的「已领取 / 已过期」等状态背景常在这里）。 */
+    private fun collectItemRefs(element: MonetXmlElement, out: MutableSet<Int>, depth: Int) {
+        if (depth > 8) return
+        element.children.forEach { child ->
+            child.attributes.forEach { attr ->
+                (attr.value as? MonetResourceValue.Reference)?.let { out += it.resourceId }
+            }
+            collectItemRefs(child, out, depth + 1)
+        }
+    }
+
     /**
      * Resolves every semantic role and authors the replacement resources.
      *
@@ -158,6 +211,31 @@ object MonetResourceResolver {
         val resolved = MonetStructureMatcher.resolveAll(graph, dexProvider, { completed, total, detail ->
             onProgress(completed, total, detail)
         }, familyExtras)
+        // 【第 49b】状态族「同卡片布局」扩展。
+        //
+        // 用户实机第 2 次反馈：**领取前**的红包/转账有 pro 圆角，**领取完**的还是微信原版。
+        // 机制：同一张卡的不同状态往往是「同一布局下**不同的背景 drawable**」，而这些背景
+        // 与已解析角色的结构证据并不相同 —— 既解析不到，也不会出现在同族候选（指纹相同）里，
+        // 所以上一轮的「同指纹扩展」对它们无效。
+        //
+        // 这里换一个**宿主自证**的锚点，不猜指纹：以族内节点为起点，沿
+        //   ① 引用它的布局（`layout` 节点）的 `android:background` 属性引用
+        //   ② 它自身 selector/conplex 的 item 引用
+        // 收集「同一张卡片的其它背景 drawable」，一并纳入该族的注入集合。
+        // 只对显式标记 family 的角色生效、每族封顶，颜色链路一行未动。
+        familyExtras.entries.toList().forEach { (role, base) ->
+            val expanded = LinkedHashSet<Int>(base.map { it.id })
+            base.forEach { node ->
+                collectSameCardDrawables(graph, node.id).forEach { expanded += it }
+            }
+            val bounded = expanded.filter { graph.node(it) != null }.take(FAMILY_MAX_TARGETS)
+            familyExtras[role] = bounded.mapNotNull { graph.node(it) }
+            WeLogger.i(
+                TAG,
+                "状态族 $role 同卡片扩展：基础 ${base.size} → 最终 ${familyExtras[role]?.size} 个背景" +
+                    "（${familyExtras[role].orEmpty().joinToString { "0x${it.id.toString(16)}" }}）",
+            )
+        }
         // 【第 50 轮】卡片族扩展：见 [expandCardFamilies]。
         runCatching { expandCardFamilies(graph, resolved, familyExtras) }
             .onFailure { WeLogger.w(TAG, "卡片族扩展失败（只影响红包/转账其它状态的圆角）", it) }

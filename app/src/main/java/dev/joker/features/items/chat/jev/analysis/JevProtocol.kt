@@ -13,8 +13,31 @@ import kotlin.math.roundToInt
 
 /** Two bounded rounds of native Jev choices. No free-text generation or guessed chat facts. */
 object JevProtocol {
+    // 【第 51 轮 · 潜语一比一复刻 批次1】情绪从 7 项补到 10 项（新增 焦虑 / 困惑 / 疲惫），
+    // 并补上上游的 10 条 `emotionCriteria` 判定标准：旧实现只有一句泛泛描述，模型容易
+    // 「纠正事实判成生气」「主动道歉判成缓和」——上游正是用 criteria 修这两类误判的。
     val emotions = linkedMapOf("happy" to "开心", "calm" to "平静", "sad" to "失落",
-        "hurt" to "委屈", "annoyed" to "生气", "relieved" to "缓和", "unknown" to "不明确")
+        "hurt" to "委屈", "annoyed" to "生气", "relieved" to "缓和", "anxious" to "焦虑",
+        "confused" to "困惑", "tired" to "疲惫", "unknown" to "不明确")
+
+    /** 每个情绪选项的判定标准（进 payload 的 `criteria`，模型据此逐项对照）。 */
+    private val emotionCriteria = linkedMapOf(
+        "happy" to "发送者表达喜悦、开心、兴奋或满意",
+        "calm" to "平和地完整陈述事实、确认、解释或提出请求，没有明显情绪起伏",
+        "sad" to "发送者表达失落、难过或沮丧",
+        "hurt" to "发送者表达受伤、被忽视、受委屈的感受",
+        "annoyed" to "发送者表达恼火、愤怒或带情绪的责备；单纯纠正事实、提醒约定、拒绝提议不等于生气",
+        "relieved" to "发送者明确表达自己从难受或紧张中放松、好转；主动道歉、解释原意或承认疏忽本身不证明情绪缓和",
+        "anxious" to "担心未确定的结果，紧张、焦虑或不安",
+        "confused" to "对信息、说法或安排不理解、疑惑，不只是已经理解但不同意",
+        "tired" to "明确表现出身体、注意力或精力的疲惫",
+        "unknown" to "短句、缺失语境或多种同样合理解释使情绪无法确定；不能凭时间间隔或客套词猜测")
+
+    /** 情绪问题的指令（与上游逐字一致）。 */
+    private const val EMOTION = "判断当前消息发送时文字表现出的主要情绪，不是阅读这条历史消息时的心理。" +
+        "旧消息的生气不能自动延续到当前，隔夜也不等于消气；优先依据当前表达以及相关前文。" +
+        "区分开心、平静、生气、失落、委屈、缓和、焦虑、困惑、疲惫；短句、标点、回复间隔不能单独定性。" +
+        "没有情绪线索时允许不明确，不强行选平静。只是文字解读，不是心理诊断。"
     val header: String get() = "Jev ${BuildConfig.VERSION_NAME}"
     val progress = linkedMapOf("sharing" to "分享经历或自然闲聊", "clarify" to "等具体事实或细节",
         "reassure" to "等关心或重视的回应", "explain" to "等澄清误会或承认问题",
@@ -30,7 +53,7 @@ object JevProtocol {
         .put("model", model).put("state", state(text, context, speaker))
         .put("questions", JSONObject()
             .put("scene", choice("当前最适合哪类闲聊解读？按交流方式判断，不按话题名词排除。向朋友聊比赛、奖学金、工作经历仍可属于日常分享。区分抱怨第三方和双方矛盾；事情结束不等于聊天结束，后半句有新话题时优先考虑新话题。", ChatTemplates.scenes))
-            .put("emotion", choice("当前文字表现出的情绪是什么？区分开心、平静、生气、失落、委屈、缓和；不能从标点单独定性，不把失落或委屈硬算成生气。", emotions))
+            .put("emotion", choice(EMOTION, emotionCriteria))
             .put("progress", choice("当前这一步在等待怎样的回应？只依据已经发生的前文，区分等解释、等行动和已接受。已接受指明确接受我方回应或安排，不是接受命运或带条件的假设。事件完成但开始新话题时仍是分享，不是收尾。", progress))
             .apply { ChatFacts.questions.forEach { (key, q) -> put(key, choice(q.instructions, q.options)) } })
 
