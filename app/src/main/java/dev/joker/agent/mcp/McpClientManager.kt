@@ -112,6 +112,14 @@ object McpClientManager {
                     delay(HEALTHCHECK_INTERVAL_MS.milliseconds)
                     continue
                 }
+                // 【第 52 轮】离线冷却期内不重连、不打日志：冷却本来就是为了让「手机连不到
+                // 电脑/容器上的端点」这件事安静下来，旧实现却仍在循环里每轮打一行 W
+                // （实机日志 89 行 reconnect attempt 1..7）。等冷却结束再照常接上。
+                val cooling = provider.offlineRemainingMs()
+                if (cooling > 0) {
+                    delay(minOf(cooling, IDLE_BACKOFF_MS).milliseconds)
+                    continue
+                }
                 provider.connect()
                 if (provider.state == McpConnectionState.CONNECTED) {
                     attempt = 0

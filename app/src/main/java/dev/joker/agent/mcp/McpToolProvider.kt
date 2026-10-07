@@ -100,6 +100,16 @@ class McpToolProvider(
      */
     private val offlineUntil = java.util.concurrent.atomic.AtomicLong(0L)
 
+    /**
+     * 【第 52 轮】离线冷却剩余毫秒（0 = 不在冷却里）。
+     *
+     * 给 [McpClientManager] 的重连循环用：冷却期内**不要**再按 2s→60s 的退避去连、也不要打日志 ——
+     * 实机日志里 6 台服务器各自的 attempt 1..7 全都被打印了一遍（89 行），
+     * 而 [connect] 本身在冷却期是直接 return 的，白转一圈。
+     */
+    fun offlineRemainingMs(): Long =
+        (offlineUntil.get() - System.currentTimeMillis()).coerceAtLeast(0L)
+
     private companion object {
         const val TAG = "McpToolProvider"
         const val OFFLINE_THRESHOLD = 5
@@ -147,7 +157,15 @@ class McpToolProvider(
             }
             val failures = connectFailures.incrementAndGet()
             when {
-                failures <= traceFailures -> WeLogger.e(TAG, "failed to connect MCP server '$name'", e)
+                // 【第 52 轮】用户日志里 24 条 `E/` 全部是这里 —— 而 MCP 端点在用户的电脑/容器上，
+                // 手机连不上是**常态**而不是故障。降到 W（首两次）并说明原因，别让用户看日志时
+                // 以为模块在报一堆错；到阈值后由下面那条单行 W 接管。
+                failures <= traceFailures -> WeLogger.w(
+                    TAG,
+                    "failed to connect MCP server '$name'（端点不可达是常态，连续失败到 " +
+                        "$OFFLINE_THRESHOLD 次会自动静音 ${OFFLINE_COOLDOWN_MS / 60_000} 分钟）",
+                    e,
+                )
                 failures >= OFFLINE_THRESHOLD -> {
                     // 到阈值：进入冷却并**只打一行**，之后冷却期内完全静音。
                     offlineUntil.set(System.currentTimeMillis() + OFFLINE_COOLDOWN_MS)

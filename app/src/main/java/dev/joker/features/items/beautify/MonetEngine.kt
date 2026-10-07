@@ -1008,6 +1008,10 @@ object MonetEngine : ClickableFeature() {
     private val attachedActivityLabels: MutableSet<String> =
         Collections.synchronizedSet(HashSet<String>())
 
+    /** 【第 52 轮】已用 D 级记过「Resources 未注册」的 Activity 标签（每个只记一次，避免刷屏）。 */
+    private val attachFailureLogged: MutableSet<String> =
+        Collections.synchronizedSet(HashSet<String>())
+
     /**
      * 把运行时资源包挂到**任意一个** `Resources` 实例上（幂等、失败只降级）。
      *
@@ -1032,7 +1036,19 @@ object MonetEngine : ClickableFeature() {
             runtimeLoaderAttached[resources] = loader
         } catch (error: Throwable) {
             runtimeLoaderAttached.remove(resources)
-            WeLogger.w(TAG, "cannot attach runtime package to activity resources", error)
+            // 【第 52 轮】这一条以前打 **W + 完整堆栈**，用户日志里 3 次全是
+            // `IllegalArgumentException: Cannot modify resource loaders of ResourcesImpl
+            // not registered with ResourcesManager` —— 含义只是「这个 Resources 实例不归
+            // ResourcesManager 管，加不了 loader」，属于**良性跳过**（该 Activity 拿不到覆盖，
+            // 不影响其它实例）。降到 D 且每个 Activity 类只记一次，日志里不再像报错。
+            val who = label.ifEmpty { "?" }
+            if (attachFailureLogged.add(who)) {
+                WeLogger.d(
+                    TAG,
+                    "该 Resources 实例未注册到 ResourcesManager，跳过覆盖注入（良性跳过）：$who " +
+                        "(${error.javaClass.simpleName})",
+                )
+            }
             return
         }
         // 【2026-09-27】这里原来调的是 probeActivityResources()，它拿**语义角色 id** 去
