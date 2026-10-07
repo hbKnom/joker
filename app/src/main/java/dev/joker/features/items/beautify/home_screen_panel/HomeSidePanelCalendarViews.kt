@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.joker.R
 import dev.joker.features.items.beautify.home_screen_panel.calendar.HomeSidePanelCalendarData
+import dev.joker.features.items.beautify.home_screen_panel.calendar.HuangliDetail
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
@@ -209,7 +210,17 @@ private fun HomeSidePanelMonthCell(
             .padding(horizontal = 1.dp)
             .clip(RoundedCornerShape(8.dp))
             .then(if (info.isToday) Modifier.background(scheme.primary) else Modifier)
-            .then(if (selected && !info.isToday) Modifier.border(1.dp, scheme.primary, RoundedCornerShape(8.dp)) else Modifier)
+            // 【第 54 轮】选中效果做重一点：以前只有一圈 1dp 描边，截图里几乎看不出来
+            // （用户反馈「切换任意日期没有选中效果」）。现在 = 浅主色底 + 主色描边。
+            .then(
+                if (selected && !info.isToday) {
+                    Modifier
+                        .background(scheme.primary.copy(alpha = 0.12f))
+                        .border(1.5.dp, scheme.primary, RoundedCornerShape(8.dp))
+                } else {
+                    Modifier
+                },
+            )
             .clickable(onClick = onClick)
             .padding(vertical = 3.dp),
         contentAlignment = Alignment.Center,
@@ -222,12 +233,15 @@ private fun HomeSidePanelMonthCell(
                 color = dayColor,
                 maxLines = 1,
             )
+            // 【第 54 轮】第二行**固定显示农历**，第三行才放节日名。
+            // 旧实现第二行是「有节日就显示节日、否则农历」，第三行又画一次节日名 ——
+            // 于是 10/8 寒露、10/17 重阳节、10/31 万圣夜都**上下重复两遍**（用户截图指出），
+            // 而且有节日的日子反而看不到农历几日。现在两行各司其职，两个问题一起消失。
             Text(
-                text = info.festivalName ?: info.lunarShort,
+                text = info.lunarShort,
                 fontSize = 8.sp,
-                color = if (info.festivalName != null) scheme.error else scheme.onSurfaceVariant,
+                color = scheme.onSurfaceVariant,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             if (info.holidayMark != null) {
                 Text(
@@ -239,12 +253,14 @@ private fun HomeSidePanelMonthCell(
                         .padding(horizontal = 3.dp),
                     maxLines = 1,
                 )
-            } else if (info.festivalName != null && info.festivalName.length <= 4) {
+            } else if (info.festivalName != null) {
                 Text(
+                    // 长节日名（如「辛亥革命纪念日」）也照旧显示，靠省略号收进一格
                     text = info.festivalName,
                     fontSize = 8.sp,
                     color = scheme.error,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -372,6 +388,20 @@ internal fun HomeSidePanelDayView(
                 )
             }
         }
+        // 【第 54 轮】日视图以前只有「大日期 + 农历 + 日柱 + 宜忌 + 倒计时」，
+        // 用户反馈「日视图没有显示对应日期的全部黄历信息」。现在把详情页那 6 格
+        // （胎神/彭祖/五行/星宿/冲煞/值神）与十二时吉凶**同步铺在日视图里**，
+        // 不用点进详情也看得到完整内容。
+        if (showYiJi) {
+            HomeSidePanelHuangliFacts(HomeSidePanelCalendarData.huangliDetail(date))
+            Text(
+                text = "十二时",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = scheme.onSurface,
+            )
+            HomeSidePanelTwoHourRow(HomeSidePanelCalendarData.huangliDetail(date))
+        }
         if (showCountdown) {
             val items = HomeSidePanelCalendarData.countdown(date, 4)
             if (items.isNotEmpty()) {
@@ -437,7 +467,9 @@ internal fun HomeSidePanelWeekTimelineView(
     today: LocalDate,
     showFestivalName: Boolean,
     showHolidayMark: Boolean,
+    showYiJi: Boolean,
     onSelect: (LocalDate) -> Unit,
+    onOpenDetail: (LocalDate) -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
     val month = YearMonth.from(weekStart)
@@ -447,11 +479,23 @@ internal fun HomeSidePanelWeekTimelineView(
             for (col in 0 until 7) {
                 val date = weekStart.plusDays(col.toLong())
                 val isToday = date == today
+                val isSelected = date == selected
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(8.dp))
+                        // 【第 54 轮】周视图以前只高亮「今天」，用户点任何日期**没有任何反馈**。
+                        // 现在：今天=实心 primary；选中=primary 描边 + 浅底（两者可同时成立）。
                         .then(if (isToday) Modifier.background(scheme.primary) else Modifier)
+                        .then(
+                            if (isSelected && !isToday) {
+                                Modifier
+                                    .background(scheme.primary.copy(alpha = 0.10f))
+                                    .border(1.dp, scheme.primary, RoundedCornerShape(8.dp))
+                            } else {
+                                Modifier
+                            },
+                        )
                         .clickable { onSelect(date) }
                         .padding(vertical = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -470,7 +514,7 @@ internal fun HomeSidePanelWeekTimelineView(
                         showHolidayMark = showHolidayMark,
                     )
                     Text(
-                        text = info.festivalName ?: info.lunarShort,
+                        text = info.lunarShort,
                         fontSize = 9.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -484,6 +528,14 @@ internal fun HomeSidePanelWeekTimelineView(
                             modifier = Modifier
                                 .background(if (info.holidayMark == "休") scheme.error else scheme.tertiary)
                                 .padding(horizontal = 3.dp),
+                        )
+                    } else if (info.festivalName != null) {
+                        Text(
+                            text = info.festivalName,
+                            fontSize = 8.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = if (isToday) scheme.onPrimary else scheme.error,
                         )
                     }
                 }
@@ -519,10 +571,18 @@ internal fun HomeSidePanelWeekTimelineView(
                 }
             }
         }
+        // 【第 54 轮】周视图以前只有一行「选中：X月X日」的纯文字 —— 既没有该日期的农历/干支/宜忌，
+        // 也没有进黄历详情的入口。现在与月视图共用同一张摘要卡：选中哪天就同步显示哪天，
+        // 并且带「查看黄历详情 ›」入口（用户点名的两个缺口）。
         Text(
             text = "选中：${selected.monthValue}月${selected.dayOfMonth}日（${weekdayLabelOf(selected)}）",
             fontSize = 11.sp,
             color = scheme.onSurfaceVariant,
+        )
+        HomeSidePanelMonthSummaryCard(
+            date = selected,
+            showYiJi = showYiJi,
+            onOpenDetail = { onOpenDetail(selected) },
         )
     }
 }
@@ -597,12 +657,7 @@ internal fun HomeSidePanelHuangliDetailView(
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            HomeSidePanelDetailRow("胎神", detail.fetalGod)
-            HomeSidePanelDetailRow("彭祖", "${detail.pengZuStem}\n${detail.pengZuBranch}")
-            HomeSidePanelDetailRow("五行", "${detail.naYin} ${detail.jianChu}位")
-            HomeSidePanelDetailRow("星宿", "${detail.star28Direction}${detail.star28}")
-            HomeSidePanelDetailRow("冲煞", detail.chongSha)
-            HomeSidePanelDetailRow("值神", detail.dayGod)
+            HomeSidePanelHuangliFacts(detail)
         }
         Text(
             text = "十二时",
@@ -610,23 +665,51 @@ internal fun HomeSidePanelHuangliDetailView(
             fontWeight = FontWeight.SemiBold,
             color = scheme.onSurface,
         )
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            detail.twoHourNames.forEachIndexed { index, branch ->
-                val auspicious = detail.twoHourLuck.getOrNull(index) == true
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = branch,
-                        fontSize = 15.sp,
-                        color = scheme.onSurface,
-                        modifier = Modifier.width(28.dp),
-                    )
-                    Text(
-                        text = detail.twoHourText.getOrNull(index)
-                            ?: if (auspicious) "吉" else "凶",
-                        fontSize = 13.sp,
-                        color = if (auspicious) HOME_SIDE_PANEL_CAL_AUSPICIOUS else HOME_SIDE_PANEL_CAL_INAUSPICIOUS,
-                    )
-                }
+        // 【第 54 轮】十二时改成**横排**：以前 12 行竖排要占满一屏（用户截图指出「竖着排列占据空间」）。
+        // 现在一行 12 格（地支在上、吉/凶在下），整块高度约 34dp，一屏就能看全。
+        HomeSidePanelTwoHourRow(detail)
+    }
+}
+
+/**
+ * 黄历六格（胎神 / 彭祖 / 五行 / 星宿 / 冲煞 / 值神）。
+ *
+ * 抽出来给**详情页**与**日视图**共用 —— 两处显示内容必须完全一致（用户要求日视图也能看到全部信息）。
+ */
+@Composable
+internal fun HomeSidePanelHuangliFacts(detail: HuangliDetail) {
+    HomeSidePanelDetailRow("胎神", detail.fetalGod)
+    HomeSidePanelDetailRow("彭祖", "${detail.pengZuStem}　${detail.pengZuBranch}")
+    HomeSidePanelDetailRow("五行", "${detail.naYin} ${detail.jianChu}位")
+    HomeSidePanelDetailRow("星宿", "${detail.star28Direction}${detail.star28}")
+    HomeSidePanelDetailRow("冲煞", detail.chongSha)
+    HomeSidePanelDetailRow("值神", detail.dayGod)
+}
+
+/**
+ * 十二时吉凶：**横排** 12 格（子..亥），每格上下两行（地支 + 吉/凶）。
+ *
+ * 吉/凶沿用固定语义色（跟主题变色就分不出吉凶）。
+ */
+@Composable
+internal fun HomeSidePanelTwoHourRow(detail: HuangliDetail) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        detail.twoHourNames.forEachIndexed { index, branch ->
+            val auspicious = detail.twoHourLuck.getOrNull(index) == true
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = branch,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = detail.twoHourText.getOrNull(index) ?: if (auspicious) "吉" else "凶",
+                    fontSize = 11.sp,
+                    color = if (auspicious) HOME_SIDE_PANEL_CAL_AUSPICIOUS else HOME_SIDE_PANEL_CAL_INAUSPICIOUS,
+                )
             }
         }
     }

@@ -230,7 +230,9 @@ internal fun HomeSidePanelCalendarCard(
                         today = LocalDate.now(),
                         showFestivalName = card.showFestivalName,
                         showHolidayMark = card.showHolidayMark,
+                        showYiJi = card.showYiJi,
                         onSelect = { selectedDate = it },
+                        onOpenDetail = { openDetail(it) },
                     )
 
                     HomeSidePanelCalendarMode.DAY -> HomeSidePanelDayView(

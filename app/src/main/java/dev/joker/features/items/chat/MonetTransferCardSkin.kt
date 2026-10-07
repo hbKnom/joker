@@ -46,7 +46,18 @@ object MonetTransferCardSkin : ApiFeature(), IResolveDex {
 
     override val technicalId = "莫奈领取态卡片"
     override val nameRes = dev.joker.R.string.feature_monet_engine_name
-    override val categoryIds: List<String> = listOf(FeatureCategoryIds.BEAUTIFY)
+    /**
+     * ⚠️【第 54 轮·崩溃教训】必须是 **API 分类**，绝不能放进用户可见分类（BEAUTIFY 等）。
+     *
+     * 第一版放在 BEAUTIFY → 设置页的功能列表会把它当普通开关行渲染，而
+     * `FeatureRow` 里对非 `SwitchFeature` 的功能做了裸强转
+     * （`(item as SwitchFeature).setToggleCompletionCallback{…}`）→ 一进那个页面就
+     * `ClassCastException: MonetTransferCardSkin cannot be cast to SwitchFeature` **闪退**。
+     * 实机三份崩溃日志同一根因（R8 映射：tt6=本类、e9a=SwitchFeature）。
+     * 现在 FeatureRow 已改成安全强转（`as?`），但**本功能本身也不需要开关** ——
+     * 它是纯服务（`ApiFeature`，`startup()` 即生效），与 `BlockMessagesRuntime` 同类，归 API 分类。
+     */
+    override val categoryIds: List<String> = listOf(FeatureCategoryIds.API)
     override val descriptionRes = dev.joker.R.string.feature_monet_engine_description
 
     /**

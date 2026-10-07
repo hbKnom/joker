@@ -390,7 +390,15 @@ fun FeatureRow(
     val localizedDescription = item.localizedDescription(localizedContext)
 
     DisposableEffect(configKey) {
-        (item as SwitchFeature).setToggleCompletionCallback {
+        // 【第 54 轮·崩溃修复】这里原来是 `(item as SwitchFeature).setToggleCompletionCallback {…}`。
+        // 只要有任何**不是** SwitchFeature 的功能出现在用户可见分类里（例如纯服务型的
+        // ApiFeature），这一行就会在 Compose 进入组合期直接抛
+        // `ClassCastException: XxxFeature cannot be cast to SwitchFeature` —— 实机表现为
+        // 「一进设置里的某个功能页就闪退」。日志铁证：tt6=MonetTransferCardSkin、e9a=SwitchFeature，
+        // 栈顶 BaseFeature$$ExternalSyntheticLambda0（即本回调）。
+        // 现在只有真的是开关型功能才注册回调；其它类型安静跳过。
+        val switch = item as? SwitchFeature
+        switch?.setToggleCompletionCallback {
             FeatureCategoryState.notifyToggleChanged()
             onCheckedChange(item.isEnabled)
         }
@@ -398,7 +406,8 @@ fun FeatureRow(
     }
 
     fun toggle(requested: Boolean) {
-        item as SwitchFeature
+        // 同上：非开关型功能不允许被「切」——以前这里是一行裸强转，用户点一下同样闪退。
+        val switch = item as? SwitchFeature ?: return
         if (item.onBeforeToggle(requested, context)) {
             WePrefs.putBool(configKey, requested)
             item.isEnabled = requested
