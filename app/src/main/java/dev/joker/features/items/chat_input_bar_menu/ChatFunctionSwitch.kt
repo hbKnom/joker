@@ -27,11 +27,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import com.composables.icons.materialsymbols.outlined.Block
 import com.composables.icons.materialsymbols.outlined.Chevron_right
 import com.composables.icons.materialsymbols.MaterialSymbols
+import com.composables.icons.materialsymbols.outlined.Refresh
 import com.composables.icons.materialsymbols.outlined.Tune
 import dev.joker.R
 import dev.joker.features.api.ui.WeChatInputBarMenuApi
+import dev.joker.features.api.ui.WeCurrentConversationApi
+import dev.joker.features.items.chat.BlockMessages
+import dev.joker.features.items.chat.jev.hook.YanwaiScanner
 import dev.joker.activity.settings.SettingsActivity
 import dev.joker.features.core.ClickableFeature
 import dev.joker.features.core.FeatureCategoryIds
@@ -66,6 +71,10 @@ object ChatFunctionSwitch : ClickableFeature() {
     override val noSwitchWidget: Boolean = true
 
     private val provider = WeChatInputBarMenuApi.IActionItemsProvider {
+        // 【第 52 轮】菜单每次展开都会重新取一次动作列表 —— 这里顺手读一下本会话的屏蔽状态，
+        // 让按钮文案与**当前状态**一致（否则用户点「屏蔽本会话」时其实是在取消，容易误解）。
+        val currentTalker = runCatching { WeCurrentConversationApi.value }.getOrDefault("")
+        val talkerMasked = BlockMessages.isTalkerMaskAll(currentTalker)
         listOf(
             WeChatInputBarMenuApi.ActionItem(
                 id = "joker_chat_function_switch",
@@ -73,6 +82,33 @@ object ChatFunctionSwitch : ClickableFeature() {
                 label = "聊天功能",
                 onClick = { context, _ ->
                     showChatFunctionMenu(context)
+                },
+            ),
+            // 【第 52 轮·四功能「实用性」扩展】把最高频的两个动作直接放到会话底栏菜单：
+            //  ①「屏蔽本会话」：一键全部遮盖/取消（写入与设置页同一份 perTalker 规则）；
+            //  ②「潜语立刻重扫」：当前会话当场重新分析可见消息，不用等节拍。
+            // 二者都只调用已存在的公开 API，零新增资源、零新增权限。
+            WeChatInputBarMenuApi.ActionItem(
+                id = "joker_toggle_block_talker",
+                icon = MaterialSymbols.Outlined.Block,
+                label = if (talkerMasked) "取消本会话屏蔽" else "屏蔽本会话",
+                onClick = { context, _ ->
+                    val talker = runCatching { WeCurrentConversationApi.value }.getOrDefault("")
+                    if (talker.isBlank()) {
+                        showToast(context, "拿不到当前会话，请先进入会话")
+                        return@ActionItem
+                    }
+                    val nowMasked = BlockMessages.toggleTalkerMaskAll(talker)
+                    showToast(context, if (nowMasked) "本会话已全部遮盖（再点一次取消）" else "已取消本会话屏蔽")
+                },
+            ),
+            WeChatInputBarMenuApi.ActionItem(
+                id = "joker_yanwai_rescan",
+                icon = MaterialSymbols.Outlined.Refresh,
+                label = "潜语：立刻重扫本会话",
+                onClick = { context, _ ->
+                    YanwaiScanner.reanalyzeVisible()
+                    showToast(context, "已触发本会话重扫")
                 },
             ),
         )

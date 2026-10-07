@@ -158,6 +158,31 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
         return cachedRules
     }
 
+    /**
+     * 【第 52 轮·四功能「实用性」扩展】把「这条该不该屏蔽」开放给其它聊天功能复用。
+     *
+     * 为什么必须走这里而不是 `BlockMessagesRules.current`：后者**每次访问都重新 parse JSON**
+     * （`parse(WePrefs.getStringOrDef(...))`），放进逐条消息的热路径就是卡顿源。本函数用的是
+     * [currentRules] 的内存快照（HotPrefs 原始串 + 串不变就不 parse），语义与遮罩层完全一致。
+     *
+     * 现有调用方：潜语（[dev.joker.features.items.chat.jev.hook.YanwaiScanner]）——
+     * 被屏蔽的消息在界面上本来就是被盖住的，再送模型分析等于纯浪费额度。
+     *
+     * @return null = 不该屏蔽；否则是该条命中的中文原因标签。
+     */
+    fun blockedReason(talker: String, sender: String, content: String): String? = runCatching {
+        val whitelist = useWhitelist
+        val rules = currentRules()
+        if (!whitelist && rules.isEmpty) return@runCatching null
+        BlockMessages.matchReason(
+            rules = rules,
+            useWhitelist = whitelist,
+            talker = talker,
+            sender = sender,
+            content = content,
+        )
+    }.getOrNull()
+
     override fun onEnable() {
         WeMessageApi.methodChattingDataAdapterOnBindViewHolder.hookAfter {
             // 每一条消息绑定都会跑的热路径：参数只在 hook receiver 上可用，

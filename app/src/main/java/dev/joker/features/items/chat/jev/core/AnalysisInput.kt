@@ -1,6 +1,39 @@
 package dev.joker.features.items.chat.jev.core
 
-data class ContextMessage(val speaker: String, val text: String)
+/**
+ * 前文中的一条消息。
+ *
+ * 【第 52 轮·潜语一比一 批次0】补 `createdAt` / `messageId`：
+ * 上游把「时间与覆盖度」当作一等证据交给模型（时间块、同轮分组、跨天、距目标消息多久），
+ * 而我方以前只传 speaker+text —— 于是「隔夜 / 跨天 / 同一轮里谁在接话」这类判断**完全失效**。
+ * 这两个值在 `buildRow()` 时从宿主 `MessageInfo` 顺手取（**不新增任何 SQLite 查询**）。
+ */
+data class ContextMessage(
+    val speaker: String,
+    val text: String,
+    /** 发送时间（毫秒；0 = 未知）。 */
+    val createdAt: Long = 0,
+    /** 消息 id（0 = 未知）。 */
+    val messageId: Long = 0,
+)
+
+/**
+ * 上下文覆盖度（照搬上游 `ContextCoverage` 语义）。
+ *
+ * 模型必须知道「前文是不是不全」：被省略的媒体、读不到的历史、被字符预算截断的部分，
+ * 都不能被理解成「什么都没发生」。
+ */
+data class ContextCoverage(
+    val source: String = "provided",
+    val scanned: Int = 0,
+    val omittedMedia: Int = 0,
+    val unavailable: Int = 0,
+    val omittedText: Int = 0,
+    val invalidTime: Int = 0,
+    val truncated: Boolean = false,
+    val unavailableVoice: Int = 0,
+)
+
 
 data class AnalysisInput(
     val text: String,
@@ -18,6 +51,10 @@ data class AnalysisInput(
      * 共用一张卡片。为空时退回 [text]（老调用点的行为不变）。
      */
     val rawContent: String = "",
+    /** 【第 52 轮】前文覆盖度（默认「完整提供」，老调用点行为不变）。 */
+    val coverage: ContextCoverage = ContextCoverage(),
+    /** 【第 52 轮】目标消息所在时区（默认设备时区）——`sent_at`/时间块跨天都按它换算。 */
+    val zoneId: String = java.util.TimeZone.getDefault().id,
 ) {
     /**
      * 分析身份键（SHA-256，内容 + 上下文 + 消息身份一起哈希）。
@@ -75,6 +112,15 @@ object MessagePolicy {
      */
     const val MAX_CHARACTERS = ModulePrefs.DEFAULT_MAX_CHARS
     const val MAX_CONTEXT_MESSAGES = 10
+
+    /**
+     * 【第 52 轮·上游一比一】上下文选入的字符预算与扫描上限（上游 12000 / 80）。
+     *
+     * 上游按「从新到旧、累加字符不许超预算」挑前文，并把「因为预算被丢掉多少条」写进
+     * `context_coverage.truncated`。我方以前只看条数上限，长消息一来就把前文挤爆。
+     */
+    const val MAX_CONTEXT_CHARACTERS = 12_000
+    const val MAX_CONTEXT_SCAN = 80
 
     /** 当前生效的单条字符上限（热路径：命中 [dev.joker.preferences.HotPrefs] 内存缓存，无 SQLite）。 */
     val maxCharacters: Int get() = ModulePrefs.maxChars

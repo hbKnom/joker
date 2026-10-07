@@ -228,6 +228,16 @@ data class MusicCardConfig(
 data class CalendarCardConfig(
     override val id: String,
     val showLunarCalendar: Boolean = true,
+    /**
+     * 【第 52 轮】四个日历显示开关（全部给默认值 → 老布局 JSON 仍可解码）。
+     *
+     * 对应自制日历源码里那几块内容：格内节日名、休/班角标、宜忌（月摘要 + 日视图）、
+     * 日视图倒计时。默认全开 = 与源码 1:1；用户可在卡片设置里逐项关掉。
+     */
+    val showFestivalName: Boolean = true,
+    val showHolidayMark: Boolean = true,
+    val showYiJi: Boolean = true,
+    val showCountdown: Boolean = true,
     override val backgroundImageAssetId: String? = null,
     override val backgroundImageAlpha: Int = HOME_SIDE_PANEL_BACKGROUND_ALPHA_DEFAULT,
 ) : HomeSidePanelCardConfig(), HomeSidePanelBackgroundImageCardConfig {

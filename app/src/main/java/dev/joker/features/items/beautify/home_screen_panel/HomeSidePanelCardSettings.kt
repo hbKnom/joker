@@ -441,6 +441,48 @@ fun HomeSidePanelCalendarSettings(
                     },
                 )
             }
+            // 【第 52 轮】1:1 复刻带来的四块内容各自可关（默认全开 = 与源码一致）：
+            // 格内节日名 / 休班角标 / 宜忌（月摘要 + 日视图）/ 日视图倒计时。
+            item {
+                SwitchWidget(
+                    iconPlaceholder = false,
+                    title = stringResource(R.string.home_side_panel_calendar_show_festival),
+                    checked = card.showFestivalName,
+                    onCheckedChange = { on ->
+                        panelState.updateCalendar(card.id) { it.copy(showFestivalName = on) }
+                    },
+                )
+            }
+            item {
+                SwitchWidget(
+                    iconPlaceholder = false,
+                    title = stringResource(R.string.home_side_panel_calendar_show_holiday_mark),
+                    checked = card.showHolidayMark,
+                    onCheckedChange = { on ->
+                        panelState.updateCalendar(card.id) { it.copy(showHolidayMark = on) }
+                    },
+                )
+            }
+            item {
+                SwitchWidget(
+                    iconPlaceholder = false,
+                    title = stringResource(R.string.home_side_panel_calendar_show_yiji),
+                    checked = card.showYiJi,
+                    onCheckedChange = { on ->
+                        panelState.updateCalendar(card.id) { it.copy(showYiJi = on) }
+                    },
+                )
+            }
+            item {
+                SwitchWidget(
+                    iconPlaceholder = false,
+                    title = stringResource(R.string.home_side_panel_calendar_show_countdown),
+                    checked = card.showCountdown,
+                    onCheckedChange = { on ->
+                        panelState.updateCalendar(card.id) { it.copy(showCountdown = on) }
+                    },
+                )
+            }
         }
         HomeSidePanelCardBackgroundSection(card = card, panelState = panelState)
     }

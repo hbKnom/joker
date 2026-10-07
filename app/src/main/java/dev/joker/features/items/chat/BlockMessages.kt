@@ -949,6 +949,48 @@ object BlockMessages : ClickableFeature() {
     private fun splitLines(raw: String): List<String> =
         raw.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
 
+    /**
+     * 【第 52 轮·四功能「实用性」扩展】会话级**一键**屏蔽 / 取消屏蔽。
+     *
+     * 为什么需要：以前要屏蔽一个会话得进「设置 → 屏蔽消息 → 会话规则 → 选会话 → 选模式」四层，
+     * 用户正被骚扰时根本来不及操作。现在底栏「聊天功能」菜单里一下就能遮/取消，
+     * 状态写进**同一份** `perTalker` 规则（与设置页共享，不存在两份状态）。
+     *
+     * 语义：本来是「全部遮盖」→ 取消（整条规则移除，不留空规则）；否则 → 设为「全部遮盖」
+     * （保留该会话已有的关键词与成员配置，不覆盖用户在设置页里配过的东西）。
+     *
+     * @return 操作后该会话是否处于「全部遮盖」。
+     */
+    fun toggleTalkerMaskAll(talker: String): Boolean {
+        if (talker.isBlank()) return false
+        var masked = false
+        runCatching {
+            val previous = BlockMessagesRules.current
+            val existing = previous.perTalker[talker]
+            val turnOn = existing?.mode != BlockTalkerMode.MASK_ALL
+            masked = turnOn
+            val per = LinkedHashMap(previous.perTalker)
+            if (turnOn) {
+                per[talker] = BlockTalkerRule(
+                    mode = BlockTalkerMode.MASK_ALL,
+                    keywords = existing?.keywords.orEmpty(),
+                    members = existing?.members.orEmpty(),
+                )
+            } else {
+                per.remove(talker)
+            }
+            BlockMessagesRules.save(previous.copy(perTalker = per))
+            WeLogger.i(TAG, "会话级一键屏蔽：$talker → ${if (turnOn) "全部遮盖" else "取消"}")
+        }.onFailure { WeLogger.e(TAG, "切换会话屏蔽失败", it) }
+        return masked
+    }
+
+    /** 该会话当前是否处于「全部遮盖」（底栏菜单用来决定按钮文案）。 */
+    fun isTalkerMaskAll(talker: String): Boolean = runCatching {
+        talker.isNotBlank() &&
+            BlockMessagesRules.current.perTalker[talker]?.mode == BlockTalkerMode.MASK_ALL
+    }.getOrDefault(false)
+
     private const val TAG = "BlockMessages"
 
     /**

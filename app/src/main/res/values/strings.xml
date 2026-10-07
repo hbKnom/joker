@@ -3230,6 +3230,10 @@
     <string name="home_side_panel_date_pattern">MMM d, EEE</string>
     <string name="home_side_panel_date_time_settings">Date &amp; time settings</string>
     <string name="home_side_panel_show_lunar_calendar">Show lunar calendar</string>
+    <string name="home_side_panel_calendar_show_festival">Show festival names</string>
+    <string name="home_side_panel_calendar_show_holiday_mark">Show holiday / workday marks</string>
+    <string name="home_side_panel_calendar_show_yiji">Show almanac (Yi / Ji)</string>
+    <string name="home_side_panel_calendar_show_countdown">Show upcoming festivals</string>
     <string name="home_side_panel_lunar_prefix">Lunar\u0020</string>
     <string name="home_side_panel_lunar_leap_prefix">leap\u0020</string>
     <string name="home_side_panel_lunar_separator">,\u0020</string>

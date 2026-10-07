@@ -10,6 +10,7 @@ import dev.joker.features.api.core.models.MessageInfo
 import dev.joker.features.api.core.models.MessageType
 import dev.joker.features.api.core.models.WeMessage
 import dev.joker.features.api.ui.WeChatMessageViewApi
+import dev.joker.features.items.chat.BlockedMessageMask
 import dev.joker.utils.HookParam
 import dev.joker.utils.strings.isGroupChatWxId
 import dev.joker.features.items.chat.jev.analysis.ChatInsights
@@ -790,11 +791,30 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
      */
     private fun handle(view: View, message: MessageInfo) {
         try {
+            // 【第 52 轮·四功能「实用性」扩展】被「屏蔽消息」遮盖的消息**不送分析**。
+            // 理由：这一行在聊天界面上本来就被遮罩盖住，分析出来也是看不见的，
+            // 而每一次分析都要花模型额度（用户反复强调「滑动导致重建、浪费额度」）。
+            // 判定走 [BlockedMessageMask.blockedReason] 的内存快照，无 JSON 重解析、无 SQLite。
+            // 自己发的消息不判（遮罩层也只遮对方的消息）。
+            if (message.isSend == 0 && isBlockedForAnalysis(message)) {
+                logOnce("blocked-skip", "被屏蔽消息不参与潜语分析（省额度）")
+                return
+            }
             handleBound(view, message)
         } catch (t: Throwable) {
             logOnce("handle:${t.javaClass.simpleName}", "行处理异常（已忽略）：${t.message}")
         }
     }
+
+    /** 「屏蔽消息」判定（失败一律当作不屏蔽，绝不影响分析主链路）。 */
+    private fun isBlockedForAnalysis(message: MessageInfo): Boolean = runCatching {
+        if (!BlockedMessageMask.isEnabled) return false
+        BlockedMessageMask.blockedReason(
+            talker = message.talker,
+            sender = message.sender,
+            content = message.content,
+        ) != null
+    }.getOrDefault(false)
 
     private fun handleBound(view: View, message: MessageInfo) {
         if (!ModulePrefs.enabled) {
@@ -1109,7 +1129,14 @@ object YanwaiScanner : WeChatMessageViewApi.IMessageViewLifecycleListener,
         val context = ordered.subList(maxOf(0, targetIndex - limit), targetIndex)
             .mapNotNull { (_, previous) ->
                 val previousText = MessageMetadata.plainText(previous) ?: return@mapNotNull null
-                ContextMessage(MessageMetadata.speaker(previous), previousText)
+                // 【第 52 轮】前文带上发送时间与消息 id —— 上游的「时间块 / 同轮分组 / 跨天 /
+                // 距目标消息多久」全靠这两个值；两者都在已绑定的宿主对象上现成可读，无额外 IO。
+                ContextMessage(
+                    speaker = MessageMetadata.speaker(previous),
+                    text = previousText,
+                    createdAt = runCatching { previous.createTime }.getOrDefault(0L),
+                    messageId = messageIdOf(previous),
+                )
             }
         // 话题素材 = 前文 + 本条正文（从旧到新）。刻意不含目标行之后的消息：
         // 那些是「还没发生」的话，拿它们给这一条贴标签是错的。

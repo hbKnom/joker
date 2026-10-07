@@ -3277,6 +3277,10 @@
     <string name="home_side_panel_date_pattern">M月d日 E</string>
     <string name="home_side_panel_date_time_settings">日期与时间设置</string>
     <string name="home_side_panel_show_lunar_calendar">显示农历</string>
+    <string name="home_side_panel_calendar_show_festival">显示节日名</string>
+    <string name="home_side_panel_calendar_show_holiday_mark">显示休/班角标</string>
+    <string name="home_side_panel_calendar_show_yiji">显示宜忌</string>
+    <string name="home_side_panel_calendar_show_countdown">显示节日倒计时</string>
     <string name="home_side_panel_lunar_prefix">农历</string>
     <string name="home_side_panel_lunar_leap_prefix">闰</string>
     <string-array name="home_side_panel_lunar_month_names">

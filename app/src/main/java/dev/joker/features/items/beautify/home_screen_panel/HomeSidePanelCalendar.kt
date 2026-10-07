@@ -16,6 +16,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,12 +24,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import dev.joker.R
+import dev.joker.features.items.beautify.home_screen_panel.calendar.HomeSidePanelCalendarData
 import java.nio.file.Path
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -58,6 +61,18 @@ internal fun HomeSidePanelCalendarCard(
     var monthCursor by remember { mutableStateOf(YearMonth.now()) }
     var weekCursor by remember {
         mutableStateOf(LocalDate.now().with(DayOfWeek.MONDAY))
+    }
+    // 【第 52 轮】黄历详情：源码是独立 Activity，这里改成**卡内切换**（内容与顺序一致，
+    // 不动既有 6 处路由注册点）。
+    var detailDate by remember { mutableStateOf<LocalDate?>(null) }
+    val context = LocalContext.current
+    var assetsReady by remember { mutableStateOf(false) }
+    // assets（黄历 idf / 节日表）只在后台线程读一次：模块铁律是主线程不做 IO。
+    LaunchedEffect(context) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            HomeSidePanelCalendarData.init(context)
+        }
+        assetsReady = true
     }
 
     val navigatePrevious = {
@@ -95,18 +110,17 @@ internal fun HomeSidePanelCalendarCard(
         }
     }
 
+    // 【第 52 轮】标题格式照抄源码：月 `%d年%d月`、周 `%d年%d月 第%d周`、日 `%d-%02d-%02d`。
     val title = when (viewMode) {
-        HomeSidePanelCalendarMode.MONTH ->
-            monthCursor.atDay(1).format(HOME_SIDE_PANEL_CALENDAR_MONTH_TITLE)
+        HomeSidePanelCalendarMode.MONTH -> "${monthCursor.year}年${monthCursor.monthValue}月"
 
         HomeSidePanelCalendarMode.WEEK -> {
-            val end = weekCursor.plusDays(6)
-            "${weekCursor.format(HOME_SIDE_PANEL_CALENDAR_MONTH_TITLE)} - ${
-                end.format(HOME_SIDE_PANEL_CALENDAR_MONTH_TITLE)
-            }"
+            val weekOfMonth = (weekCursor.dayOfMonth - 1) / 7 + 1
+            "${weekCursor.year}年${weekCursor.monthValue}月 第${weekOfMonth}周"
         }
 
-        HomeSidePanelCalendarMode.DAY -> selectedDate.format(HOME_SIDE_PANEL_CALENDAR_MONTH_TITLE)
+        HomeSidePanelCalendarMode.DAY ->
+            "%d-%02d-%02d".format(selectedDate.year, selectedDate.monthValue, selectedDate.dayOfMonth)
     }
 
     HomeSidePanelCardFrame(
@@ -187,23 +201,46 @@ internal fun HomeSidePanelCalendarCard(
                 )
             }
 
-            when (viewMode) {
-                HomeSidePanelCalendarMode.MONTH -> MonthGrid(
-                    month = monthCursor,
-                    selectedDate = selectedDate,
-                    onSelect = { selectedDate = it },
-                )
+            val openDetail = { date: LocalDate -> detailDate = date }
+            val shownDetail = detailDate
+            if (shownDetail != null) {
+                // 黄历详情页（源码 13 项；卡内切换，返回留在卡里）
+                if (assetsReady) HomeSidePanelHuangliDetailView(shownDetail) { detailDate = null }
+            } else {
+                when (viewMode) {
+                    HomeSidePanelCalendarMode.MONTH -> {
+                        HomeSidePanelMonthGridView(
+                            month = monthCursor,
+                            selected = selectedDate,
+                            today = LocalDate.now(),
+                            showFestivalName = card.showFestivalName,
+                            showHolidayMark = card.showHolidayMark,
+                            onSelect = { selectedDate = it },
+                        )
+                        HomeSidePanelMonthSummaryCard(
+                            date = selectedDate,
+                            showYiJi = card.showYiJi,
+                            onOpenDetail = { openDetail(selectedDate) },
+                        )
+                    }
 
-                HomeSidePanelCalendarMode.WEEK -> WeekRow(
-                    weekStart = weekCursor,
-                    selectedDate = selectedDate,
-                    onSelect = { selectedDate = it },
-                )
+                    HomeSidePanelCalendarMode.WEEK -> HomeSidePanelWeekTimelineView(
+                        weekStart = weekCursor,
+                        selected = selectedDate,
+                        today = LocalDate.now(),
+                        showFestivalName = card.showFestivalName,
+                        showHolidayMark = card.showHolidayMark,
+                        onSelect = { selectedDate = it },
+                    )
 
-                HomeSidePanelCalendarMode.DAY -> DayDetail(date = selectedDate)
+                    HomeSidePanelCalendarMode.DAY -> HomeSidePanelDayView(
+                        date = selectedDate,
+                        showYiJi = card.showYiJi,
+                        showCountdown = card.showCountdown,
+                        onOpenDetail = { openDetail(selectedDate) },
+                    )
+                }
             }
-
-            SelectedDateDetail(date = selectedDate, showLunar = card.showLunarCalendar)
         }
     }
 }
