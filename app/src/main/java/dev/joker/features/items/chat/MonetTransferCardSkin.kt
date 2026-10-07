@@ -50,10 +50,11 @@ object MonetTransferCardSkin : ApiFeature(), IResolveDex {
     override val descriptionRes = dev.joker.R.string.feature_monet_engine_description
 
     /**
-     * 默认开：它**不修改任何宿主资源**，只在「莫奈已生效」时把领取态卡片的背景换成莫奈圆角；
-     * 莫奈一关就完全无副作用（[handleBind] 第一行就 return，一个像素都不碰）。
+     * 说明：本对象是 [ApiFeature]（`startup()` 即 `enable()`，没有开关、也不需要 defaultEnabled ——
+     * 上一版误加了 `override val defaultEnabled` 导致 CI 报 `'defaultEnabled' overrides nothing`）。
+     * 它的实际生效条件是**运行期**的：只有莫奈已生效时才会动手，莫奈一关就完全无副作用
+     * （[handleBind] 第一行 return，一个像素都不碰）。
      */
-    override val defaultEnabled: Boolean = true
 
     /** 「已领取 / 已过期」的 `wcpayinfo.paysubtype`：1=待领取（宿主本来就跟莫奈色，不动），2/3=领取后/过期。 */
     private val CLAIMED_SUBTYPES = setOf("2", "3")
