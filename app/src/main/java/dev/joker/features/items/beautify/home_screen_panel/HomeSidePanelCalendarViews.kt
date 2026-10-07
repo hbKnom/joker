@@ -31,6 +31,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.joker.R
 import dev.joker.features.items.beautify.home_screen_panel.calendar.HomeSidePanelCalendarData
 import java.time.DayOfWeek
 import java.time.LocalDate

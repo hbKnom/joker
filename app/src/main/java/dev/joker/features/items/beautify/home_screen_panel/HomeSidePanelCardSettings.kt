@@ -449,7 +449,7 @@ fun HomeSidePanelCalendarSettings(
                     title = stringResource(R.string.home_side_panel_calendar_show_festival),
                     checked = card.showFestivalName,
                     onCheckedChange = { on ->
-                        panelState.updateCalendar(card.id) { it.copy(showFestivalName = on) }
+                        panelState.updateCalendarDisplay(card.id) { it.copy(showFestivalName = on) }
                     },
                 )
             }
@@ -459,7 +459,7 @@ fun HomeSidePanelCalendarSettings(
                     title = stringResource(R.string.home_side_panel_calendar_show_holiday_mark),
                     checked = card.showHolidayMark,
                     onCheckedChange = { on ->
-                        panelState.updateCalendar(card.id) { it.copy(showHolidayMark = on) }
+                        panelState.updateCalendarDisplay(card.id) { it.copy(showHolidayMark = on) }
                     },
                 )
             }
@@ -469,7 +469,7 @@ fun HomeSidePanelCalendarSettings(
                     title = stringResource(R.string.home_side_panel_calendar_show_yiji),
                     checked = card.showYiJi,
                     onCheckedChange = { on ->
-                        panelState.updateCalendar(card.id) { it.copy(showYiJi = on) }
+                        panelState.updateCalendarDisplay(card.id) { it.copy(showYiJi = on) }
                     },
                 )
             }
@@ -479,7 +479,7 @@ fun HomeSidePanelCalendarSettings(
                     title = stringResource(R.string.home_side_panel_calendar_show_countdown),
                     checked = card.showCountdown,
                     onCheckedChange = { on ->
-                        panelState.updateCalendar(card.id) { it.copy(showCountdown = on) }
+                        panelState.updateCalendarDisplay(card.id) { it.copy(showCountdown = on) }
                     },
                 )
             }

@@ -545,6 +545,21 @@ class HomeSidePanelState(
         mutateDraft { updateCalendar(cardId) { it.copy(showLunarCalendar = show) } }
     }
 
+    /**
+     * 【第 52 轮】日历卡片的显示开关（节日名 / 休班标 / 宜忌 / 倒计时）统一入口。
+     *
+     * 走与 [updateCalendarLunarCalendar] **同一条** `mutateDraft` 通道：改动只落在草稿上，
+     * 由既有的保存/放弃语义决定是否提交 —— 设置页直接调 `updateCalendar`（那是编辑器上的
+     * 成员函数）会编译不过，必须经由 State 这一层。
+     */
+    fun updateCalendarDisplay(
+        cardId: String,
+        transform: (CalendarCardConfig) -> CalendarCardConfig,
+    ) {
+        requireDraftCalendarCard(cardId)
+        mutateDraft { updateCalendar(cardId, transform) }
+    }
+
     fun openWeatherSettings(cardId: String) {
         val card = requireDraftWeatherCard(cardId)
         _weatherSettings.update { current ->
