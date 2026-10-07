@@ -72,7 +72,7 @@ object MonetResourceResolver {
     ) {
         CARD_FAMILY_ROLES.forEach { role ->
             val node = resolved[role] ?: return@forEach
-            val signature = structureSignature(graph, node) ?: return@forEach
+            val signature = structureSignature(graph, node)
             val candidates = LinkedHashSet<Int>()
             graph.incoming(node.id).forEach { layoutId ->
                 graph.outgoing(layoutId).forEach { refId -> if (refId != node.id) candidates += refId }
@@ -83,19 +83,50 @@ object MonetResourceResolver {
                     graph.outgoing(upId).forEach { sibling -> if (sibling != node.id) candidates += sibling }
                 }
             }
-            val extras = candidates.asSequence()
+            // 【第 52 轮】不再「拿不到 XML 树就整族放弃」，并增加一条**布局 background 直锚**。
+            //
+            // 实机日志（2026-07-10-07，72 包）铁证：`卡片族扩展` 只在
+            // `chat.red-envelope.incoming/outgoing.normal` 上命中（各 +8），而
+            // **转账 received/expired 一条都没扩展** —— 用户看到的正是「领取完的转账还是微信原版」。
+            // 原因是两处过严：①`structureSignature(graph, node) ?: return@forEach`：转账卡的背景
+            // 多为 9-patch/PNG（没有 XML 树）→ 整个角色直接跳过；②候选必须是「同 XML 形状」。
+            //
+            // 现在：`android:background` 引用的同布局背景**无需同形**（布局自己引用的背景就是卡片背景，
+            // 这本身就是最强的结构证据）；同形判定只在能拿到 XML 树时才作为附加条件。
+            val backgroundAnchored = LinkedHashSet<Int>()
+            graph.incoming(node.id)
+                .filter { graph.node(it)?.key?.type == "layout" }
+                .take(FAMILY_MAX_LAYOUTS)
+                .forEach { layoutId ->
+                    graph.xmlTrees(layoutId).take(6).forEach { collectBackgroundRefs(it, backgroundAnchored, 0) }
+                }
+            backgroundAnchored.remove(node.id)
+            val sameShape = if (signature == null) {
+                emptyList()
+            } else {
+                candidates.asSequence()
+                    .mapNotNull { graph.node(it) }
+                    .filter { it.key.type == "drawable" }
+                    .filter { graph.incoming(it.id).isNotEmpty() }
+                    .filter { structureSignature(graph, it) == signature }
+                    .toList()
+            }
+            val extras = (sameShape.asSequence().mapNotNull { it.id } + backgroundAnchored.asSequence())
+                .distinct()
                 .mapNotNull { graph.node(it) }
                 .filter { it.key.type == "drawable" }
-                .filter { graph.incoming(it.id).isNotEmpty() }
-                .filter { structureSignature(graph, it) == signature }
                 .distinctBy { it.id }
                 .take(CARD_FAMILY_MAX)
                 .toList()
-            if (extras.isEmpty()) return@forEach
+            if (extras.isEmpty()) {
+                // 留证据：下一轮日志能直接看出「这一族没找到任何同卡背景」还是「角色没解析」。
+                WeLogger.i(TAG, "卡片族扩展 $role：无可扩展背景（同形 ${sameShape.size}、布局背景 ${backgroundAnchored.size}）")
+                return@forEach
+            }
             out[role] = (out[role].orEmpty() + extras).distinctBy { it.id }
             WeLogger.i(
                 TAG,
-                "卡片族扩展 $role：+${extras.size} 个同形 drawable " +
+                "卡片族扩展 $role：+${extras.size} 个背景（同形 ${sameShape.size}、布局背景 ${backgroundAnchored.size}）" +
                     extras.joinToString(",") { "${it.key.type}/${it.key.name}" },
             )
         }
@@ -223,16 +254,24 @@ object MonetResourceResolver {
         //   ② 它自身 selector/conplex 的 item 引用
         // 收集「同一张卡片的其它背景 drawable」，一并纳入该族的注入集合。
         // 只对显式标记 family 的角色生效、每族封顶，颜色链路一行未动。
-        familyExtras.entries.toList().forEach { (role, base) ->
-            val expanded = LinkedHashSet<Int>(base.map { it.id })
-            base.forEach { node ->
-                collectSameCardDrawables(graph, node.id).forEach { expanded += it }
+        // 【第 52 轮】改为按 `CARD_FAMILY_ROLES` 遍历 —— 上一轮这里是
+        // `familyExtras.entries.toList()`，而 `familyExtras` 只在「同指纹族拿到 ≥2 个候选」时
+        // 才有内容。实机日志证明转账族每个角色都只解析到 1 个候选（`状态族` 一行都没打印），
+        // 于是这段「同卡片背景扩展」**从来没跑过**，转账领取后的背景自然一直没被覆盖。
+        CARD_FAMILY_ROLES.forEach { role ->
+            val node = resolved[role] ?: return@forEach
+            val base = LinkedHashSet<Int>()
+            base += node.id
+            familyExtras[role].orEmpty().forEach { base += it.id }
+            val expanded = LinkedHashSet(base)
+            base.forEach { id ->
+                collectSameCardDrawables(graph, id).forEach { expanded += it }
             }
             val bounded = expanded.filter { graph.node(it) != null }.take(FAMILY_MAX_TARGETS)
             familyExtras[role] = bounded.mapNotNull { graph.node(it) }
             WeLogger.i(
                 TAG,
-                "状态族 $role 同卡片扩展：基础 ${base.size} → 最终 ${familyExtras[role]?.size} 个背景" +
+                "状态族 $role 同卡片扩展：基础 ${base.size} → 最终 ${bounded.size} 个背景" +
                     "（${familyExtras[role].orEmpty().joinToString { "0x${it.id.toString(16)}" }}）",
             )
         }

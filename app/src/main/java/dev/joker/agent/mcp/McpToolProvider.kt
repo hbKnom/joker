@@ -87,6 +87,24 @@ class McpToolProvider(
 
     private val traceFailures = 2
 
+    /**
+     * 【第 52 轮】离线冷却。
+     *
+     * 实机日志（72 包）里模块自身最吵的一类就是 MCP：
+     * `transport error: Connection refused` + `failed to connect MCP server 'x' (第 N 次失败)`
+     * 共 5 台服务器 × 每次重连 ~2 行，一天上千行 —— 这些端点跑在用户的电脑/容器上，
+     * 手机端永远连不上，于是后台重连循环一直重试（同时白耗网络与电量）。
+     *
+     * 现在：连续失败到 [OFFLINE_THRESHOLD] 次即进入 [OFFLINE_COOLDOWN_MS] 冷却，
+     * 冷却期内**不重连、不打日志**；用户手动刷新/重连（[refreshTools]）会立即解除冷却。
+     */
+    private val offlineUntil = java.util.concurrent.atomic.AtomicLong(0L)
+
+    private companion object {
+        const val OFFLINE_THRESHOLD = 5
+        const val OFFLINE_COOLDOWN_MS = 5 * 60_000L
+    }
+
     /** Cached tools/list, refreshed on connect and on manual refresh. */
     override fun listTools(): List<ProviderTool> = _status.value.tools
 
@@ -98,6 +116,8 @@ class McpToolProvider(
     /** Connects (idempotent guard via [connectMutex]) and caches the tool list. */
     suspend fun connect() = connectMutex.withLock {
         if (state == McpConnectionState.CONNECTED) return@withLock
+        // 【第 52 轮】冷却期内直接返回：不重连、不打日志（安静地省下网络/电量/日志）。
+        if (offlineUntil.get() > System.currentTimeMillis()) return@withLock
         _status.update { it.copy(state = McpConnectionState.CONNECTING, lastError = null) }
         runCatching {
             val t = when (transport) {
@@ -125,10 +145,19 @@ class McpToolProvider(
                 )
             }
             val failures = connectFailures.incrementAndGet()
-            if (failures <= traceFailures) {
-                WeLogger.e(TAG, "failed to connect MCP server '$name'", e)
-            } else {
-                WeLogger.w(TAG, "failed to connect MCP server '$name' (第 $failures 次失败): ${e.message}")
+            when {
+                failures <= traceFailures -> WeLogger.e(TAG, "failed to connect MCP server '$name'", e)
+                failures >= OFFLINE_THRESHOLD -> {
+                    // 到阈值：进入冷却并**只打一行**，之后冷却期内完全静音。
+                    offlineUntil.set(System.currentTimeMillis() + OFFLINE_COOLDOWN_MS)
+                    WeLogger.w(
+                        TAG,
+                        "MCP server '$name' 连续失败 $failures 次，暂停自动重连 ${OFFLINE_COOLDOWN_MS / 60_000} 分钟" +
+                            "（在设置页手动重连可立即恢复）：${e.message}",
+                    )
+                }
+                failures % 5 == 0 -> WeLogger.w(TAG, "failed to connect MCP server '$name' (第 $failures 次失败): ${e.message}")
+                else -> Unit
             }
             runCatching { client?.close() }
             client = null
@@ -143,6 +172,9 @@ class McpToolProvider(
 
     /** Re-fetches tools/list from a connected server. No-op if disconnected. */
     suspend fun refreshTools(): Boolean = connectMutex.withLock {
+        // 【第 52 轮】手动刷新视作「我要立刻再试一次」：解除离线冷却与失败计数。
+        offlineUntil.set(0L)
+        connectFailures.set(0)
         val c = client ?: return@withLock false
         runCatching {
             val tools = fetchTools(c)

@@ -277,6 +277,13 @@ object BlockMessages : ClickableFeature() {
             // 对话框才同步）。提升到本层后 `if (keywordOn)` 会被登记成 SegmentedColumn 的
             // 依赖，开关与输入框实时联动；顺带省掉一次 per-recomposition 的 JSON 解析。
             var keywordOn by remember { mutableStateOf(initial.keywordEnabled) }
+            // 【第 52 轮】「通知栏一并静默」的配置项（用户要求四个逆向功能都给出可改的 UI）。
+            // 默认 true = 保持第 49 轮的行为（屏蔽生效时通知也静默），关掉则只遮盖聊天内容。
+            var silentNotify by remember {
+                mutableStateOf(
+                    dev.joker.preferences.WePrefs.getBoolOrDef(SILENT_NOTIFY_KEY, true),
+                )
+            }
 
             AlertDialogContent(
                 textScrolls = true,
@@ -342,6 +349,22 @@ object BlockMessages : ClickableFeature() {
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                },
+                            )
+                        }
+                        // 【第 52 轮】屏蔽消息的「深度」开关：效果延伸到通知栏。
+                        // 用户反馈「开了确实生效但效果令人失望」——最扎眼的一条就是聊天里盖住了、
+                        // 通知栏却把正文原样推出来。这里给一个可关的开关（关掉就只遮盖聊天内容）。
+                        item(key = "silent_notify") {
+                            SwitchWidget(
+                                iconPlaceholder = false,
+                                title = "屏蔽的消息不进通知栏",
+                                description = "开启：被屏蔽的会话或关键词命中时，通知栏也一并静默" +
+                                    "（聊天里看不到、通知栏也不推正文）。关闭：只遮盖聊天内容，通知照常提醒。",
+                                checked = silentNotify,
+                                onCheckedChange = {
+                                    silentNotify = it
+                                    dev.joker.preferences.WePrefs.putBool(SILENT_NOTIFY_KEY, it)
                                 },
                             )
                         }
@@ -927,6 +950,14 @@ object BlockMessages : ClickableFeature() {
         raw.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
 
     private const val TAG = "BlockMessages"
+
+    /**
+     * 【第 52 轮】「屏蔽的消息同时静默通知栏」的持久化键（默认开 = 第 49 轮的行为）。
+     *
+     * 放在 BlockMessages 侧：通知侧（[dev.joker.features.items.notifications.CustomNotifications]）
+     * 只读这个键，避免两个功能各自记一份状态而不一致。
+     */
+    const val SILENT_NOTIFY_KEY = "block_messages_silent_notify"
 }
 
 /**

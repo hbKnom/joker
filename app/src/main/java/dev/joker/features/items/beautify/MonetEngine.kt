@@ -126,226 +126,58 @@ object MonetEngine : ClickableFeature() {
     private const val CONFIRM_DELAY_MS = 30_000L
 
     /**
-     * 应用后多少毫秒内又重启才算「疑似崩溃」。
+     * 【第 52 轮】**首次安装/升级后**那次全量解析：等主线程**空闲**再开始。
      *
-     * 【2026-09-26 修正】原来取 90 秒，实机上是**误伤**：用户在 90 秒内自己重开微信
-     * （正常操作）会被记成一次「疑似被注入的包搞崩」。日志里那次熔断
-     * （16:03:09「连续 2 次疑似导致微信异常退出，已自动停用注入」）真正的崩溃其实是
-     * 会话列表 adapter 的 ISE（joker-crash-2026-09-26_16-02-11-423，与莫奈毫无关系），
-     * 结果莫奈被整段停用 —— 用户看到的就是「有的生效、有的没生效」。
-     * 收到 20 秒：只有真正的「一注入就秒退」才会被记账。
-     */
-    private const val RESTART_WINDOW_MS = 20_000L
-
-    /**
-     * 连续这么多次疑似崩溃就自动停用注入（等用户重新解析再放行）。
+     * 实机日志（joker-2026-10-07.log，装完包后的第一次启动）：
+     * ```
+     * 缓存未命中（bindings=无，包存在=true），开始解析
+     * base.apk: 11360 个二进制 XML（候选 10924），解析 10924 个、15144 ms
+     * 资源特征扫描 分片让出 8 次（累计让出 9600ms）
+     * resolved 231 roles，匹配用时 31048 ms
+     * 解析并注入完成，用时 51109 ms
+     * ```
+     * 即：**装完包的第一次启动，主线程要和这 51 秒的解析抢 CPU**，正是「初加载卡顿、后面就不卡」
+     * 的来源（第二次启动走缓存，日志里只有 771ms/3530ms）。
      *
-     * 3 次而不是 2 次：单次误判的代价是「莫奈整个启动都不生效」，比多试一次严重得多。
+     * 处置：不再用固定 20 秒硬延时，而是「最短 [FIRST_RUN_MIN_DELAY_MS]，之后等主线程空闲
+     * （IdleHandler）立刻开始」，并留 [FIRST_RUN_MAX_DELAY_MS] 硬上限兜底。
+     * 这样解析会在**首屏画完、用户没有在滑动**的间隙里跑，不再和首帧抢 CPU。
+     * 取色本身的**时机与结果完全不变**（缓存命中的路径仍是 300ms 立即复用）。
      */
-    private const val MAX_FAIL_STREAK = 3
+    private const val FIRST_RUN_MIN_DELAY_MS = 30_000L
+    private const val FIRST_RUN_MAX_DELAY_MS = 120_000L
 
-    /**
-     * 连续这么多次「解析没跑完就退出」就跳过解析（等用户重新解析再放行）。
-     *
-     * 取 1：解析期崩溃是**每次启动必现**的（实机 2026-09-26 四分钟内四次原生崩溃），
-     * 多试一次只是多闪退一次。用户随时可以在设置里点「重新解析」放行。
-     */
-    private const val MAX_RESOLVE_FAIL_STREAK = 1
-
-    /**
-     * 超过这个窗口的「解析进行中」标记视为陈旧，不再累计。
-     *
-     * 从 30 分钟收到 6 分钟：一次完整解析实机约 3 分钟（16:05:23 → 16:08:25 = 182070ms），
-     * 用户在解析后十几分钟才重启微信属于正常使用，不该被算成「解析没跑完」。
-     */
-    private const val RESOLVE_INTERRUPT_WINDOW_MS = 6 * 60 * 1000L
-
-    /** 启动后延后这么久才开始资源解析：把最重的一段挪出启动关键路径。 */
-    private const val INITIAL_RESOLVE_DELAY_MS = 20_000L
-
-    /**
-     * 「写包 -> 注入 -> 逐条冒烟校验」最多重写几轮。
-     *
-     * 校验不通过的 id 会被拉黑（`monet_blacklist.json`）后重写包，直到整包健康；三轮仍不健康
-     * 说明这批条目宿主根本不认，就放弃本次注入 —— 绝不把坏包留在微信进程里试错。
-     */
-    private const val MAX_PACKAGE_ATTEMPTS = 3
-
-    /**
-     * 可接受的最低覆盖写入率（%）。
-     *
-     * 实机事故（2026-09-27）：黑名单累积到 402 条，把 406 个覆盖槽位吃掉 402 个，包内只剩 4 条，
-     * 结果「解析成功、包 applied、但取色 / 圆角 PRO / 角标一个都不生效」。写入率低于这个值时
-     * 既要在日志里显式告警，也要在「复用已有包」时把它判成残缺包、删掉重新解析。
-     */
-    private const val MIN_OVERLAY_COVERAGE_PERCENT = 60
-
-    /** 宿主 `res/` 下算作「可覆盖的真实文件」的扩展名（用于过滤别名 drawable）。 */
-
-    const val KEY_BUBBLE_STYLE = "monet_bubble_style"
-    const val KEY_MULTI_SCENE_CORNERS = "monet_multi_scene_corners"
-    const val KEY_ERROR_COLORS = "monet_error_colors"
-
-    /**
-     * 【第 47 轮】「未读角标跟随莫奈色」——默认**关**（宿主红点保持微信原生红）。
-     *
-     * 第 46 轮实机反馈：打开后微信里所有实心圆点消失（会话未读角标、聊天内语音未读点、
-     * 朋友圈红点）。原因是自动取色只能按「值 == 品牌红」在宿主资源表里全局改写颜色条目，
-     * 而品牌红被几十处 UI 复用，命中哪一条不可控。默认关 = 一条宿主资源都不碰。
-     */
-    var badgeRecolor: Boolean by prefOption(MonetBadgeRecolor.KEY_ENABLED, false)
-
-    private var bubbleStyleName by prefOption(KEY_BUBBLE_STYLE, MonetBubbleStyle.MODERN.name)
-    private var multiSceneCornersPref by prefOption(KEY_MULTI_SCENE_CORNERS, false)
-    private var errorColorsPref by prefOption(KEY_ERROR_COLORS, false)
-
-    /**
-     * DEX 证据提供者：歧义角色交给 [MonetDexEvidenceCollector]（旧版成功运行时就是这么消歧的）。
-     *
-     * DexKit 没起来（未 root / native 没加载）或扫描失败都只返回空表 —— 调用方
-     * [MonetStructureMatcher.resolveCandidateIds] 拿到空表会退化成纯结构消歧，
-     * 绝不会因为「拿不到证据」把整次解析打断成「解析出错」。
-     */
-    private val dexEvidenceProvider = MonetDexEvidenceProvider { candidates ->
-        runCatching { MonetDexEvidenceCollector.collect(candidates) }
-            .onFailure { WeLogger.w(TAG, "DEX 证据收集失败，改用结构消歧", it) }
-            .getOrDefault(emptyList())
+    private fun scheduleFirstRunResolve() {
+        val handler = Handler(Looper.getMainLooper())
+        val started = java.util.concurrent.atomic.AtomicBoolean(false)
+        fun launch(why: String) {
+            if (!started.compareAndSet(false, true)) return
+            WeLogger.i(TAG, "首次全量解析开始（$why）")
+            runCatching {
+                if (isActive && isSupported) startResolve(force = false)
+            }.onFailure { WeLogger.w(TAG, "first-run resolve failed", it) }
+        }
+        handler.postDelayed({
+            runCatching {
+                Looper.myQueue().addIdleHandler {
+                    launch("主线程空闲")
+                    false
+                }
+            }.onFailure { launch("IdleHandler 不可用") }
+        }, FIRST_RUN_MIN_DELAY_MS)
+        handler.postDelayed({ launch("到达 ${FIRST_RUN_MAX_DELAY_MS / 1000}s 硬上限") }, FIRST_RUN_MAX_DELAY_MS)
     }
 
-    private val bindingsFile: File by lazy { (KnownPaths.moduleData / "monet_bindings.json").toFile() }
-
-    /**
-     * 运行时资源包 / 缓存目录。
-     *
-     * 用 `moduleData`（`Android/data/<宿主>/<TAG>`）而**不是** `moduleCache`（`.../cache/<TAG>`）：
-     * 后者落在宿主的**外部缓存**目录里，既会被本模块自己的 AutoCleanCache 扫到（现已单独保护），
-     * 也会被系统在存储紧张时整体清理。实机日志（2026-09-26）里「缓存未命中…包存在=false」
-     * 每次启动都出现，正是「缓存被清 → 全量重解析（分钟级）→ 卡顿 + 反复进入易出错路径」的来源。
-     */
-    private val runtimeDir: File by lazy { (KnownPaths.moduleData / "monet").toFile() }
-
-    /** 旧版（外部缓存目录）的落点：只用于兼容读取与迁移，不再写入。 */
-    private val legacyRuntimeDir: File by lazy { (KnownPaths.moduleCache / "monet").toFile() }
-
-    /**
-     * 绑定缓存的第二份副本，和运行时包放在同一个目录。
-     *
-     * 实机日志（2026-09-25）里 `moduleData/monet_bindings.json` 每次启动都读不回来，导致**每次冷启动
-     * 都全量重解析**（单次 100 秒以上，期间主线程被拖到 2.6 秒延迟，用户看到的就是卡顿）。
-     * 运行时包写在 `runtimeDir` 里是能被写成功的，所以缓存也放这里，两边都写、任一份都能读。
-     */
-    private val bindingsCacheFile: File by lazy { File(runtimeDir, "monet_bindings.json") }
-
-    /** 旧版绑定缓存（外部缓存目录），仅用于兼容读取。 */
-    private val legacyBindingsCacheFile: File by lazy { File(legacyRuntimeDir, "monet_bindings.json") }
-
-    /** 注入自保状态：见 [MonetRuntimeState]。 */
-    private val runtimeStateFile: File by lazy { File(runtimeDir, "monet_runtime_state.json") }
-
-    private val _progress = MutableStateFlow<MonetResolveProgress?>(null)
-    val progress: StateFlow<MonetResolveProgress?> = _progress.asStateFlow()
-
-    private val _result = MutableStateFlow<MonetResolveResult?>(null)
-    val result: StateFlow<MonetResolveResult?> = _result.asStateFlow()
-
-    private val _runtimePackage = MutableStateFlow<File?>(null)
-    val runtimePackage: StateFlow<File?> = _runtimePackage.asStateFlow()
-
-    @Volatile
-    private var resolving = false
-
-    /** Whether the platform exposes the runtime resource loader this engine is built on. */
-    val isSupported: Boolean
-        get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
-
-    var bubbleStyle: MonetBubbleStyle
-        get() = MonetBubbleStyle.entries.firstOrNull { it.name == bubbleStyleName }
-            ?: MonetBubbleStyle.MODERN
-        set(value) {
-            if (bubbleStyleName == value.name) return
-            bubbleStyleName = value.name
-            onOptionsChanged()
-        }
-
-    var multiSceneCorners: Boolean
-        get() = multiSceneCornersPref
-        set(value) {
-            if (multiSceneCornersPref == value) return
-            multiSceneCornersPref = value
-            onOptionsChanged()
-        }
-
-    var errorColors: Boolean
-        get() = errorColorsPref
-        set(value) {
-            if (errorColorsPref == value) return
-            errorColorsPref = value
-            onOptionsChanged()
-        }
-
-    /** `resolved / total` for the currently loaded binding set, or `null` when never analysed. */
-    val resolvedCount: Int?
-        get() = cachedBindings()?.let { MonetStructureMatcher.roleIds.size - it.unresolved.size }
-
-    val totalCount: Int
-        get() = MonetStructureMatcher.roleIds.size
-
-    override fun onBeforeToggle(newState: Boolean, context: Context): Boolean {
-        if (!newState || isSupported) return true
-        context.showUnsupportedToast()
-        return false
-    }
-
-    override fun onEnable() {
-        if (!isSupported) {
-            WeLogger.w(TAG, "ResourcesLoader needs API 30, not enabling")
+    /** 启动后按缓存状态分流延后解析；调度失败就立刻解析，绝不因此不解析。 */
+    private fun scheduleInitialResolve() {
+        if (!hasReusablePackage() && !hasBindingsOnly()) {
+            // 首次/升级后：全量解析（分钟级）—— 等空闲，别和首屏抢 CPU。
+            runCatching { scheduleFirstRunResolve() }.onFailure {
+                WeLogger.w(TAG, "cannot schedule first-run resolve, resolving immediately", it)
+                startResolve(force = false)
+            }
             return
         }
-        WeLogger.i(
-            TAG,
-            "monet onEnable build=${HostInfo.versionName} (${HostInfo.versionCode}) " +
-                "uid-owner=${Process.myUid() / 100000}",
-        )
-        runCatching { installBrandColorHooks() }
-            .onFailure { WeLogger.w(TAG, "brand-colour fallback hooks unavailable", it) }
-        // ③ 宿主每建一个 Activity，就把运行时包挂到它自己的 `Resources` 上（幂等）。
-        //    实机反馈「解析正常、包 applied、取色/圆角/角标一律原生」的最可疑点就在这里：
-        //    loader 只挂在 application.resources 上，而真正渲染界面的那批 Resources 未必
-        //    与之共享同一个 ResourcesImpl（宿主的 Activity 会按自己的 config/主题另建 impl）。
-        ActivityResourceHooks.register(activityResourceCallback)
-        // ① 先把色板发给「Joker 自己注入进微信界面」的组件。这一步只读系统的 Material You
-        //    token（android.R.color.system_*），**不依赖宿主资源解析**，所以即使解析失败、
-        //    被熔断跳过、或用户在解析期间还在用微信，注入界面也能拿到莫奈色 ——
-        //    不会再出现「微信原生取色了、Joker 改过的底栏/标题栏还是旧配色」的割裂。
-        thread(name = "MonetPalette") { publishPalette() }
-        // ② 资源解析是整条链最贵的一步（实机 11000+ 个二进制 XML），落在启动瞬间会直接
-        //    和微信首帧/首屏抢 CPU（实机反馈的卡顿来源之一），延后到启动稳定之后再跑。
-        scheduleInitialResolve()
-    }
-
-    /**
-     * 有可用缓存时，启动后只等这么久就复用注入。
-     *
-     * 【Round45】用户实机反馈：「刚开始加载取色不了，需要等一段时间后才可以自动取色，
-     * 而不是要等加载完微信了还要等好长一段时间」。
-     *
-     * 根因就是下面 [INITIAL_RESOLVE_DELAY_MS]（20 秒）无差别地推迟了**所有**启动路径 ——
-     * 可「复用已有运行时包」这条路径实机只要 288 ms（日志实证），却被生生推迟 20 秒。
-     * 现在按「有没有可复用的包」分流：
-     *  * 有 → 300 ms 后就走复用路径（微秒级注入，首帧之后立刻取色）；
-     *  * 没有 → 仍然延后 20 秒，避免首次全量解析（分钟级纯 CPU）和微信首屏抢 CPU。
-     */
-    private const val INITIAL_RESOLVE_FAST_DELAY_MS = 300L
-
-    /** 缓存复用路径是否可用（绑定缓存 + 运行时包都在）。 */
-    private fun hasReusablePackage(): Boolean = runCatching {
-        cachedBindings() != null &&
-            runtimeDir.listFiles()?.any { it.isFile && it.name.startsWith("runtime-") } == true
-    }.getOrDefault(false)
-
-    /** 启动后延后 [INITIAL_RESOLVE_DELAY_MS] 再解析；调度失败就立刻解析，绝不因此不解析。 */
-    private fun scheduleInitialResolve() {
-        // 有缓存 → 尽早复用，让莫奈色在微信**加载过程中**就位；无缓存 → 保持原来的延后策略。
         val delay = if (hasReusablePackage()) INITIAL_RESOLVE_FAST_DELAY_MS else INITIAL_RESOLVE_DELAY_MS
         if (delay == INITIAL_RESOLVE_FAST_DELAY_MS) {
             WeLogger.i(TAG, "发现可复用的莫奈运行时包，${delay}ms 后立即复用（不再等 $INITIAL_RESOLVE_DELAY_MS ms）")

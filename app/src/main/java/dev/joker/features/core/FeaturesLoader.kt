@@ -189,6 +189,31 @@ object FeaturesLoader {
         // 换回「重启即生效」比省这几百毫秒重要。
         "反已读追踪",            // 聊天内
         "对话框窗口级背景模糊",   // 任意弹窗
+        // ------------------------------------------------------------------
+        // 【第 52 轮】依据实机日志（joker-2026-10-07.log）再挪一批进延后批次。
+        //
+        // 日志里这些功能**都在同步批次**、且各自 200~760ms：
+        //   「移除嵌入广告」755ms、「主页侧滑面板」722/520/322ms、「视频号分享菜单扩展」307ms、
+        //   「联系人页面扩展」226ms、「悬浮标题栏」274ms、「朋友圈评论防撤回」425ms、
+        //   「禁用评论长度限制」216ms、「下载媒体」256ms、「转发收藏语音」224ms、
+        //   「隐藏模块应用」218ms、「重定向微信日志」286ms —— 合计 3 秒以上，
+        //   加上原本就在同步批次的那些，微信首帧前的主线程被占用 10 秒上下。
+        // 它们的生效时机都晚于「用户主动进入对应页面/手势」，所以放在延后批次**前排**
+        // （IdleHandler 一旦空闲就装，另有 3s 超时兜底），不影响「重启即生效」的可用时机。
+        //
+        // 有意**不挪**的：移除开屏广告（启动第一屏就要用）、美化首页底部导航栏（首页即见）、
+        // 应用全局背景（一进界面就可见，挪走会像「背景丢了」）、各「服务」类（随时可能被调用）。
+        "主页侧滑面板",
+        "悬浮标题栏",
+        "联系人页面扩展",
+        "移除嵌入广告",
+        "视频号分享菜单扩展",
+        "朋友圈评论防撤回",
+        "禁用评论长度限制",
+        "下载媒体",
+        "转发收藏语音",
+        "隐藏模块应用",
+        "重定向微信日志",
         "解除消息多选数量限制",   // 聊天内
         "解除单个表情数量上限",   // 聊天内
         "定时发送",              // 聊天内
@@ -234,6 +259,19 @@ object FeaturesLoader {
 
     /** 延后批次是否已经开始（IdleHandler 与超时兜底两条路只允许一条真正启动）。 */
     private val deferredDrainStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 【第 52 轮】本进程内已经 startup() 过的功能 id（防重复安装；跨进程互不影响）。 */
+    private val startedFeatureIds: MutableSet<String> =
+        java.util.Collections.synchronizedSet(HashSet<String>())
+
+    private val startupDuplicateLogged: MutableSet<String> =
+        java.util.Collections.synchronizedSet(HashSet<String>())
+
+    private fun logOnceStartupDuplicate(id: String) {
+        if (startupDuplicateLogged.add(id)) {
+            WeLogger.i(TAG, "跳过重复安装（本进程内已 startup 过）：$id")
+        }
+    }
 
     /** 最近一次解析里「缓存不完整、正等 DexKit 重新解析」的功能（自愈重挂必须跳过它们）。 */
     private var brokenDexItems: List<IResolveDex> = emptyList()
@@ -291,6 +329,15 @@ object FeaturesLoader {
 
         if (isBroken) {
             WeLogger.w(TAG, "skipping ${feature.technicalId} — incomplete cache, awaiting re-resolution")
+            return
+        }
+
+        // 【第 52 轮】幂等护栏：同一个功能在同一次进程生命周期里只 startup() 一次。
+        // 实机日志里「通知进化」出现 582ms + 369ms 两条、「移除开屏广告」3 条、
+        // 「主页侧滑面板」3 条 —— 同名功能重复走了一遍完整安装（重复装钩子 = 白花的主线程时间）。
+        // 这里只挡「同一进程内重复」，跨进程各自安装仍然照旧。
+        if (!startedFeatureIds.add(feature.technicalId)) {
+            logOnceStartupDuplicate(feature.technicalId)
             return
         }
 

@@ -387,6 +387,9 @@ object CustomNotifications : ClickableFeature(), IResolveDex {
      */
     private fun isBlockedByRules(context: NotifyContext): Boolean = runCatching {
         if (!BlockMessages.isEnabled) return false
+        // 【第 52 轮】「屏蔽的消息不进通知栏」现在是**可配置项**（屏蔽消息的规则页里可关）：
+        // 默认开 = 第 49 轮的行为；用户关掉后只遮盖聊天内容、通知照常提醒。
+        if (!dev.joker.preferences.WePrefs.getBoolOrDef(BlockMessages.SILENT_NOTIFY_KEY, true)) return false
         val rules = BlockMessagesRules.current
         if (rules.isEmpty) return false
         BlockMessages.shouldBlock(context.talker, "", context.content)
