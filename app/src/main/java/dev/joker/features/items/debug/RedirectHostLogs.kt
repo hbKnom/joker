@@ -69,6 +69,12 @@ object RedirectHostLogs : ClickableFeature() {
     }
 
     override fun onEnable() {
+        // 【第 50 轮】把宿主日志明确标成 [HOST]。
+        // 用户实机反馈「运行日志里每个文件几乎都有不同的错误」——逐行核查后，那些 [E] 行
+        // 全是**微信自己**的内部日志（DynamicConfig parseInt failed / NewTipsHelper NPE…），
+        // 由本功能忠实转发进来，不是 Joker 的错误。加前缀后一眼可分：
+        // [HOST] 开头 = 微信自身日志；其余 = Joker 自己的日志。
+        WeLogger.i(TAG, "[HOST] 以下带 [HOST] 前缀的行来自微信自身日志（不是 Joker 的错误）")
         Log::class.reflekt().apply {
             if (getBoolOrFalse("${KEY_PREFIX}v"))
                 firstMethod {
@@ -81,7 +87,7 @@ object RedirectHostLogs : ClickableFeature() {
                     runCatching {
                         var formatString = args[1] as String
                         formatString = formatString.format(*(args[2] as Array<*>))
-                        WeLogger.v(TAG, "[V] [$tag] $formatString")
+                        WeLogger.v(TAG, "[HOST] [V] [$tag] $formatString")
                     }
                 }
 
@@ -96,7 +102,7 @@ object RedirectHostLogs : ClickableFeature() {
                     runCatching {
                         var formatString = args[1] as String
                         formatString = formatString.format(*(args[2] as Array<*>))
-                        WeLogger.d(TAG, "[D] [$tag] $formatString")
+                        WeLogger.d(TAG, "[HOST] [D] [$tag] $formatString")
                     }
                 }
 
@@ -111,7 +117,7 @@ object RedirectHostLogs : ClickableFeature() {
                     runCatching {
                         var formatString = args[1] as String
                         formatString = formatString.format(*(args[2] as Array<*>))
-                        WeLogger.i(TAG, "[I] [$tag] $formatString")
+                        WeLogger.i(TAG, "[HOST] [I] [$tag] $formatString")
                     }
                 }
 
@@ -126,7 +132,7 @@ object RedirectHostLogs : ClickableFeature() {
                     runCatching {
                         var formatString = args[1] as String
                         formatString = formatString.format(*(args[2] as Array<*>))
-                        WeLogger.w(TAG, "[W] [$tag] $formatString")
+                        WeLogger.w(TAG, "[HOST] [W] [$tag] $formatString")
                     }
                 }
 
@@ -141,7 +147,7 @@ object RedirectHostLogs : ClickableFeature() {
                     runCatching {
                         var formatString = args[1] as String
                         formatString = formatString.format(*(args[2] as Array<*>))
-                        WeLogger.e(TAG, "[E] [$tag] $formatString")
+                        WeLogger.e(TAG, "[HOST] [E] [$tag] $formatString")
                     }
                 }
         }

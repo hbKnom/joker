@@ -24,6 +24,10 @@ object WeLogger {
 
     private const val CHUNK_SIZE = 4000
     private const val MAX_CHUNKS = 200
+
+    /** 【第 50 轮】「日志正文转储」偏好键与摘要行长度上界。 */
+    private const val KEY_BODY_DUMP = "log_body_dump"
+    private const val BODY_SUMMARY_CHARS = 200
     private const val QUEUE_CAPACITY = 2048
     private const val RESERVED_IMPORTANT_CAPACITY = 128
     private const val BATCH_SIZE = 64
@@ -96,6 +100,36 @@ object WeLogger {
      * 而 `WePrefs` 的读是一次真正的 SQLite 查询 —— 拿它做热路径门闩，门闩本身就成了瓶颈。
      * 这里按 [VERBOSE_TTL_MILLIS] 缓存，开关变更最多晚一秒生效，对诊断无影响。
      */
+    /**
+     * 【第 50 轮】「日志正文转储」门闩（默认关，且必须同时开着「详细日志」）。
+     *
+     * 为什么需要单独一道（实测证据）：用户 2026-09-30 的 7 个进程日志共 **28MB**，
+     * 其中绝大多数是 `logChunkedD` 落下的**完整正文** —— 网络包 payload 的 base64 分片
+     * （`WePacketInterceptor.Request/Response [part 10/31]`）和每次 DB 写入的全部
+     * `ContentValues`（`WeDatabaseListenerApi [Update]`）。
+     * 代价有三：① 每写一次网络包 / 每次 DB 更新都要格式化 + 分片 + 落盘（热路径上的真实开销，
+     * 用户反馈的「一点点卡顿」来源之一）；② 日志大到无法阅读，宿主自身的错误混在里面，
+     * 用户会误以为「每个文件都是 joker 的错误」；③ 把聊天报文原文写到磁盘上本身就不该默认发生。
+     *
+     * 现在：详细日志仍然逐行记录（足够定位问题），正文只在显式打开该偏好时才落盘。
+     * 读取结果按 [VERBOSE_TTL_MILLIS] 缓存，热路径无额外 SQLite 查询。
+     */
+    val bodyDumpEnabled: Boolean
+        get() = verboseEnabled && cachedBodyDump()
+
+    private fun cachedBodyDump(): Boolean {
+        val now = System.currentTimeMillis()
+        val cachedAt = bodyDumpCacheAt
+        if (cachedAt != 0L && now - cachedAt < VERBOSE_TTL_MILLIS) return bodyDumpCache
+        val enabled = runCatching { WePrefs.getBoolOrDef(KEY_BODY_DUMP, false) }.getOrDefault(false)
+        bodyDumpCache = enabled
+        bodyDumpCacheAt = now
+        return enabled
+    }
+
+    @Volatile private var bodyDumpCache = false
+    @Volatile private var bodyDumpCacheAt = 0L
+
     val verboseEnabled: Boolean
         get() {
             val now = System.currentTimeMillis()
@@ -424,6 +458,22 @@ object WeLogger {
     // ========== Chunked ==========
 
     fun logChunked(priority: Int, tag: String, msg: String) {
+        // 【第 50 轮】大块正文（网络包 payload 的 base64、DB 每次写入的全部 ContentValues）
+        // 默认**不落盘**，只留一行摘要 —— 见 [bodyDumpEnabled]。
+        if (priority == Log.DEBUG && !bodyDumpEnabled) {
+            val head = msg.take(BODY_SUMMARY_CHARS).replace('\n', ' ')
+            Log.println(priority, TAG, "$tag: [body ${msg.length} chars 未转储] $head")
+            enqueue(
+                WriteTask.Record(
+                    priority.toPriorityChar(),
+                    tag,
+                    "[body ${msg.length} chars 未转储，如需全文请打开「日志正文转储」] $head",
+                    null,
+                    LocalDateTime.now(),
+                ),
+            )
+            return
+        }
         if (msg.length <= CHUNK_SIZE) {
             Log.println(priority, TAG, "$tag: $msg")
             enqueue(WriteTask.Record(priority.toPriorityChar(), tag, msg, null, LocalDateTime.now()))

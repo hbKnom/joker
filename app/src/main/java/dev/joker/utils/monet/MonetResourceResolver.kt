@@ -49,6 +49,92 @@ object MonetResourceResolver {
     }
 
     /**
+     * 【第 50 轮】卡片族扩展：把「同一张卡片其它状态」的 drawable 也纳入编排。
+     *
+     * 证据链（用户 2026-09-30 实机日志，微信 8.0.72）：
+     *   `reusing cached bindings 231 roles (unresolved 0)`、`覆盖写入率 100%（406/406）`、
+     *   `冒烟校验通过` —— 说明**不是解析失败**；而用户观感是「领取前的红包/转账是 pro 圆角，
+     *   领取完的就是微信原版不变」。即：同一张卡在「已领取」状态下用的是**同一族里另一个
+     *   没被任何规则覆盖的 drawable**。
+     *
+     * 不猜新指纹，改用两条已有事实走一跳：
+     *  ① 资源图的引用关系：引用该角色 drawable 的布局 → 这些布局另作背景引用的 drawable；
+     *  ② **结构同形**：只接受 XML 结构签名（标签序列）与该角色**完全一致**的候选 ——
+     *     同形即「同一张卡的不同状态」，形状不同的一律不收（避免误伤同布局里的图标等）。
+     *
+     * 只**增加**覆盖（写入编排的额外 target），不替换任何已解析角色；上限 [CARD_FAMILY_MAX]。
+     * 命中情况写入日志，便于下一轮凭日志核对。
+     */
+    private fun expandCardFamilies(
+        graph: MonetResourceGraph,
+        resolved: Map<String, MonetResourceNode>,
+        out: MutableMap<String, List<MonetResourceNode>>,
+    ) {
+        CARD_FAMILY_ROLES.forEach { role ->
+            val node = resolved[role] ?: return@forEach
+            val signature = structureSignature(graph, node) ?: return@forEach
+            val candidates = LinkedHashSet<Int>()
+            graph.incoming(node.id).forEach { layoutId ->
+                graph.outgoing(layoutId).forEach { refId -> if (refId != node.id) candidates += refId }
+            }
+            // 二跳（受限）：状态变体常常挂在另一层容器上（同族 drawable 互为邻居）。
+            candidates.toList().take(8).forEach { refId ->
+                graph.incoming(refId).forEach { upId ->
+                    graph.outgoing(upId).forEach { sibling -> if (sibling != node.id) candidates += sibling }
+                }
+            }
+            val extras = candidates.asSequence()
+                .mapNotNull { graph.node(it) }
+                .filter { it.key.type == "drawable" }
+                .filter { graph.incoming(it.id).isNotEmpty() }
+                .filter { structureSignature(graph, it) == signature }
+                .distinctBy { it.id }
+                .take(CARD_FAMILY_MAX)
+                .toList()
+            if (extras.isEmpty()) return@forEach
+            out[role] = (out[role].orEmpty() + extras).distinctBy { it.id }
+            WeLogger.i(
+                TAG,
+                "卡片族扩展 $role：+${extras.size} 个同形 drawable " +
+                    extras.joinToString(",") { "${it.key.type}/${it.key.name}" },
+            )
+        }
+    }
+
+    /** 一棵 XML 树的结构签名（标签名的先序序列）；没有 XML 树（如 PNG/别名）返回 null。 */
+    private fun structureSignature(graph: MonetResourceGraph, node: MonetResourceNode): String? {
+        val tree = runCatching { graph.xmlTrees(node.id).firstOrNull() }.getOrNull() ?: return null
+        val sb = StringBuilder()
+        fun walk(element: MonetXmlElement, depth: Int) {
+            if (depth > 6) return
+            sb.append(element.name).append('(').append(element.children.size).append(");")
+            element.children.forEach { walk(it, depth + 1) }
+        }
+        walk(tree, 0)
+        return sb.toString().takeIf { it.isNotEmpty() }
+    }
+
+    /**
+     * 允许做「同族扩展」的角色：红包与转账的卡片族。
+     *
+     * 只放这一组：它们是**同一张卡的多状态**最确定的地方（用户实机反复反馈的就这一处），
+     * 其它角色一律不做扩展，避免把某个界面里形状偶然一致的 drawable 也拉进来。
+     */
+    private val CARD_FAMILY_ROLES = listOf(
+        "chat.transfer.incoming.received",
+        "chat.transfer.outgoing.received",
+        "chat.transfer.incoming.expired",
+        "chat.transfer.outgoing.expired",
+        "chat.red-envelope.incoming.alias",
+        "chat.red-envelope.outgoing.alias",
+        "chat.red-envelope.incoming.normal",
+        "chat.red-envelope.outgoing.normal",
+    )
+
+    /** 每个角色最多扩展多少个同族 drawable。 */
+    private const val CARD_FAMILY_MAX = 8
+
+    /**
      * Resolves every semantic role and authors the replacement resources.
      *
      * @param resources host resources, used only to look up `android.R.color.system_*`.
@@ -72,6 +158,9 @@ object MonetResourceResolver {
         val resolved = MonetStructureMatcher.resolveAll(graph, dexProvider, { completed, total, detail ->
             onProgress(completed, total, detail)
         }, familyExtras)
+        // 【第 50 轮】卡片族扩展：见 [expandCardFamilies]。
+        runCatching { expandCardFamilies(graph, resolved, familyExtras) }
+            .onFailure { WeLogger.w(TAG, "卡片族扩展失败（只影响红包/转账其它状态的圆角）", it) }
         val matchMs = (System.nanoTime() - matchStart) / 1_000_000
         val palette = overlayPalette(resources, fallbackPalette)
         // 合成资源（自适应图标图层）要借宿主同类型里空的槽位，需要全量节点的类型统计。
