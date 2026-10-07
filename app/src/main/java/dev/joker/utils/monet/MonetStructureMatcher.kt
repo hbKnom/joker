@@ -95,6 +95,7 @@ object MonetStructureMatcher {
         graph: MonetResourceGraph,
         dexProvider: MonetDexEvidenceProvider? = null,
         onProgress: (completed: Int?, total: Int?, detail: String) -> Unit = { _, _, _ -> },
+        familyExtras: MutableMap<String, List<MonetResourceNode>>? = null,
     ): Map<String, MonetResourceNode> {
         // 角色候选解析里任何一环抛异常都不能作废整次解析：实机日志中出现过
         // `resource analysis failed during RESOLVING_ROLES / java.util.NoSuchElementException:
@@ -118,6 +119,22 @@ object MonetStructureMatcher {
             val optional = rule.optional || rule.optionalWhenResourceAbsent?.let { graph.node(it) == null } == true
             when {
                 candidates.size == 1 -> resolved[rule.id] = candidates.single()
+                // 【第 49 轮】状态族角色：同一张卡片的多状态变体指纹完全相同，消歧必然拿到
+                // 多个候选。旧逻辑在这里直接跳过 → 「领取完的红包/转账还是原版微信」。
+                // 现在取一个确定性的代表（id 最小）绑为该角色，其余同族变体交给资源编排
+                // 一并扩展（不替换任何已解析角色，只增加覆盖）。
+                rule.family && candidates.isNotEmpty() -> {
+                    val ordered = candidates.sortedBy { it.id }
+                    resolved[rule.id] = ordered.first()
+                    if (ordered.size > 1) {
+                        familyExtras?.put(rule.id, ordered)
+                        WeLogger.i(
+                            TAG,
+                            "状态族角色 ${rule.id}：绑定代表 0x${ordered.first().id.toString(16)} " +
+                                "并扩展 ${ordered.size - 1} 个同族变体",
+                        )
+                    }
+                }
                 optional && candidates.isEmpty() -> Unit
                 else -> {
                     skipped++

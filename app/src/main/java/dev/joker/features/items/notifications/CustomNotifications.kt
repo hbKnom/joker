@@ -68,6 +68,8 @@ import dev.joker.features.api.core.WeConversationApi
 import dev.joker.features.api.core.WeMessageApi
 import dev.joker.features.core.ClickableFeature
 import dev.joker.features.core.FeatureCategoryIds
+import dev.joker.features.items.chat.BlockMessages
+import dev.joker.features.items.chat.BlockMessagesRules
 import dev.joker.preferences.WePrefs.Companion.prefOption
 import dev.joker.ui.content.AlertDialogContent
 import dev.joker.ui.content.TextButton
@@ -365,8 +367,30 @@ object CustomNotifications : ClickableFeature(), IResolveDex {
             return true
         }
 
+        // 【第 49 轮】「屏蔽消息」联动：被屏蔽消息判定要拦的会话/关键词，通知栏也一并静默。
+        // 否则聊天里盖住了内容、通知栏却把正文原样推出来，「屏蔽」只算半截生效（用户实机反馈
+        // 「效果令人失望」的主要观感来源）。这里只做只读内存判定，无 SQLite、无 IO。
+        if (isBlockedByRules(context)) {
+            WeLogger.d(TAG, "屏蔽消息命中，通知一并静默：${context.talker}")
+            return true
+        }
+
         return false
     }
+
+    /**
+     * 【第 49 轮】把「屏蔽消息」的效果延伸到通知栏。
+     *
+     * 三重短路：功能没开 / 规则为空 / 判定放行 —— 任一命中都立刻返回 false，
+     * 对既有通知行为零影响（这是「不改动已实现功能」的硬要求下的最小侵入实现）。
+     * 群聊通知上下文里没有发送者，`sender` 传空：会话级规则与关键词规则照常生效。
+     */
+    private fun isBlockedByRules(context: NotifyContext): Boolean = runCatching {
+        if (!BlockMessages.isEnabled) return false
+        val rules = BlockMessagesRules.current
+        if (rules.isEmpty) return false
+        BlockMessages.shouldBlock(context.talker, "", context.content)
+    }.getOrDefault(false)
 
     /** 当前是否落在配置的静音时段内（支持跨零点）。 */
     private fun isInMuteWindow(): Boolean {

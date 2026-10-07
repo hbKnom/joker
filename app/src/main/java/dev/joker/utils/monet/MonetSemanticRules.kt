@@ -9,6 +9,19 @@ data class MonetSemanticRule(
     val preferredEvidence: Set<String> = emptySet(),
     val optional: Boolean = false,
     val optionalWhenResourceAbsent: MonetResourceKey? = null,
+    /**
+     * 【第 49 轮】「状态族」角色。
+     *
+     * 同一张卡片的多种状态（待领取 / 已领取 / 已过期）在宿主里是**指纹完全相同**的一族
+     * drawable（红包与转账的 `received` / `expired` 规则就是逐字相同的证据串）。语义消歧
+     * 因此拿到 2 个以上候选，旧逻辑对「≠1 个候选」直接**跳过该角色** —— 用户实机看到的
+     * 就是「领取完的红包和转账不是 pro 圆角、还是原版微信」。
+     *
+     * family=true 时：仍然只把「唯一最优」的那个作为该角色的代表，但会把**同族的所有变体**
+     * 一并交给资源编排（见 [MonetAssetInjector.addPairFamily]），不替换任何已解析角色、
+     * 只增加覆盖。仅用于状态族，普通角色不受影响。
+     */
+    val family: Boolean = false,
 )
 
 val MONET_RULES = listOf(
@@ -210,12 +223,12 @@ val MONET_RULES = listOf(
     MonetSemanticRule("chat.bubble.incoming.pro.handled", "drawable", setOf("adjacent:-1:attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "adjacent:2:attribute:selector/item:16842913:state_selected:BOOLEAN:literal:BOOLEAN:4294967295", "adjacent:1:attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295")),
     MonetSemanticRule("chat.bubble.outgoing.pro", "drawable", setOf("adjacent:-1:attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "adjacent:1:attribute:selector/item:16842913:state_selected:BOOLEAN:literal:BOOLEAN:4294967295", "adjacent:-2:attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "attribute:selector/item:16843161:drawable:REFERENCE:reference:drawable:REFERENCE")),
     MonetSemanticRule("chat.bubble.outgoing.pro.handled", "drawable", setOf("adjacent:-1:attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "adjacent:-2:attribute:selector/item:16842913:state_selected:BOOLEAN:literal:BOOLEAN:4294967295", "attribute:selector/item:16843161:drawable:REFERENCE:reference:drawable:REFERENCE"), requiredAdjacentRoles = mapOf(-1 to "chat.bubble.outgoing.pro")),
-    MonetSemanticRule("chat.red-envelope.incoming.alias", "drawable", setOf("adjacent:-2:attribute:shape:16843359:innerRadius:DIMENSION:literal:DIMENSION:1025", "adjacent:1:outgoing:drawable")),
-    MonetSemanticRule("chat.red-envelope.outgoing.alias", "drawable", setOf("adjacent:2:attribute:shape/corners:16843176:radius:DIMENSION:literal:DIMENSION:5121", "attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295")),
-    MonetSemanticRule("chat.transfer.incoming.expired", "drawable", setOf("attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "attribute:selector/item:16843161:drawable:REFERENCE:reference:drawable:REFERENCE")),
-    MonetSemanticRule("chat.transfer.outgoing.expired", "drawable", setOf("attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "attribute:selector/item:16843161:drawable:REFERENCE:reference:drawable:REFERENCE")),
-    MonetSemanticRule("chat.transfer.incoming.received", "drawable", setOf("attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "attribute:selector/item:16843161:drawable:REFERENCE:reference:drawable:REFERENCE")),
-    MonetSemanticRule("chat.transfer.outgoing.received", "drawable", setOf("attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "attribute:selector/item:16843161:drawable:REFERENCE:reference:drawable:REFERENCE")),
+    MonetSemanticRule("chat.red-envelope.incoming.alias", "drawable", setOf("adjacent:-2:attribute:shape:16843359:innerRadius:DIMENSION:literal:DIMENSION:1025", "adjacent:1:outgoing:drawable"), family = true),
+    MonetSemanticRule("chat.red-envelope.outgoing.alias", "drawable", setOf("adjacent:2:attribute:shape/corners:16843176:radius:DIMENSION:literal:DIMENSION:5121", "attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295"), family = true),
+    MonetSemanticRule("chat.transfer.incoming.expired", "drawable", setOf("attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "attribute:selector/item:16843161:drawable:REFERENCE:reference:drawable:REFERENCE"), family = true),
+    MonetSemanticRule("chat.transfer.outgoing.expired", "drawable", setOf("attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "attribute:selector/item:16843161:drawable:REFERENCE:reference:drawable:REFERENCE"), family = true),
+    MonetSemanticRule("chat.transfer.incoming.received", "drawable", setOf("attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "attribute:selector/item:16843161:drawable:REFERENCE:reference:drawable:REFERENCE"), family = true),
+    MonetSemanticRule("chat.transfer.outgoing.received", "drawable", setOf("attribute:selector/item:16842908:state_focused:BOOLEAN:literal:BOOLEAN:4294967295", "attribute:selector/item:16843161:drawable:REFERENCE:reference:drawable:REFERENCE"), family = true),
     MonetSemanticRule("theme.color.system-surface-container-light--system-surface-container-dark.slot-13", "color", setOf("config::literal:COLOR_ARGB8:3437160959", "adjacent:-1:config::literal:COLOR_ARGB8:654311423")),
     MonetSemanticRule("theme.color.system-accent2-600--system-accent2-600.slot-02", "color", setOf("adjacent:-2:config:-night:literal:COLOR_ARGB8:3875010551")),
     MonetSemanticRule("theme.color.system-primary-light--system-primary-dark.slot-23", "color", setOf("adjacent:1:config::literal:COLOR_ARGB8:2149457438")),

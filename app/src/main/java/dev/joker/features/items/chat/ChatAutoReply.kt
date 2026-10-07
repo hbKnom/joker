@@ -328,6 +328,14 @@ object ChatAutoReply : ClickableFeature(), WeDatabaseListenerApi.IInsertListener
         // 原实现只把当前这一条丢给模型，模型看不到上文，只能干巴巴回一句。
         val history = runCatching { loadRecentContext(talker, task.aiContextTurns) }
             .getOrDefault(emptyList())
+        // 【第 49 轮】「自说自话」保护：最近两条都是自己发的（对方没接话）时不再往上叠。
+        // 这是最影响「像不像人」的一条 —— 连发两三条没人接，观感就是复读机器人。
+        // 只读已经取到的最近对话，不额外查库、不加配置项，默认对既有行为是「更少打扰」。
+        val tail = history.takeLast(2)
+        if (tail.size == 2 && tail.all { it.first }) {
+            WeLogger.i(TAG, "最近两条都是自己发的（对方未接话），本次不追加回复：$talker")
+            return false
+        }
         val userPrompt = buildUserPrompt(content, talker, history, sender)
 
         // 3) 调用 AI（非流式 plain，超时由 longClient 180s 控制）

@@ -101,6 +101,11 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
     /** 【第 48 轮】解码失败后的重试间隔（毫秒）：失败不再永久拉黑。 */
     private const val FAILED_RETRY_MS = 60_000L
 
+    /** 【第 49 轮】网络直链头像的磁盘缓存目录 / 上限 / 超时。 */
+    private const val AVATAR_CACHE_DIR = "joker_avatars"
+    private const val AVATAR_CACHE_MAX = 400
+    private const val AVATAR_NET_TIMEOUT_MS = 4000
+
     /** 与「屏蔽消息」共用同一份规则存储（只读；热路径走内存缓存，跨进程最坏 1s 收敛）。 */
     private var rulesJson by hotPrefOption("block_messages_rules_json", "")
 
@@ -956,6 +961,16 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
                 }
             }
 
+            // 【第 49 轮】网络直链兜底：`制作表情`功能一直在用的就是这条路
+            // （`WeDatabaseApi.getAvatarUrl` 拿到的就是 http(s) 直链，用户实机确认它对
+            // 「每个群成员 + 私聊对方」都拿得到）。遮盖层以前只解本地文件/宿主虚拟路径，
+            // `img_flag` 里存的是直链时直接放弃 → 只能退化成首字圆。
+            candidates.forEach { candidate ->
+                if (candidate.startsWith("http://", true) || candidate.startsWith("https://", true)) {
+                    downloadAvatar(candidate, wxid)?.let { return it }
+                }
+            }
+
             val read = vfsRead()
             if (read == null) {
                 WeLogger.d(TAG, "avatar: VFS reader unavailable for '$wxid'")
@@ -984,8 +999,68 @@ object BlockedMessageMask : SwitchFeature(), IResolveDex {
             return null
         }
 
-        /** 同一批 VFS 读法里「返回 byte[]」的变体（惰性解析、失败不缓存）。 */
-        @Volatile private var vfsBytesResolved = false
+        /**
+         * 【第 49 轮】网络直链头像：**「制作表情」功能一直在用的那条路**。
+         *
+         * 用户点名的参考实现就是 `MakeEmoji.kt` → `WeDatabaseApi.getAvatarUrl(sender)`，
+         * 它拿到的就是 http(s) 直链，实机确认对「每个群成员 + 私聊对方」都拿得到。
+         * 遮盖层以前只认本地文件与宿主虚拟路径，直链直接放弃 → 只能画首字圆。
+         *
+         * 这里在**后台执行器**上下载一次并落盘缓存（`files/joker_avatars/<md5>.img`），
+         * 之后永久命中本地文件、不再走网络；失败照旧只是回退首字圆，不影响任何已有路径。
+         */
+        private fun downloadAvatar(url: String, key: String): Bitmap? {
+            if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) return null
+            val file = cacheFileFor(key)
+            if (file.isFile) runCatching { BitmapFactory.decodeFile(file.absolutePath)?.let { return it } }
+            runCatching {
+                val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                    connectTimeout = AVATAR_NET_TIMEOUT_MS
+                    readTimeout = AVATAR_NET_TIMEOUT_MS
+                    instanceFollowRedirects = true
+                    setRequestProperty("User-Agent", "Mozilla/5.0")
+                    setRequestProperty("Referer", "https://weixin.qq.com/")
+                }
+                conn.inputStream.use { input ->
+                    file.parentFile?.mkdirs()
+                    val tmp = File(file.absolutePath + ".tmp")
+                    tmp.outputStream().use { output -> input.copyTo(output) }
+                    if (tmp.length() > 0L) {
+                        if (!tmp.renameTo(file)) {
+                            file.delete()
+                            tmp.renameTo(file)
+                        }
+                    } else {
+                        tmp.delete()
+                    }
+                }
+                runCatching { conn.disconnect() }
+            }.onFailure { WeLogger.d(TAG, "avatar: download failed for '$key'") }
+            pruneAvatarCache()
+            return runCatching { if (file.isFile) BitmapFactory.decodeFile(file.absolutePath) else null }.getOrNull()
+        }
+
+        private fun cacheFileFor(key: String): File =
+            File(File(HostInfo.application.filesDir, AVATAR_CACHE_DIR), md5Hex(key) + ".img")
+
+        /** 磁盘缓存有界：超过 [AVATAR_CACHE_MAX] 个就按最后修改时间删最旧的（后台线程，低频）。 */
+        private fun pruneAvatarCache() {
+            runCatching {
+                val dir = File(HostInfo.application.filesDir, AVATAR_CACHE_DIR)
+                val files = dir.listFiles() ?: return
+                if (files.size <= AVATAR_CACHE_MAX) return
+                files.sortedBy { it.lastModified() }
+                    .take(files.size - AVATAR_CACHE_MAX)
+                    .forEach { it.delete() }
+            }
+        }
+
+        private fun md5Hex(value: String): String = runCatching {
+            val digest = java.security.MessageDigest.getInstance("MD5")
+            digest.digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+        }.getOrDefault(value.hashCode().toString())
+
+        /** 同一批 VFS 读法里「返回 byte[]」的变体（惰性解析、失败不缓存）。 */        @Volatile private var vfsBytesResolved = false
         @Volatile private var vfsBytesMethod: java.lang.reflect.Method? = null
 
         private fun vfsReadBytes(): java.lang.reflect.Method? {

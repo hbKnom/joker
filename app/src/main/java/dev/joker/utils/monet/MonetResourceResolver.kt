@@ -65,9 +65,13 @@ object MonetResourceResolver {
         onProgress: (completed: Int?, total: Int?, detail: String) -> Unit = { _, _, _ -> },
     ): Resolution {
         val matchStart = System.nanoTime()
-        val resolved = MonetStructureMatcher.resolveAll(graph, dexProvider) { completed, total, detail ->
+        // 【第 49 轮】状态族角色（红包 alias / 转账 received·expired）在宿主里是一族指纹相同的
+        // drawable，消歧必然多候选；这里收集「同族变体」交给资源编排一并覆盖，
+        // 用户实机反馈的「领取完的红包/转账还是原版微信」即出在这一族上。
+        val familyExtras = linkedMapOf<String, List<MonetResourceNode>>()
+        val resolved = MonetStructureMatcher.resolveAll(graph, dexProvider, { completed, total, detail ->
             onProgress(completed, total, detail)
-        }
+        }, familyExtras)
         val matchMs = (System.nanoTime() - matchStart) / 1_000_000
         val palette = overlayPalette(resources, fallbackPalette)
         // 合成资源（自适应图标图层）要借宿主同类型里空的槽位，需要全量节点的类型统计。
@@ -115,6 +119,7 @@ object MonetResourceResolver {
                 multiSceneCorners = multiSceneCorners,
                 splashIconId = splashIconId,
                 slots = slots,
+                familyExtras = familyExtras,
             )
         }.onFailure {
             WeLogger.w(TAG, "可视化资源编排失败，本次只注入颜色（其余照常）", it)

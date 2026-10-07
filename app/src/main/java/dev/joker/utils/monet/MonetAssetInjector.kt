@@ -66,6 +66,7 @@ object MonetAssetInjector {
     fun modernBubbles(
         resolved: Map<String, MonetResourceNode>,
         palette: Palette,
+        familyExtras: Map<String, List<MonetResourceNode>> = emptyMap(),
     ): List<DrawableTarget> = buildList {
         addPair(
             resolved,
@@ -105,14 +106,14 @@ object MonetAssetInjector {
         )
         val redLight = messageSelector(rounded(palette.accent1_700, 16f), rounded(palette.primaryLight, 16f))
         val redNight = messageSelector(rounded(palette.accent1_300, 16f), rounded(palette.primaryDark, 16f))
-        addPair(resolved, "chat.red-envelope.incoming.alias", redLight, redNight)
-        addPair(resolved, "chat.red-envelope.outgoing.alias", redLight, redNight)
+        addPairFamily(resolved, familyExtras, "chat.red-envelope.incoming.alias", redLight, redNight)
+        addPairFamily(resolved, familyExtras, "chat.red-envelope.outgoing.alias", redLight, redNight)
         val received = messageSelector(rounded(palette.accent1_400, 16f), rounded(palette.accent1_300, 16f))
-        addPair(resolved, "chat.transfer.incoming.received", received, received)
-        addPair(resolved, "chat.transfer.outgoing.received", received, received)
+        addPairFamily(resolved, familyExtras, "chat.transfer.incoming.received", received, received)
+        addPairFamily(resolved, familyExtras, "chat.transfer.outgoing.received", received, received)
         val expired = messageSelector(rounded(palette.accent1_500, 16f), rounded(palette.accent1_400, 16f))
-        addPair(resolved, "chat.transfer.incoming.expired", expired, expired)
-        addPair(resolved, "chat.transfer.outgoing.expired", expired, expired)
+        addPairFamily(resolved, familyExtras, "chat.transfer.incoming.expired", expired, expired)
+        addPairFamily(resolved, familyExtras, "chat.transfer.outgoing.expired", expired, expired)
         val voiceLight = voiceSelector(rounded(palette.surfaceLight, 16f))
         val voiceNight = voiceSelector(rounded(palette.surfaceDark, 16f))
         addPair(resolved, "chat.voice-to-text.background", voiceLight, voiceNight)
@@ -135,6 +136,7 @@ object MonetAssetInjector {
     fun classicBubbles(
         resolved: Map<String, MonetResourceNode>,
         palette: Palette,
+        familyExtras: Map<String, List<MonetResourceNode>> = emptyMap(),
     ): List<DrawableTarget> = buildList {
         addPair(
             resolved,
@@ -193,10 +195,10 @@ object MonetAssetInjector {
         val outgoingMaskLight = classicShape(palette.accent1_700, false, OUTGOING_LINK_PADDING)
         val outgoingMaskNight = classicShape(palette.accent1_300, false, OUTGOING_LINK_PADDING)
         listOf("chat.transfer.incoming.received", "chat.transfer.incoming.expired").forEach {
-            addPair(resolved, it, messageSelector(incomingMaskLight, incomingMaskLight), messageSelector(incomingMaskNight, incomingMaskNight))
+            addPairFamily(resolved, familyExtras, it, messageSelector(incomingMaskLight, incomingMaskLight), messageSelector(incomingMaskNight, incomingMaskNight))
         }
         listOf("chat.transfer.outgoing.received", "chat.transfer.outgoing.expired").forEach {
-            addPair(resolved, it, messageSelector(outgoingMaskLight, outgoingMaskLight), messageSelector(outgoingMaskNight, outgoingMaskNight))
+            addPairFamily(resolved, familyExtras, it, messageSelector(outgoingMaskLight, outgoingMaskLight), messageSelector(outgoingMaskNight, outgoingMaskNight))
         }
     }
 
@@ -247,6 +249,28 @@ object MonetAssetInjector {
                 lightQualifiers = "-anydpi-v26",
             ),
         )
+    }
+
+    /**
+     * 【第 49 轮】状态族角色：先按原语义绑「代表」，再把同族变体（已领取 / 已过期 / 待领取
+     * 等状态各一张）一并编排进去。
+     *
+     * 只对显式标记 `family = true` 的角色生效（红包 alias / 转账 received·expired），
+     * 且**不替换**任何已解析角色、只增加覆盖 —— 达标做法是「多给几张图」，不是「换掉谁」。
+     * 代表节点与同族变体可能重叠，按 id 去重，避免同一资源写两遍。
+     */
+    private fun MutableList<DrawableTarget>.addPairFamily(
+        resolved: Map<String, MonetResourceNode>,
+        familyExtras: Map<String, List<MonetResourceNode>>,
+        role: String,
+        light: XmlNode,
+        night: XmlNode,
+    ) {
+        addPair(resolved, role, light, night)
+        val representativeId = resolved[role]?.id
+        familyExtras[role].orEmpty()
+            .filter { it.id != representativeId }
+            .forEach { node -> add(DrawableTarget(node.binding(), light, night)) }
     }
 
     private fun MutableList<DrawableTarget>.addPair(
@@ -541,11 +565,12 @@ object MonetAssetInjector {
         multiSceneCorners: Boolean,
         splashIconId: Int,
         slots: MonetHostTypeSlots = MonetHostTypeSlots.EMPTY,
+        familyExtras: Map<String, List<MonetResourceNode>> = emptyMap(),
     ): MonetOverlayPlan {
         var drawables = baseVisuals(resolved, palette, splashIconId)
         drawables = drawables + when (style) {
-            MonetBubbleStyle.MODERN -> modernBubbles(resolved, palette)
-            MonetBubbleStyle.CLASSIC -> classicBubbles(resolved, palette)
+            MonetBubbleStyle.MODERN -> modernBubbles(resolved, palette, familyExtras)
+            MonetBubbleStyle.CLASSIC -> classicBubbles(resolved, palette, familyExtras)
             MonetBubbleStyle.PRO -> proBubbles(resolved, palette)
         }
         if (multiSceneCorners) drawables = drawables + corners(resolved, palette)
