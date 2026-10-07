@@ -82,9 +82,6 @@ object HomeSidePanelCalendarData {
     /** 非 Compose 侧（服务/日志）用的同步就绪判定。 */
     fun isReady(): Boolean = initialized
 
-    /** 是否已 init（UI 可用来决定是否先显示占位）。 */
-    fun isReady(): Boolean = initialized
-
     /**
      * 宜忌（`huangli.idf`）：`null` = 未 init 或日期越界（1901-01-01 .. 2101-01-01）。
      *
