@@ -101,6 +101,7 @@ class McpToolProvider(
     private val offlineUntil = java.util.concurrent.atomic.AtomicLong(0L)
 
     private companion object {
+        const val TAG = "McpToolProvider"
         const val OFFLINE_THRESHOLD = 5
         const val OFFLINE_COOLDOWN_MS = 5 * 60_000L
     }
@@ -230,9 +231,5 @@ class McpToolProvider(
         val message = e.message ?: e.javaClass.simpleName
         _status.update { it.copy(lastError = message) }
         WeLogger.w(TAG, "MCP server '$name' transport error: $message")
-    }
-
-    companion object {
-        private const val TAG = "McpToolProvider"
     }
 }
