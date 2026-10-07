@@ -101,8 +101,10 @@ internal fun homeSidePanelCellInfoOf(
     today: LocalDate,
     showFestivalName: Boolean,
     showHolidayMark: Boolean,
+    // 【第 55 轮】数据未就绪时不查表（也就不会把「首帧空值」当成结论）。
+    ready: Boolean = true,
 ): HomeSidePanelCalendarCellInfo {
-    val festival = if (showFestivalName) {
+    val festival = if (showFestivalName && ready) {
         HomeSidePanelCalendarData.festivalName(date)
             ?: HomeSidePanelCalendarData.solarTerm(date)
     } else {
@@ -112,7 +114,7 @@ internal fun homeSidePanelCellInfoOf(
         date = date,
         lunarShort = HomeSidePanelCalendarData.lunarShort(date),
         festivalName = festival,
-        holidayMark = if (showHolidayMark) HomeSidePanelCalendarData.holidayMark(date) else null,
+        holidayMark = if (showHolidayMark && ready) HomeSidePanelCalendarData.holidayMark(date) else null,
         isToday = date == today,
         inCurrentMonth = YearMonth.from(date) == month,
         isWeekend = date.dayOfWeek == DayOfWeek.SATURDAY || date.dayOfWeek == DayOfWeek.SUNDAY,
@@ -127,6 +129,7 @@ internal fun HomeSidePanelMonthGridView(
     today: LocalDate,
     showFestivalName: Boolean,
     showHolidayMark: Boolean,
+    ready: Boolean,
     onSelect: (LocalDate) -> Unit,
 ) {
     val weekdays = listOf("一", "二", "三", "四", "五", "六", "日")
@@ -171,6 +174,7 @@ internal fun HomeSidePanelMonthGridView(
                             today = today,
                             showFestivalName = showFestivalName,
                             showHolidayMark = showHolidayMark,
+                            ready = ready,
                         ),
                         selected = date == selected,
                         modifier = Modifier.weight(1f),
@@ -272,6 +276,10 @@ private fun HomeSidePanelMonthCell(
 internal fun HomeSidePanelMonthSummaryCard(
     date: LocalDate,
     showYiJi: Boolean,
+    // 【第 55 轮·关键】必须把 ready 作为**入参**传进来：本组件的其余入参都是稳定值 +
+    // Compose 记忆化 lambda，数据晚一步就绪时它会被 skip、不重跑，首帧的 null 会被永久缓存
+    // ——这正是「休/班角标有、宜忌永远不显示」的原因。
+    ready: Boolean,
     onOpenDetail: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -304,7 +312,7 @@ internal fun HomeSidePanelMonthSummaryCard(
                 color = scheme.primary,
             )
         }
-        if (showYiJi && yiJi != null) {
+        if (showYiJi && ready && yiJi != null) {
             HomeSidePanelYiJiLine("宜", yiJi.yi, scheme.primary)
             HomeSidePanelYiJiLine("忌", yiJi.ji, scheme.tertiary)
         }
@@ -340,6 +348,7 @@ internal fun HomeSidePanelDayView(
     date: LocalDate,
     showYiJi: Boolean,
     showCountdown: Boolean,
+    ready: Boolean,
     onOpenDetail: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -366,7 +375,7 @@ internal fun HomeSidePanelDayView(
                 )
             }
         }
-        if (showYiJi && yiJi != null) {
+        if (showYiJi && ready && yiJi != null) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -392,7 +401,7 @@ internal fun HomeSidePanelDayView(
         // 用户反馈「日视图没有显示对应日期的全部黄历信息」。现在把详情页那 6 格
         // （胎神/彭祖/五行/星宿/冲煞/值神）与十二时吉凶**同步铺在日视图里**，
         // 不用点进详情也看得到完整内容。
-        if (showYiJi) {
+        if (showYiJi && ready) {
             HomeSidePanelHuangliFacts(HomeSidePanelCalendarData.huangliDetail(date))
             Text(
                 text = "十二时",
@@ -468,6 +477,7 @@ internal fun HomeSidePanelWeekTimelineView(
     showFestivalName: Boolean,
     showHolidayMark: Boolean,
     showYiJi: Boolean,
+    ready: Boolean,
     onSelect: (LocalDate) -> Unit,
     onOpenDetail: (LocalDate) -> Unit,
 ) {
@@ -512,6 +522,7 @@ internal fun HomeSidePanelWeekTimelineView(
                         today = today,
                         showFestivalName = showFestivalName,
                         showHolidayMark = showHolidayMark,
+                        ready = ready,
                     )
                     Text(
                         text = info.lunarShort,
@@ -582,6 +593,7 @@ internal fun HomeSidePanelWeekTimelineView(
         HomeSidePanelMonthSummaryCard(
             date = selected,
             showYiJi = showYiJi,
+            ready = ready,
             onOpenDetail = { onOpenDetail(selected) },
         )
     }
@@ -601,6 +613,7 @@ private val HOME_SIDE_PANEL_WEEK_HOURS: List<Int> =
 @Composable
 internal fun HomeSidePanelHuangliDetailView(
     date: LocalDate,
+    ready: Boolean,
     onBack: () -> Unit,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -626,7 +639,7 @@ internal fun HomeSidePanelHuangliDetailView(
                 color = scheme.onSurface,
             )
         }
-        if (yiJi != null) {
+        if (ready && yiJi != null) {
             HomeSidePanelDetailYiJi("宜", yiJi.yi, scheme.primary)
             HomeSidePanelDetailYiJi("忌", yiJi.ji, scheme.tertiary)
         }

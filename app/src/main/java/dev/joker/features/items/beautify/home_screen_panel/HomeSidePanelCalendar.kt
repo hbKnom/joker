@@ -205,7 +205,9 @@ internal fun HomeSidePanelCalendarCard(
             val shownDetail = detailDate
             if (shownDetail != null) {
                 // 黄历详情页（源码 13 项；卡内切换，返回留在卡里）
-                if (assetsReady) HomeSidePanelHuangliDetailView(shownDetail) { detailDate = null }
+                // 【第 55 轮】把 ready 作为入参传给详情页（不再是「就绪才渲染」）——
+                // 数据晚一步就绪时子组件也能重组，宜忌/六格/十二时不会停在空值。
+                HomeSidePanelHuangliDetailView(shownDetail, assetsReady) { detailDate = null }
             } else {
                 when (viewMode) {
                     HomeSidePanelCalendarMode.MONTH -> {
@@ -215,11 +217,13 @@ internal fun HomeSidePanelCalendarCard(
                             today = LocalDate.now(),
                             showFestivalName = card.showFestivalName,
                             showHolidayMark = card.showHolidayMark,
+                            ready = assetsReady,
                             onSelect = { selectedDate = it },
                         )
                         HomeSidePanelMonthSummaryCard(
                             date = selectedDate,
                             showYiJi = card.showYiJi,
+                            ready = assetsReady,
                             onOpenDetail = { openDetail(selectedDate) },
                         )
                     }
@@ -231,6 +235,7 @@ internal fun HomeSidePanelCalendarCard(
                         showFestivalName = card.showFestivalName,
                         showHolidayMark = card.showHolidayMark,
                         showYiJi = card.showYiJi,
+                        ready = assetsReady,
                         onSelect = { selectedDate = it },
                         onOpenDetail = { openDetail(it) },
                     )
@@ -239,6 +244,7 @@ internal fun HomeSidePanelCalendarCard(
                         date = selectedDate,
                         showYiJi = card.showYiJi,
                         showCountdown = card.showCountdown,
+                        ready = assetsReady,
                         onOpenDetail = { openDetail(selectedDate) },
                     )
                 }

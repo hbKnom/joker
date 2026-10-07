@@ -1,6 +1,9 @@
 package dev.joker.features.items.beautify.home_screen_panel.calendar
 
 import android.content.Context
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
+import dev.joker.utils.WeLogger
 import java.time.LocalDate
 
 /**
@@ -25,6 +28,9 @@ import java.time.LocalDate
  */
 object HomeSidePanelCalendarData {
 
+    private const val TAG = "HomeSidePanelCalendarData"
+
+
     /** 倒计时最多向后找 180 天（与 mical `countdownCard` 一致）。 */
     private const val COUNTDOWN_MAX_DAYS = 180
 
@@ -48,8 +54,33 @@ object HomeSidePanelCalendarData {
             runCatching { HomeSidePanelCalendarAssets.init(context) }
             runCatching { HomeSidePanelHuangliIdf.init(context, HomeSidePanelCalendarAssets.words()) }
             initialized = true
+            // 【第 55 轮】把「就绪」变成可观察状态 + 打一条诊断。
+            //
+            // 为什么必须可观察：卡片是 Compose 写的，而 `HomeSidePanelMonthSummaryCard` / `DayView` /
+            // `DetailView` 的入参全是稳定值 + Compose 会自动记忆化的 lambda ⇒ 数据晚一步就绪时，
+            // 这些子组件会被 **skip**、不会重跑，首帧查到的 `null` 就被永久缓存住了 ——
+            // 实机表现正是「月格里的休/班角标有（它的入参每帧都是新对象，会重跑），
+            // 但摘要卡/日视图/详情页的**宜忌永远不显示**」。
+            readyState.value = true
+            val probe = runCatching { yiJi(LocalDate.now()) }.getOrNull()
+            WeLogger.i(
+                TAG,
+                "日历数据就绪：assets=${HomeSidePanelCalendarAssets.isReady()} " +
+                    "idf=${HomeSidePanelHuangliIdf.isReady()} 词表=${HomeSidePanelCalendarAssets.words().size} " +
+                    "今日宜=${probe?.yi?.size ?: -1} 忌=${probe?.ji?.size ?: -1}",
+            )
         }
     }
+
+    /**
+     * 数据是否就绪（**Compose 可观察**）。
+     *
+     * 视图层必须在自己的组合里读一次它：否则 init 完成时不会触发这些子组件重组（见 [init] 注释）。
+     */
+    val readyState: MutableState<Boolean> = mutableStateOf(false)
+
+    /** 非 Compose 侧（服务/日志）用的同步就绪判定。 */
+    fun isReady(): Boolean = initialized
 
     /** 是否已 init（UI 可用来决定是否先显示占位）。 */
     fun isReady(): Boolean = initialized

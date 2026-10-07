@@ -82,6 +82,9 @@ object MoodMessageChannel : SignalAnalyzer.SettleListener {
      * ```
      */
     fun format(mood: Mood): String {
+        // 【第 55 轮】有「推荐回复」时，长按/回插只给这一句 —— 用户要的是**能直接发出去的话**，
+        // 而不是整份解读（复制一份带情绪概率的长文还得自己删）。
+        if (mood.replyDraft.isNotBlank()) return mood.replyDraft
         val bars = mood.bars.takeIf { it.isNotEmpty() }
             ?.joinToString(" · ") { "${it.name} ${it.percent}%" }
             ?.let { "情绪：$it" }

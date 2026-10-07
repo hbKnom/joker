@@ -77,6 +77,16 @@ object JevProtocol {
     private const val SUPPORT_YES = "yes"
 
     /**
+     * 【第 55 轮】「推荐回复」问题的指令。
+     *
+     * 用户要求（对照上游 reply 子系统）：卡片不只给「建议动作」，还要**把回复正文写出来**，
+     * 可以直接复制去发；而且要「自然、逼近真情实感、没有 AI 味」。
+     * 把「像不像真人」拆成可判定的硬规则（长度匹配 / 禁客服腔 / 禁书面语 / 禁提 AI），
+     * 与 [dev.joker.features.items.chat.ChatAutoReply] 的「去 AI 味」提示词同源。
+     */
+    private const val REPLY_DRAFT = "%s"
+
+    /**
      * 交流意图 → 中文标签（上游 `intentLabels` 逐字照搬，14 项覆盖 speech_act 全部取值）。
      *
      * 卡片上的「意图：XXX」就是它 —— 用户能直接看出系统认为对方在做什么，
@@ -96,6 +106,24 @@ object JevProtocol {
      * 只在复核后的交流意图**足够明确**时输出：`unknown` 或不达标就不出这行 ——
      * 宁可不显示，也不给用户一个可能错的意图标签。
      */
+    /**
+     * 宽容读取自由文本答案。
+     *
+     * 模型可能给 `"xxx"` / `{"value":"xxx"}` / `{"text":"xxx"}` / `["xxx"]` 四种形态，
+     * 任何一种都能取出来；取不到返回空串 —— **绝不因为这一项缺答让整轮分析失败**
+     * （与我方 readChoice 的宽容口径一致）。
+     */
+    private fun readTextAnswer(answers: JSONObject, key: String): String {
+        val raw = runCatching { answers.get(key) }.getOrNull() ?: return ""
+        val text = when (raw) {
+            is String -> raw
+            is JSONObject -> raw.optString("value").ifEmpty { raw.optString("text") }
+            is JSONArray -> raw.optString(0)
+            else -> raw.toString()
+        }
+        return text.trim().removePrefix("\"").removeSuffix("\"").trim().take(200)
+    }
+
     private fun intentLine(profile: ChatProfile): String? = profile.facts["speech_act"]
         ?.takeIf { it.clear && it.choice != "unknown" }
         ?.let { INTENT_LABELS[it.choice] }
@@ -315,6 +343,17 @@ object JevProtocol {
                 "不要重复已经给过的安慰、解释或问题。新话题优先接新话题，吐槽第三方不要求我方道歉。" +
                 "没有明确约定不能建议兑现，没求办法不急着指导。候选都不合适或前提不成立就选 none。",
             ChatActions.options(profile)))
+        // 【第 55 轮】推荐回复：自由文本（不是选项题），与复核/动作同一次请求里问，**不额外花钱**。
+        questions.put(
+            "reply_draft",
+            JSONObject().put("type", "text").put(
+                "instructions",
+                REPLY_DRAFT.format(
+                    "先依据原文与前文，判断对方这句话在期待什么回应，然后写出你这一条要发出去的回复。" +
+                        "不要写多个版本、不要写解释，只写这一句话。",
+                ),
+            ),
+        )
         for (card in candidates) {
             questions.put("reading_${card.id}", choice(
                 "只在此问题适合当前语境时判断，否则选 unclear。${card.question}" +
@@ -397,6 +436,9 @@ object JevProtocol {
                 .map { "· ${card.options.getValue(it.key)}：${(it.value * 100).roundToInt()}%" }
         }
         if (selectedAction != null) lines += "建议：${selectedAction.text}"
+        // 【第 55 轮】推荐回复（自由文本，缺答/模型不听话都只丢这一行，不影响整条结论）
+        val replyDraft = readTextAnswer(answers, "reply_draft")
+        if (replyDraft.isNotEmpty()) lines += "回复：$replyDraft"
         val label = when {
             card != null && reading != null -> sceneLabel ?: ChatTemplates.displayScene(card)
             selectedAction != null -> "下一步动作"
@@ -412,6 +454,7 @@ object JevProtocol {
             // 【第 52 轮】一律用**复核后**的 reviewed —— 卡片显示的情绪必须与结论行一致。
             bars = emotionBars(reviewed),
             advice = selectedAction?.text,
+            replyDraft = replyDraft,
             // 主情绪与「结论段位」分开：标题要显示的是情绪，不是 section 名
             dominant = dominantEmotion(reviewed),
             // 下面这些是给卡片做信息层级用的结构化字段（场景 / 阶段 / 候选解读 / 置信度），

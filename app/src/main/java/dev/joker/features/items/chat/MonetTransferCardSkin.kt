@@ -88,8 +88,17 @@ object MonetTransferCardSkin : ApiFeature(), IResolveDex {
         }
     }
 
-    /** 已经处理过的行（弱引用键，行被回收后自动释放）。 */
-    private val skinned = WeakHashMap<View, Long>()
+    /**
+     * 行 → **我们打上去的那个背景**（弱引用键，行被回收后自动释放）。
+     *
+     * 【第 55 轮】以前存的是 msgId、且命中就**整行跳过**。实机反馈暴露了两个后果：
+     *  ①「点一下卡片就退回微信原版」—— 宿主点击后会重新设置一次背景，而我们因为「这行做过了」
+     *    不再补，直到下次滑动重新 bind 才恢复（用户描述完全吻合）；
+     *  ②「自己发的已领取转账还是原版」—— 见下面 [isClaimedState] 的判定放宽。
+     * 现在存的是 drawable 本体：每次 bind 都调用 [skin]，只有**当前背景还是我们那个**时才跳过，
+     * 被宿主盖掉就自动补回来（自愈）。
+     */
+    private val skinned = WeakHashMap<View, android.graphics.drawable.Drawable>()
 
     override fun onEnable() {
         WeMessageApi.methodChattingDataAdapterOnBindViewHolder.hookAfter {
@@ -116,21 +125,29 @@ object MonetTransferCardSkin : ApiFeature(), IResolveDex {
         val content = info.content
         if (content.isEmpty() || !content.contains(PAY_TAG)) return
         if (!isClaimedState(content)) return
-        val msgId = runCatching { info.id }.getOrDefault(0L)
-        synchronized(skinned) {
-            if (skinned[itemView] == msgId && msgId != 0L) return
-            skinned[itemView] = msgId
-        }
-        // 2) 宿主是在这一帧之后才把卡片画成原版的 —— 等布局稳定再改。
-        itemView.post { runCatching { skin(itemView) }.onFailure { WeLogger.d(TAG, "skin failed: ${it.message}") } }
+        // 2) 宿主是在这一帧之后才把卡片画成原版的 —— 等布局稳定再改；并且**每次 bind 都补**。
+        //    另外再延迟补两次：宿主对付款卡片有「点击后重绘」的行为（用户实测点一下就回退），
+        //    延迟补能在不依赖再次 bind 的情况下把它拉回来。只对付款卡片生效，开销可忽略。
+        fun apply() = runCatching { skin(itemView) }
+            .onFailure { WeLogger.d(TAG, "skin failed: ${it.message}") }
+        itemView.post { apply() }
+        itemView.postDelayed({ apply() }, 120L)
+        itemView.postDelayed({ apply() }, 480L)
     }
 
-    /** 是否是「领取后 / 已过期」的收付款卡片。 */
+    /**
+     * 是否是「已被领取 / 已过期 / 已退还」的收付款卡片。
+     *
+     * 【第 55 轮】判定顺序改成**状态词优先**，原因：用户实测「对方发来的已领取转账变 pro 圆角了，
+     * 但**自己发的**已领取转账还是原版」—— 说明出账方向的 `paysubtype` 与入账方向并不同值
+     * （入账领取后是 2/3，出账领取后仍可能是 1）。只认 subtype 就会漏掉自己发的那一半。
+     * 状态词（「已被接收 / 已收款 / 已领取 / 已过期 / 已退还」）与方向无关，因此以它为准；
+     * 没有任何状态词时再退回 subtype ∈ {2,3}。
+     */
     private fun isClaimedState(content: String): Boolean {
+        if (CLAIMED_STATE_WORDS.any { content.contains(it) }) return true
         val subtype = Regex("<paysubtype>(\\d+)</paysubtype>").find(content)?.groupValues?.getOrNull(1)
-        if (subtype != null) return subtype in CLAIMED_SUBTYPES
-        // 没有 paysubtype（旧版/其它 appmsg）：只认「已被接收 / 已收款 / 已过期」这些状态词。
-        return CLAIMED_STATE_WORDS.any { content.contains(it) }
+        return subtype != null && subtype in CLAIMED_SUBTYPES
     }
 
     /**
@@ -147,6 +164,9 @@ object MonetTransferCardSkin : ApiFeature(), IResolveDex {
         val tokens = MonetColors.tokens(isNight) ?: return
         val density = runCatching { root.resources.displayMetrics.density }.getOrDefault(2f)
         val target = findCardBackground(root) ?: return
+        // 自愈：当前背景仍是我们打上去的那个 ⇒ 什么都不用做（幂等，可被反复调用）。
+        val ours = synchronized(skinned) { skinned[target] }
+        if (ours != null && target.background === ours) return
         val night = tokens.night
         val shape = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
@@ -155,6 +175,7 @@ object MonetTransferCardSkin : ApiFeature(), IResolveDex {
             setStroke((1f * density).toInt(), tokens.outline)
         }
         runCatching { target.background = shape }
+        synchronized(skinned) { skinned[target] = shape }
         WeLogger.d(TAG, "已把领取态卡片换成莫奈圆角（${if (night) "夜间" else "浅色"}）")
     }
 

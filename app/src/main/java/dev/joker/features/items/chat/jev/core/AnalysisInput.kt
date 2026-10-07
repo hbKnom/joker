@@ -111,7 +111,15 @@ object MessagePolicy {
      * 判定一律走 [maxCharacters]。
      */
     const val MAX_CHARACTERS = ModulePrefs.DEFAULT_MAX_CHARS
-    const val MAX_CONTEXT_MESSAGES = 10
+    /**
+     * 【第 55 轮】上下文条数上限 10 → 20。
+     *
+     * 用户要求「参考聊天分析功能，把获取上下文的条数和内容大小上限提高，让决策更精准」。
+     * 聊天分析按整段聊天记录做统计（几百条），而决策分析原来只看最近 10 条 ——
+     * 隔夜/跨天/同轮接话这些判断经常因为「前文不够」而失效。翻倍后仍远小于聊天分析的量级，
+     * 且 [MAX_CONTEXT_CHARACTERS] 仍是硬闸门（字符预算先于条数生效）。
+     */
+    const val MAX_CONTEXT_MESSAGES = 20
 
     /**
      * 【第 52 轮·上游一比一】上下文选入的字符预算与扫描上限（上游 12000 / 80）。
@@ -119,7 +127,7 @@ object MessagePolicy {
      * 上游按「从新到旧、累加字符不许超预算」挑前文，并把「因为预算被丢掉多少条」写进
      * `context_coverage.truncated`。我方以前只看条数上限，长消息一来就把前文挤爆。
      */
-    const val MAX_CONTEXT_CHARACTERS = 12_000
+    const val MAX_CONTEXT_CHARACTERS = 24_000
     const val MAX_CONTEXT_SCAN = 80
 
     /** 当前生效的单条字符上限（热路径：命中 [dev.joker.preferences.HotPrefs] 内存缓存，无 SQLite）。 */
