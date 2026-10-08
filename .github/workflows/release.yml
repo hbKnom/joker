@@ -133,12 +133,15 @@ jobs:
           VC: ${{ steps.pkg.outputs.version_code }}
         run: |
           set -euo pipefail
-          subject=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA" -q '.commit.message' | head -1)
+          # 用整条提交信息当发布说明：本项目每个提交都写了「问题 n｜现象 / 根因 / 改法」，
+          # 比只取首行有用得多。尾部 trailer 与多余空行去掉。
+          body=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA" -q '.commit.message' \
+            | sed -e '/^Change-Id:/d' -e '/^Co-authored-by:/d' -e '/^Signed-off-by:/d' | cat -s)
           size=$(stat -c%s "$ASSET")
           {
             echo "## Joker $VC · git+$SHORT"
             echo
-            echo "$subject"
+            echo "$body"
             echo
             echo "### 安装"
             echo
