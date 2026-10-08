@@ -2,9 +2,10 @@
 
 ## 下载
 
-本项目不会发布稳定版本, 请从以下渠道下载最新 CI 构建产物 (每夜版)。Xposed 模式请下载 APK, Zygisk 模式请下载 `joker-zygisk` ZIP:
+Xposed 模式请下载 APK, Zygisk 模式请下载 `joker-zygisk` ZIP:
 
-- [GitHub Actions](https://github.com/hbKnom/joker/actions/workflows/ci.yml)
+- **稳定版**: [Releases](https://github.com/hbKnom/joker/releases) — 每个版本对应一个确定的提交, 并附带 sha256
+- **每夜版**: [GitHub Actions](https://github.com/hbKnom/joker/actions/workflows/ci.yml) 的最新成功构建产物
 
 ## 安装
 

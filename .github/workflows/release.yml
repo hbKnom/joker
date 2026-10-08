@@ -1,0 +1,189 @@
+name: Release
+
+# 把某次 CI 构建出的 Zygisk 包发布为 GitHub Release。
+#
+# 为什么不在 tag push 时自动发布：`build_zygisk` 只在 workflow_dispatch 下运行
+# （见 .github/workflows/ci.yml），tag push 不会产出 Zygisk 包。所以发布是显式的两步：
+#   1. Actions 页手动 dispatch `CI`（ref 选 main）→ 等 build + build_zygisk 全绿
+#   2. Actions 页手动 dispatch 本工作流，填 tag（以及可选的 source_run）
+#
+# 产物一致性：本工作流发布的是「指定 CI run 的 artifact」，并把该 run 的 headSha
+# 同时写进 tag 与 Release 说明，保证 tag / 产物 / 源码提交三者可互相追溯。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "发布标签，按 versionCode 命名（例如 v82）"
+        required: true
+      source_run:
+        description: "取产物的 CI run id（留空 = 本分支最近一次成功的 workflow_dispatch 运行）"
+        required: false
+        default: ""
+      prerelease:
+        description: "标记为预发布"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # 创建 tag / Release
+  actions: read # 下载其他 run 的 artifact
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve source CI run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RUN: ${{ inputs.source_run }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_RUN}" ]; then
+            run_id="${INPUT_RUN}"
+          else
+            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --status success --limit 50 \
+              --json databaseId,event,headBranch \
+              -q "[.[] | select(.event == \"workflow_dispatch\" and .headBranch == \"$BRANCH\")][0].databaseId")
+          fi
+          if [ -z "${run_id}" ] || [ "${run_id}" = "null" ]; then
+            echo "::error::没有找到可用的 CI run。请先手动 dispatch CI（ref=$BRANCH）并等 build_zygisk 通过，或用 source_run 指定 run id。"
+            exit 1
+          fi
+          sha=$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json headSha -q .headSha)
+          conclusion=$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json conclusion -q .conclusion)
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::来源 run $run_id 的结论是 $conclusion，只接受成功的 run。"
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "来源 run: $run_id（$conclusion）@ $sha"
+
+      - name: Download Zygisk artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          if ! gh run download "${{ steps.source.outputs.run_id }}" --repo "$GITHUB_REPOSITORY" -n joker-zygisk -D dist; then
+            echo "::error::该 run 没有 joker-zygisk 产物（artifact 仅保留 90 天，过期后请重新 dispatch CI）。"
+            exit 1
+          fi
+          ls -l dist
+
+      - name: Normalize file name and verify package
+        id: pkg
+        env:
+          EXPECT_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          src=$(find dist -name '*.zip' -type f | head -1)
+          if [ -z "$src" ]; then
+            echo "::error::dist 里没有找到 zip。"
+            exit 1
+          fi
+          python3 - "$src" "$EXPECT_SHA" <<'PY'
+          import sys, zipfile, hashlib, os, re
+
+          src, expect_sha = sys.argv[1], sys.argv[2]
+          z = zipfile.ZipFile(src)
+          names = z.namelist()
+          assert 'module.prop' in names, "交付包顶层缺少 module.prop（可能是还没解包的包装 artifact）"
+          assert any(n.endswith('META-INF/com/google/android/update-binary') for n in names), "缺少 update-binary"
+
+          prop = dict(
+              line.split('=', 1)
+              for line in z.read('module.prop').decode('utf-8').splitlines()
+              if '=' in line and not line.startswith('#')
+          )
+          vc = int(prop['versionCode'])
+          m = re.search(r'([0-9a-f]{8})', prop['version'])
+          assert m, f"module.prop 的 version 里没有短哈希: {prop['version']!r}"
+          short = m.group(1)
+          assert expect_sha.startswith(short), f"产物提交({short}) 与来源 run 的提交({expect_sha[:8]}) 不一致"
+
+          # 统一成交付命名：Joker-<versionCode>-<short8>-release.zip
+          # （xtask 产出的名字里带 'git+'，而 release 资源名走 query 参数传名，'+' 会被解析成空格）
+          canonical = os.path.join(os.path.dirname(src), f"Joker-{vc}-{short}-release.zip")
+          if src != canonical:
+              os.replace(src, canonical)
+
+          digest = hashlib.sha256(open(canonical, 'rb').read()).hexdigest()
+          print(f"模块: {prop['name']} / {prop['version']} / versionCode={vc}")
+          print(f"条目数: {len(names)}")
+          print(f"交付文件: {canonical}")
+          print(f"sha256: {digest}")
+          if not any(n.startswith('lib/arm64-v8a/') for n in names):
+              print("::warning::包里没有 lib/arm64-v8a/ 下的原生库，请人工确认。")
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"asset={canonical}\nsha256={digest}\nversion_code={vc}\nshort_sha={short}\n")
+          PY
+
+      - name: Compose release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.source.outputs.sha }}
+          RUN_ID: ${{ steps.source.outputs.run_id }}
+          ASSET: ${{ steps.pkg.outputs.asset }}
+          DIGEST: ${{ steps.pkg.outputs.sha256 }}
+          SHORT: ${{ steps.pkg.outputs.short_sha }}
+          VC: ${{ steps.pkg.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          subject=$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA" -q '.commit.message' | head -1)
+          size=$(stat -c%s "$ASSET")
+          {
+            echo "## Joker $VC · git+$SHORT"
+            echo
+            echo "$subject"
+            echo
+            echo "### 安装"
+            echo
+            echo "1. KernelSU / APatch 刷入本 zip"
+            echo "2. **彻底关机再开机**（不是重启）"
+            echo "3. 超级用户里勾选微信，并关闭「卸载模块」"
+            echo
+            echo "完整说明见 [安装指南](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/installation.md)。"
+            echo
+            echo "### 校验"
+            echo
+            echo "- 文件：\`$(basename "$ASSET")\`（$size 字节）"
+            echo "- sha256：\`$DIGEST\`"
+            echo "- 源码提交：[\`$SHORT\`](https://github.com/$GITHUB_REPOSITORY/commit/$SHA) · CI run [#$RUN_ID](https://github.com/$GITHUB_REPOSITORY/actions/runs/$RUN_ID)"
+          } > notes.md
+          cat notes.md
+          echo "title=Joker $VC · git+$SHORT" >> "$GITHUB_ENV"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ steps.source.outputs.sha }}
+          ASSET: ${{ steps.pkg.outputs.asset }}
+          PRE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          extra=()
+          if [ "$PRE" = "true" ]; then extra+=(--prerelease); fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，改为更新说明并覆盖资源。"
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --title "$title" --notes-file notes.md "${extra[@]}"
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "$ASSET" --clobber
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "$ASSET" \
+              --target "$SHA" --title "$title" --notes-file notes.md "${extra[@]}"
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,assets -q '.url, (.assets[] | "\(.name) \(.size)")'
+
+      - name: Summary
+        run: |
+          {
+            echo "### 已发布 $(basename "${{ steps.pkg.outputs.asset }}")"
+            echo
+            echo "- tag：\`${{ inputs.tag }}\`"
+            echo "- sha256：\`${{ steps.pkg.outputs.sha256 }}\`"
+            echo "- 来源 run：${{ steps.source.outputs.run_id }}"
+          } >> "$GITHUB_STEP_SUMMARY"
